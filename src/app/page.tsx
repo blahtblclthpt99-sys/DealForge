@@ -55,8 +55,14 @@ export default async function HomePage() {
     );
   }
 
+  let categories;
+  let featured;
+  let trending;
+  let newest;
+  let flash;
+  let feed;
   try {
-    const [categories, featured, trending, newest, flash, feed] = await Promise.all([
+    [categories, featured, trending, newest, flash, feed] = await Promise.all([
       getCategories(),
       queryProducts({ featured: true, limit: 8, sort: "savings" }),
       queryProducts({ trending: true, limit: 8 }),
@@ -64,8 +70,16 @@ export default async function HomePage() {
       queryProducts({ flash: true, limit: 8, sort: "savings" }),
       queryProducts({ page: 1, limit: 24 }),
     ]);
-
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "Unknown database error";
     return (
+      <SetupBanner
+        message={`Could not load products (${msg}). Set a PostgreSQL DATABASE_URL in Vercel and run prisma db push + seed against it.`}
+      />
+    );
+  }
+
+  return (
       <div>
         <section className="relative overflow-hidden border-b border-card-border">
           <div
@@ -201,13 +215,5 @@ export default async function HomePage() {
           <InfiniteProductFeed initial={feed} />
         </section>
       </div>
-    );
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : "Unknown database error";
-    return (
-      <SetupBanner
-        message={`Could not load products (${msg}). Set a PostgreSQL DATABASE_URL in Vercel and run prisma db push + seed against it.`}
-      />
-    );
-  }
+  );
 }
