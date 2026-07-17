@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState, useTransition } from "react";
 import { ProductCard } from "@/components/product-card";
@@ -14,6 +15,16 @@ const SORTS = [
   { value: "price_asc", label: "Lowest price" },
   { value: "price_desc", label: "Highest price" },
 ];
+
+const PENDING_KEY = "df_pending_saved_search";
+
+function cleanFilters(raw: Record<string, string>) {
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(raw)) {
+    if (v != null && String(v).trim() !== "") out[k] = String(v);
+  }
+  return out;
+}
 
 export function SearchClient({
   initialItems,
@@ -30,6 +41,7 @@ export function SearchClient({
   const searchParams = useSearchParams();
   const [pending, startTransition] = useTransition();
   const [q, setQ] = useState(searchParams.get("q") || "");
+  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const items = initialItems;
   const total = initialTotal;
 
@@ -57,6 +69,39 @@ export function SearchClient({
     return () => clearTimeout(t);
   }, [q, router, searchParams]);
 
+  // After login redirect, finish a pending save
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const raw = sessionStorage.getItem(PENDING_KEY);
+        if (!raw) return;
+        const payload = JSON.parse(raw) as { query?: string; filters?: Record<string, string> };
+        sessionStorage.removeItem(PENDING_KEY);
+        setSaveState("saving");
+        const res = await fetch("/api/saved-searches", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            query: payload.query || "",
+            filters: cleanFilters(payload.filters || {}),
+          }),
+        });
+        if (cancelled) return;
+        if (res.status === 401) {
+          setSaveState("idle");
+          return;
+        }
+        setSaveState(res.ok ? "saved" : "error");
+      } catch {
+        if (!cancelled) setSaveState("error");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   function setFilter(key: string, value: string) {
     const params = new URLSearchParams(searchParams.toString());
     if (value) params.set(key, value);
@@ -64,16 +109,49 @@ export function SearchClient({
     startTransition(() => router.push(`/search?${params.toString()}`));
   }
 
-  async function saveSearch() {
-    await fetch("/api/saved-searches", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        query: q,
-        filters,
-      }),
-    });
+  function currentSearchPath() {
+    const params = new URLSearchParams(searchParams.toString());
+    if (q) params.set("q", q);
+    else params.delete("q");
+    const qs = params.toString();
+    return qs ? `/search?${qs}` : "/search";
   }
+
+  async function saveSearch() {
+    setSaveState("saving");
+    const payload = {
+      query: q,
+      filters: cleanFilters(filters),
+    };
+    try {
+      const res = await fetch("/api/saved-searches", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (res.status === 401) {
+        sessionStorage.setItem(PENDING_KEY, JSON.stringify(payload));
+        window.location.href = `/login?next=${encodeURIComponent(currentSearchPath())}`;
+        return;
+      }
+      if (!res.ok) {
+        setSaveState("error");
+        return;
+      }
+      setSaveState("saved");
+    } catch {
+      setSaveState("error");
+    }
+  }
+
+  const saveLabel =
+    saveState === "saving"
+      ? "Saving…"
+      : saveState === "saved"
+        ? "Saved!"
+        : saveState === "error"
+          ? "Couldn’t save — try again"
+          : "Save this search";
 
   return (
     <div className="grid gap-8 lg:grid-cols-[260px_1fr]">
@@ -164,10 +242,22 @@ export function SearchClient({
         <button
           type="button"
           onClick={saveSearch}
-          className="w-full rounded-xl border border-card-border py-2 text-sm font-medium text-forest hover:bg-forest/5"
+          disabled={saveState === "saving"}
+          className="w-full rounded-xl border border-card-border py-2 text-sm font-medium text-forest hover:bg-forest/5 disabled:opacity-60"
         >
-          Save this search
+          {saveLabel}
         </button>
+        {saveState === "saved" && (
+          <p className="text-center text-xs text-forest-muted">
+            View in{" "}
+            <Link href="/dashboard/searches" className="font-medium text-forest hover:underline">
+              Saved searches
+            </Link>
+          </p>
+        )}
+        {saveState === "error" && (
+          <p className="text-center text-xs text-red-600">Something went wrong. Please try again.</p>
+        )}
       </aside>
 
       <div>

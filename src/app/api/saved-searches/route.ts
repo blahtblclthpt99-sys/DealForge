@@ -25,18 +25,29 @@ export async function POST(req: Request) {
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const saved = parseJson<SavedSearch[]>(user.savedSearches, []);
+  const filtersIn = (body.filters || {}) as Record<string, unknown>;
+  const filters: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(filtersIn)) {
+    if (v == null) continue;
+    const s = String(v).trim();
+    if (s) filters[k] = s;
+  }
   const entry: SavedSearch = {
     id: `s_${Date.now()}`,
-    query: body.query || "",
-    filters: body.filters || {},
+    query: typeof body.query === "string" ? body.query.trim() : "",
+    filters,
     createdAt: new Date().toISOString(),
   };
-  saved.unshift(entry);
+  // Avoid exact duplicate at top of list
+  const deduped = saved.filter(
+    (s) => !(s.query === entry.query && JSON.stringify(s.filters) === JSON.stringify(entry.filters)),
+  );
+  deduped.unshift(entry);
   await prisma.user.update({
     where: { id: user.id },
-    data: { savedSearches: JSON.stringify(saved.slice(0, 30)) },
+    data: { savedSearches: JSON.stringify(deduped.slice(0, 30)) },
   });
-  return NextResponse.json({ ok: true, savedSearches: saved.slice(0, 30) });
+  return NextResponse.json({ ok: true, savedSearches: deduped.slice(0, 30) });
 }
 
 export async function DELETE(req: Request) {
