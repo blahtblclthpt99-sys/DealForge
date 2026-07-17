@@ -31,7 +31,7 @@ function SetupBanner({ message }: { message: string }) {
           <li>
             Also set <code className="rounded bg-forest/10 px-1">AUTH_SECRET</code> and{" "}
             <code className="rounded bg-forest/10 px-1">NEXT_PUBLIC_APP_URL</code>=
-            <code className="rounded bg-forest/10 px-1">https://deal-forge-alpha.vercel.app</code>
+            <code className="rounded bg-forest/10 px-1">https://deal-forge.sale</code>
           </li>
           <li>
             From your PC, seed the database:
