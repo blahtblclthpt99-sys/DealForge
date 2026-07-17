@@ -51,7 +51,7 @@ function cleanImages(raw: string): string[] {
 
 /** Guard against scrape garbage like $6 sale / $2014 list = 100% off. */
 function sanitizePricing(price: number, originalPrice: number, discountPercent: number) {
-  let p = Number.isFinite(price) && price > 0 ? price : 0;
+  const p = Number.isFinite(price) && price > 0 ? price : 0;
   let o = Number.isFinite(originalPrice) && originalPrice > 0 ? originalPrice : p;
   let d = Number.isFinite(discountPercent) ? discountPercent : 0;
 
