@@ -188,10 +188,9 @@ async function main() {
       }
     }
 
-    await prisma.product.delete({ where: { id: row.id } });
-    removed += 1;
-    console.log("  REMOVED (no image)");
-    await sleep(1500);
+    // Do not delete — leave placeholder so catalog stays intact; retry later.
+    console.log("  SKIP (no image yet)");
+    await sleep(1200);
   }
 
   await prisma.cacheEntry.deleteMany({

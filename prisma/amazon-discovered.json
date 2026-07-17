@@ -32,22 +32,6 @@
     "flash": false
   },
   {
-    "asin": "B01LYCLS24",
-    "category": "home-kitchen",
-    "title": "Amazon.com - eufy RoboVac 11, High Suction, Self-Charging Robotic Vacuum Cleaner with Drop-Sensing Technology and High-Performance Filter for Pet, Designed for ",
-    "brand": "eufy",
-    "image": "https://m.media-amazon.com/images/I/41m+pNyTe0L._AC_SL1500_.jpg",
-    "images": [
-      "https://m.media-amazon.com/images/I/41m+pNyTe0L._AC_SL1500_.jpg"
-    ],
-    "price": 149.99,
-    "originalPrice": 249.99,
-    "rating": 4.3,
-    "reviewCount": 100,
-    "featured": true,
-    "flash": true
-  },
-  {
     "asin": "B09JQMJHXY",
     "category": "electronics",
     "title": "Apple AirPods Pro (1st Generation) with MagSafe Charging Case : Electronics",
@@ -228,9 +212,9 @@
     "category": "clothing",
     "title": "Hanes Men's Boxer Soft Breathable Cotton ComfortFlex Waistband, Multipack Brief Underwear, 6 Pack - Black/Gray, Large at Amazon Men’s Clothing store",
     "brand": "Hanes",
-    "image": "/images/placeholder-product.svg",
+    "image": "https://m.media-amazon.com/images/P/B086KSDTQ4.01._SCLZZZZZZZ_SX500_.jpg",
     "images": [
-      "/images/placeholder-product.svg"
+      "https://m.media-amazon.com/images/P/B086KSDTQ4.01._SCLZZZZZZZ_SX500_.jpg"
     ],
     "price": 3.8,
     "originalPrice": 3.8,
@@ -260,9 +244,9 @@
     "category": "clothing",
     "title": "Hanes Mens Cotton, Moisture-wicking Crew Tee Undershirts, Multi-packs, White - 6 Pack, Large US : Clothing, Shoes & Jewelry",
     "brand": "Hanes",
-    "image": "/images/placeholder-product.svg",
+    "image": "https://m.media-amazon.com/images/P/B00D1ARZMC.01._SCLZZZZZZZ_SX500_.jpg",
     "images": [
-      "/images/placeholder-product.svg"
+      "https://m.media-amazon.com/images/P/B00D1ARZMC.01._SCLZZZZZZZ_SX500_.jpg"
     ],
     "price": 3.17,
     "originalPrice": 3.17,
@@ -292,9 +276,9 @@
     "category": "clothing",
     "title": "Gildan Men's Crew T-Shirts, Multipack, Style G1100, Black (6-Pack), X-Large",
     "brand": "Gildan",
-    "image": "/images/placeholder-product.svg",
+    "image": "https://m.media-amazon.com/images/P/B07JCS8NRC.01._SCLZZZZZZZ_SX500_.jpg",
     "images": [
-      "/images/placeholder-product.svg"
+      "https://m.media-amazon.com/images/P/B07JCS8NRC.01._SCLZZZZZZZ_SX500_.jpg"
     ],
     "price": 3.83,
     "originalPrice": 3.83,
@@ -320,29 +304,13 @@
     "flash": true
   },
   {
-    "asin": "B0FS1DBXTG",
-    "category": "clothing",
-    "title": "COCOMARTS Jelly Bras for Women No Underwire Push Up Seamless Bralettes Wireless Soft Comfort Scalloped Everyday Tshirt Bra Black Large at Amazon Women’s Clothin",
-    "brand": "COCOMARTS",
-    "image": "/images/placeholder-product.svg",
-    "images": [
-      "/images/placeholder-product.svg"
-    ],
-    "price": 24.99,
-    "originalPrice": 24.99,
-    "rating": 4,
-    "reviewCount": 100,
-    "featured": true,
-    "flash": false
-  },
-  {
     "asin": "B075ZZ7XKD",
     "category": "clothing",
     "title": "Gildan Adult Ultra Cotton T-Shirt, Style G2000, Multipack, White (2-Pack), Large",
     "brand": "Gildan",
-    "image": "/images/placeholder-product.svg",
+    "image": "https://m.media-amazon.com/images/P/B075ZZ7XKD.01._SCLZZZZZZZ_SX500_.jpg",
     "images": [
-      "/images/placeholder-product.svg"
+      "https://m.media-amazon.com/images/P/B075ZZ7XKD.01._SCLZZZZZZZ_SX500_.jpg"
     ],
     "price": 10.39,
     "originalPrice": 10.39,
@@ -350,22 +318,6 @@
     "reviewCount": 100,
     "featured": true,
     "flash": false
-  },
-  {
-    "asin": "B0FTSRNCNF",
-    "category": "clothing",
-    "title": "ANRABESS Tank Tops for Women V Neck Ribbed Knit Slim Fitted Sleeveless Basic Tee Tanks Casual Summer Clothes 2026 Black L at Amazon Women’s Clothing store",
-    "brand": "ANRABESS",
-    "image": "/images/placeholder-product.svg",
-    "images": [
-      "/images/placeholder-product.svg"
-    ],
-    "price": 8.99,
-    "originalPrice": 14.99,
-    "rating": 4.7,
-    "reviewCount": 100,
-    "featured": true,
-    "flash": true
   },
   {
     "asin": "B0FLQKYQLM",
@@ -432,38 +384,6 @@
     "flash": false
   },
   {
-    "asin": "B0DSVVJBRK",
-    "category": "clothing",
-    "title": "Ksmien Women's 5\"/ 7\" Athletic Running Shorts Quick Dry Lightweight Workout Gym Shorts with Zipper Pockets UPF 50+ Black L : Clothing, Shoes & Jewelry",
-    "brand": "Ksmien",
-    "image": "/images/placeholder-product.svg",
-    "images": [
-      "/images/placeholder-product.svg"
-    ],
-    "price": 29.99,
-    "originalPrice": 29.99,
-    "rating": 4.6,
-    "reviewCount": 100,
-    "featured": true,
-    "flash": false
-  },
-  {
-    "asin": "B0FNC4GM8V",
-    "category": "clothing",
-    "title": "Womens Blouses Dressy Casual Short Sleeve Shirts Spring Business Work Floral Summer Tops Plus Size Fashion Clothing V Neck Tshirts Grey XL : Clothing, Shoes & J",
-    "brand": "Womens",
-    "image": "/images/placeholder-product.svg",
-    "images": [
-      "/images/placeholder-product.svg"
-    ],
-    "price": 27.99,
-    "originalPrice": 27.99,
-    "rating": 4.4,
-    "reviewCount": 100,
-    "featured": true,
-    "flash": false
-  },
-  {
     "asin": "B0CKZ4ZWYG",
     "category": "sports",
     "title": "SINOPHANT High Waisted Leggings with Pockets Women, Full Length Capri Buttery Soft Stretchy Yoga Pants(Full Black,L-XL) : Clothing, Shoes & Jewelry",
@@ -484,9 +404,9 @@
     "category": "clothing",
     "title": "Hanes Boys' Underwear Boxer Briefs Pack, lightweight Comfort Flex Underwear, Moisture-Wicking Boxer Briefs for Boys, 10-Pack SMALL: Clothing, Shoes & Jewelry",
     "brand": "Hanes",
-    "image": "/images/placeholder-product.svg",
+    "image": "https://m.media-amazon.com/images/P/B0BHXB24QW.01._SCLZZZZZZZ_SX500_.jpg",
     "images": [
-      "/images/placeholder-product.svg"
+      "https://m.media-amazon.com/images/P/B0BHXB24QW.01._SCLZZZZZZZ_SX500_.jpg"
     ],
     "price": 16.98,
     "originalPrice": 24.49,
@@ -500,9 +420,9 @@
     "category": "electronics",
     "title": "Comfort Colors Adult Short Sleeve Tee, Style G1717, White (1-pack), Large",
     "brand": "Comfort",
-    "image": "/images/placeholder-product.svg",
+    "image": "https://m.media-amazon.com/images/P/B07M989JLF.01._SCLZZZZZZZ_SX500_.jpg",
     "images": [
-      "/images/placeholder-product.svg"
+      "https://m.media-amazon.com/images/P/B07M989JLF.01._SCLZZZZZZZ_SX500_.jpg"
     ],
     "price": 8.64,
     "originalPrice": 15.49,
@@ -512,17 +432,641 @@
     "flash": true
   },
   {
-    "asin": "B0DNMJ694B",
+    "asin": "B0113UZJE2",
+    "category": "electronics",
+    "title": "Etekcity Food Kitchen Scale, Digital Grams and Ounces for Weight Loss, Baking, Cooking, Keto and Meal Prep, LCD Display, Medium, 304 Stainless Steel",
+    "brand": "Etekcity",
+    "image": "https://m.media-amazon.com/images/I/91YrLTBnMcL._SL1500_.jpg",
+    "images": [
+      "https://m.media-amazon.com/images/I/91YrLTBnMcL._SL1500_.jpg"
+    ],
+    "price": 10.99,
+    "originalPrice": 13.99,
+    "rating": 4.6,
+    "reviewCount": 100,
+    "featured": false,
+    "flash": false
+  },
+  {
+    "asin": "B0GJTFXNRX",
+    "category": "electronics",
+    "title": "Apple AirTag (2nd Generation): Tracker for Keychain, Wallet, and More; Locator with Sound; Simple One-Tap Setup with iPhone or iPad; Key Finder with up to 1.5X ",
+    "brand": "Apple",
+    "image": "https://m.media-amazon.com/images/I/61Qd9Z9caRL._AC_SL1500_.jpg",
+    "images": [
+      "https://m.media-amazon.com/images/I/61Qd9Z9caRL._AC_SL1500_.jpg"
+    ],
+    "price": 29,
+    "originalPrice": 29,
+    "rating": 4.6,
+    "reviewCount": 100,
+    "featured": false,
+    "flash": false
+  },
+  {
+    "asin": "B0B41MYSGP",
+    "category": "electronics",
+    "title": "BAND-AID Brand Travel Ready Portable Emergency First Aid Kit, Minor Wound Care, Perfect for Home, Car, Camping, Travel & Outdoor Essentials, Supplies Include Ba",
+    "brand": "Band-Aid",
+    "image": "https://m.media-amazon.com/images/I/81vQmvJOqyL._AC_SL1500_.jpg",
+    "images": [
+      "https://m.media-amazon.com/images/I/81vQmvJOqyL._AC_SL1500_.jpg"
+    ],
+    "price": 0.12,
+    "originalPrice": 5.82,
+    "rating": 4.8,
+    "reviewCount": 100,
+    "featured": false,
+    "flash": false
+  },
+  {
+    "asin": "B0GXC72FF7",
     "category": "sports",
-    "title": "Leafigure 2 Pack Womens Biker Shorts with Pockets, High Waisted Tummy Control Yoga Shorts for Women Running Gym and Workout Black L-XL at Amazon Women’s Clothin",
-    "brand": "Leafigure",
+    "title": "CONFESSIONS II",
+    "brand": "CONFESSIONS",
+    "image": "https://m.media-amazon.com/images/I/61o+tNnFmlL._SL1200_.jpg",
+    "images": [
+      "https://m.media-amazon.com/images/I/61o+tNnFmlL._SL1200_.jpg"
+    ],
+    "price": 11.23,
+    "originalPrice": 14.98,
+    "rating": 4.7,
+    "reviewCount": 100,
+    "featured": false,
+    "flash": false
+  },
+  {
+    "asin": "B0CQMRKRV5",
+    "category": "home-kitchen",
+    "title": "Amazon Fire TV Stick HD, free and live TV, Alexa Voice Remote, smart home controls, HD streaming",
+    "brand": "Amazon Fire TV",
+    "image": "https://m.media-amazon.com/images/I/61pvHU+76pL._AC_SL1500_.jpg",
+    "images": [
+      "https://m.media-amazon.com/images/I/61pvHU+76pL._AC_SL1500_.jpg"
+    ],
+    "price": 34.99,
+    "originalPrice": 34.99,
+    "rating": 4.7,
+    "reviewCount": 100,
+    "featured": true,
+    "flash": false
+  },
+  {
+    "asin": "B0D1XD1ZV3",
+    "category": "electronics",
+    "title": "Apple AirPods Pro 2 Wireless Earbuds, Active Noise Cancellation, Hearing Aid Feature, Bluetooth Headphones, Transparency, Personalized Spatial Audio, High-Fidel",
+    "brand": "Apple",
     "image": "/images/placeholder-product.svg",
     "images": [
       "/images/placeholder-product.svg"
     ],
-    "price": 5,
-    "originalPrice": 5,
+    "price": 263.86,
+    "originalPrice": 263.86,
+    "rating": 4.6,
+    "reviewCount": 100,
+    "featured": true,
+    "flash": false
+  },
+  {
+    "asin": "B08J5F3G18",
+    "category": "electronics",
+    "title": "EVGA GeForce RTX 3090 FTW3 Ultra Gaming, 24GB GDDR6X, iCX3 Technology, ARGB LED, Metal Backplate, 24G-P5-3987-KR : Electronics",
+    "brand": "EVGA",
+    "image": "/images/placeholder-product.svg",
+    "images": [
+      "/images/placeholder-product.svg"
+    ],
+    "price": 1799.95,
+    "originalPrice": 1799.95,
+    "rating": 4.6,
+    "reviewCount": 100,
+    "featured": true,
+    "flash": false
+  },
+  {
+    "asin": "B07ZPKBL9V",
+    "category": "electronics",
+    "title": "Apple iPhone 11, 64GB, PRODUCT RED - Unlocked (Renewed) : Cell Phones & Accessories",
+    "brand": "Amazon Renewed",
+    "image": "/images/placeholder-product.svg",
+    "images": [
+      "/images/placeholder-product.svg"
+    ],
+    "price": 181,
+    "originalPrice": 181,
+    "rating": 4.2,
+    "reviewCount": 100,
+    "featured": true,
+    "flash": false
+  },
+  {
+    "asin": "B0FQFB8FMG",
+    "category": "electronics",
+    "title": "Apple AirPods Pro 3 Wireless Earbuds, Active Noise Cancellation, Live Translation, Heart Rate Sensing, Hearing Aid Feature, Bluetooth Headphones, Spatial Audio,",
+    "brand": "Apple",
+    "image": "https://m.media-amazon.com/images/I/61solmQSSlL._AC_SL1500_.jpg",
+    "images": [
+      "https://m.media-amazon.com/images/I/61solmQSSlL._AC_SL1500_.jpg"
+    ],
+    "price": 199.99,
+    "originalPrice": 249,
+    "rating": 3.2,
+    "reviewCount": 100,
+    "featured": false,
+    "flash": false
+  },
+  {
+    "asin": "B09PDLBFKY",
+    "category": "electronics",
+    "title": "6 Ft Surge Protector Power Strip - 8 Widely Outlets with 4 USB Ports, 3 Side Outlet Extender with 6 Feet Extension Cord, Flat Plug, Wall Mount, Desk USB Chargin",
+    "brand": "YISHU",
+    "image": "https://m.media-amazon.com/images/I/51OrfSnTVwL._AC_SL1500_.jpg",
+    "images": [
+      "https://m.media-amazon.com/images/I/51OrfSnTVwL._AC_SL1500_.jpg"
+    ],
+    "price": 9.99,
+    "originalPrice": 11.99,
     "rating": 4.5,
+    "reviewCount": 100,
+    "featured": false,
+    "flash": false
+  },
+  {
+    "asin": "B0FK1CDVHB",
+    "category": "electronics",
+    "title": "Owala FreeSip Sway Insulated Stainless Steel Water Bottle with Two-Way Spout, Built-In Straw and Bucket Handle, Made for Travel, School, and Sports, 30oz, BPA F",
+    "brand": "Owala",
+    "image": "https://m.media-amazon.com/images/I/51GiCw2F1RL._AC_SL1500_.jpg",
+    "images": [
+      "https://m.media-amazon.com/images/I/51GiCw2F1RL._AC_SL1500_.jpg"
+    ],
+    "price": 27.99,
+    "originalPrice": 27.99,
+    "rating": 4.6,
+    "reviewCount": 100,
+    "featured": false,
+    "flash": false
+  },
+  {
+    "asin": "B01KB9K9Z0",
+    "category": "office",
+    "title": "1MORE Triple Driver in-Ear Earphones Hi-Res Headphones with High Resolution, Bass Driven Sound, MEMS Mic, in-Line Remote, High Fidelity for Smartphones/PC/Table",
+    "brand": "1MORE",
+    "image": "https://m.media-amazon.com/images/I/51M7BxtRqZL._AC_SL1500_.jpg",
+    "images": [
+      "https://m.media-amazon.com/images/I/51M7BxtRqZL._AC_SL1500_.jpg"
+    ],
+    "price": 68.99,
+    "originalPrice": 86.24,
+    "rating": 4.5,
+    "reviewCount": 100,
+    "featured": false,
+    "flash": false
+  },
+  {
+    "asin": "B0CYJBB2JQ",
+    "category": "electronics",
+    "title": "bella 2 Slice Slim Toaster, Fits-anywhere™ Kitchenware, 6 Setting Shade Control with Reheat & Cancel Buttons, Fits sourdough, 10” Long Slot, Anti Jam & Auto Shu",
+    "brand": "BELLA",
+    "image": "https://m.media-amazon.com/images/I/71zZ0tSkfHL._AC_SL1500_.jpg",
+    "images": [
+      "https://m.media-amazon.com/images/I/71zZ0tSkfHL._AC_SL1500_.jpg"
+    ],
+    "price": 45.99,
+    "originalPrice": 57.49,
+    "rating": 4.2,
+    "reviewCount": 100,
+    "featured": false,
+    "flash": false
+  },
+  {
+    "asin": "B01LR5RG08",
+    "category": "electronics",
+    "title": "Amazon Basics Neoprene Dumbbell Hand Weights for Exercise and Muscle Toning",
+    "brand": "Amazon Basics",
+    "image": "https://m.media-amazon.com/images/I/61UEXxKIlrL._AC_SL1500_.jpg",
+    "images": [
+      "https://m.media-amazon.com/images/I/61UEXxKIlrL._AC_SL1500_.jpg"
+    ],
+    "price": 19.99,
+    "originalPrice": 19.99,
+    "rating": 4.6,
+    "reviewCount": 100,
+    "featured": false,
+    "flash": false
+  },
+  {
+    "asin": "B0C1Y8Z6VT",
+    "category": "automotive",
+    "title": "Kaistyle for Magsafe Car Mount【Strong Magnets】Magnetic Phone Holder for Car Phone Holder Mount Dash Mounted Holders Phone Holders for Your Car Accessories for W",
+    "brand": "Kaistyle",
+    "image": "/images/placeholder-product.svg",
+    "images": [
+      "/images/placeholder-product.svg"
+    ],
+    "price": 9.99,
+    "originalPrice": 14.99,
+    "rating": 4.3,
+    "reviewCount": 100,
+    "featured": true,
+    "flash": true
+  },
+  {
+    "asin": "B0D8W2JDRL",
+    "category": "electronics",
+    "title": "CARORY Cabin Air Filter w/Activated Carbon for Honda Accord 2003–2022, Civic 2006–2015, CR-V 2007–2016, Odyssey 2005–2017, Pilot 2009–2022, Ridgeline 2006–2025,",
+    "brand": "CARORY",
+    "image": "/images/placeholder-product.svg",
+    "images": [
+      "/images/placeholder-product.svg"
+    ],
+    "price": 9.97,
+    "originalPrice": 9.97,
+    "rating": 4.7,
+    "reviewCount": 100,
+    "featured": true,
+    "flash": false
+  },
+  {
+    "asin": "B09541P9WH",
+    "category": "electronics",
+    "title": "Amazon Basics Double-Tipped Cotton Swabs for Personal Hygiene and Baby Care, Cotton, Versatile, Baby Safe, 500 Count",
+    "brand": "Amazon Basics",
+    "image": "/images/placeholder-product.svg",
+    "images": [
+      "/images/placeholder-product.svg"
+    ],
+    "price": 2.66,
+    "originalPrice": 15,
+    "rating": 4.5,
+    "reviewCount": 100,
+    "featured": true,
+    "flash": true
+  },
+  {
+    "asin": "B08KT2Z93D",
+    "category": "beauty",
+    "title": "eos Shea Better Body Lotion Vanilla Cashmere, 24-Hour Moisture Skin Care, Lightweight & Non-Greasy, Natural Shea, Vegan, Vanilla Body Lotion, 16 fl oz : Beauty ",
+    "brand": "eos",
+    "image": "/images/placeholder-product.svg",
+    "images": [
+      "/images/placeholder-product.svg"
+    ],
+    "price": 9.12,
+    "originalPrice": 10.99,
+    "rating": 4.7,
+    "reviewCount": 1819,
+    "featured": true,
+    "flash": true
+  },
+  {
+    "asin": "B0DR9GN2PM",
+    "category": "sports",
+    "title": "Owala FreeSip Insulated Stainless Steel Water Bottle with Straw for Sports and Travel, BPA-Free Sports Water Bottle, 24 oz, Angel Food Cake : Sports & Outdoors",
+    "brand": "Owala",
+    "image": "/images/placeholder-product.svg",
+    "images": [
+      "/images/placeholder-product.svg"
+    ],
+    "price": 20.99,
+    "originalPrice": 29.99,
+    "rating": 4.7,
+    "reviewCount": 100,
+    "featured": true,
+    "flash": true
+  },
+  {
+    "asin": "B08JPC2M46",
+    "category": "electronics",
+    "title": "Kids Goggles for Swimming 2 Pack No Leaking Anti-Fog Outer Eye Fit with Wide View UV Protection Crystal Clear Watertight Swim Goggles with nose cover Suitable f",
+    "brand": "Kids",
+    "image": "/images/placeholder-product.svg",
+    "images": [
+      "/images/placeholder-product.svg"
+    ],
+    "price": 8,
+    "originalPrice": 8,
+    "rating": 4.7,
+    "reviewCount": 100,
+    "featured": true,
+    "flash": false
+  },
+  {
+    "asin": "B0DCH8VDXF",
+    "category": "electronics",
+    "title": "Apple EarPods Headphones with USB-C Plug, Wired Ear Buds with Built-in Remote to Control Music, Phone Calls, and Volume : Electronics",
+    "brand": "Apple",
+    "image": "/images/placeholder-product.svg",
+    "images": [
+      "/images/placeholder-product.svg"
+    ],
+    "price": 19,
+    "originalPrice": 19,
+    "rating": 4.6,
+    "reviewCount": 100,
+    "featured": true,
+    "flash": false
+  },
+  {
+    "asin": "B0GYF91BXB",
+    "category": "home-kitchen",
+    "title": "HOMESURE Supports 200lbs Heavy Duty Moving Bags - Strong Zipper & Wrap-Around Handles - Water-Resistant Storage Totes, Durable Alternative to Moving Boxes - 8 P",
+    "brand": "HOMESURE",
+    "image": "/images/placeholder-product.svg",
+    "images": [
+      "/images/placeholder-product.svg"
+    ],
+    "price": 29.99,
+    "originalPrice": 29.99,
+    "rating": 4.8,
+    "reviewCount": 93134,
+    "featured": true,
+    "flash": false
+  },
+  {
+    "asin": "B0GVM8N2CK",
+    "category": "home-kitchen",
+    "title": "Meat Thermometer Digital – Instant Read Food Thermometer for Grilling, BBQ, Air Fryer, Smoker, Candy Making with Foldable Probe, Kitchen Gadgets, BBQ Essentials",
+    "brand": "Meat",
+    "image": "https://m.media-amazon.com/images/I/71HAYvyw1fL._SL1500_.jpg",
+    "images": [
+      "https://m.media-amazon.com/images/I/71HAYvyw1fL._SL1500_.jpg"
+    ],
+    "price": 9.99,
+    "originalPrice": 9.99,
+    "rating": 4.6,
+    "reviewCount": 100,
+    "featured": true,
+    "flash": false
+  },
+  {
+    "asin": "B0B9894RWR",
+    "category": "clothing",
+    "title": "Disney Girls' Princess Fantasy Gown Nightgown, AURORA, 4T : Clothing, Shoes & Jewelry",
+    "brand": "Disney",
+    "image": "/images/placeholder-product.svg",
+    "images": [
+      "/images/placeholder-product.svg"
+    ],
+    "price": 19.99,
+    "originalPrice": 25.99,
+    "rating": 4.8,
+    "reviewCount": 100,
+    "featured": true,
+    "flash": true
+  },
+  {
+    "asin": "B0DBF65JYY",
+    "category": "beauty",
+    "title": "medicube PDRN Pink Peptide Serum with Salmon DNA | Pink Glow Serum with Peptides & Niacinamide for Hydration & Firm-Looking Skin | Uneven Tone Care | Korean Ski",
+    "brand": "medicube",
+    "image": "https://m.media-amazon.com/images/I/615DOoCI6xL._SL1500_.jpg",
+    "images": [
+      "https://m.media-amazon.com/images/I/615DOoCI6xL._SL1500_.jpg"
+    ],
+    "price": 18.9,
+    "originalPrice": 18.9,
+    "rating": 4.7,
+    "reviewCount": 100,
+    "featured": true,
+    "flash": false
+  },
+  {
+    "asin": "B0DGTMR754",
+    "category": "beauty",
+    "title": "medicube Jelly Gel Mask with Salmon DNA PDRN Pink Collagen | Overnight Face Mask for Glass Glow Skin | Elasticity, Hydrating, Firming and Moisturizing | Korean ",
+    "brand": "medicube",
+    "image": "https://m.media-amazon.com/images/I/61An0jiJFvL._SL1500_.jpg",
+    "images": [
+      "https://m.media-amazon.com/images/I/61An0jiJFvL._SL1500_.jpg"
+    ],
+    "price": 4.28,
+    "originalPrice": 20.9,
+    "rating": 4.6,
+    "reviewCount": 100,
+    "featured": true,
+    "flash": true
+  },
+  {
+    "asin": "B09MVMNW5M",
+    "category": "beauty",
+    "title": "Cetaphil Baby Wash & Shampoo, 13.5oz Pack of 2, Hypoallergenic, Gentle Enough for Everyday Use, Soap Free : Baby",
+    "brand": "Cetaphil",
+    "image": "/images/placeholder-product.svg",
+    "images": [
+      "/images/placeholder-product.svg"
+    ],
+    "price": 0.45,
+    "originalPrice": 18.98,
+    "rating": 4.8,
+    "reviewCount": 100,
+    "featured": true,
+    "flash": true
+  },
+  {
+    "asin": "B0D2PCCJVK",
+    "category": "automotive",
+    "title": "HoogaLife Car Air Freshener Diffuser 2 Pack Hanging Air Freshener Diffuser - Vanilla Cream Fragrance Oil Air D iffuser for Car, 45+ days Long Lasting Fragrance ",
+    "brand": "HoogaLife",
+    "image": "/images/placeholder-product.svg",
+    "images": [
+      "/images/placeholder-product.svg"
+    ],
+    "price": 9.99,
+    "originalPrice": 9.99,
+    "rating": 4,
+    "reviewCount": 100,
+    "featured": true,
+    "flash": false
+  },
+  {
+    "asin": "B0BNW6FFS5",
+    "category": "pet-supplies",
+    "title": "Armor All Car Cleaning Wipes, 90 Count Canister, Car Wipes | Lint-free car dashboard cleaner for dashboards, vinyl, clear plastics, carpet and fabric; not for g",
+    "brand": "Armor All",
+    "image": "https://m.media-amazon.com/images/I/61eObfWwHOL._AC_SL1500_.jpg",
+    "images": [
+      "https://m.media-amazon.com/images/I/61eObfWwHOL._AC_SL1500_.jpg"
+    ],
+    "price": 0.14,
+    "originalPrice": 5.25,
+    "rating": 4.4,
+    "reviewCount": 100,
+    "featured": true,
+    "flash": true
+  },
+  {
+    "asin": "B079SQJCB4",
+    "category": "clothing",
+    "title": "Armor All Car Interior Value Pack, 90 Count, Includes Auto Glass Cleaner, Cleaning Wipes and Protectant Wipes : Clothing, Shoes & Jewelry",
+    "brand": "Armor All",
+    "image": "/images/placeholder-product.svg",
+    "images": [
+      "/images/placeholder-product.svg"
+    ],
+    "price": 0.2,
+    "originalPrice": 5.25,
+    "rating": 4.4,
+    "reviewCount": 100,
+    "featured": true,
+    "flash": true
+  },
+  {
+    "asin": "B0GHY6D5B2",
+    "category": "home-kitchen",
+    "title": "Miracase for MagSafe Car Mount[3600gf Strong Magnet & 89+LBS Suction Base]Vacuum Magnetic Phone Holders for Your Car, 360° Adjustable Dashboard & Windshield Mou",
+    "brand": "Miracase",
+    "image": "/images/placeholder-product.svg",
+    "images": [
+      "/images/placeholder-product.svg"
+    ],
+    "price": 21.99,
+    "originalPrice": 21.99,
+    "rating": 4.3,
+    "reviewCount": 100,
+    "featured": true,
+    "flash": false
+  },
+  {
+    "asin": "B0FLWB7GK8",
+    "category": "beauty",
+    "title": "Face Painting Kit for Kids, 42 Colors Professional Face Paint Makeup Kit Non-Toxic Water Activated Facepaint Palette with Brush, Stencil, Sponge, Gem, for Party",
+    "brand": "Face",
+    "image": "/images/placeholder-product.svg",
+    "images": [
+      "/images/placeholder-product.svg"
+    ],
+    "price": 18.98,
+    "originalPrice": 18.98,
+    "rating": 4.4,
+    "reviewCount": 100,
+    "featured": true,
+    "flash": false
+  },
+  {
+    "asin": "B0GYJGT7HC",
+    "category": "tools",
+    "title": "45000Pcs Rhinestones for Bedazzling Kit, 3mm Multicolor Flatback Gems, All-in-one Bedazzler Kit with 40ml Jewelry Glue and Complete Tools, Bedazzler Kit with Rh",
+    "brand": "KOLERRE",
+    "image": "/images/placeholder-product.svg",
+    "images": [
+      "/images/placeholder-product.svg"
+    ],
+    "price": 7.19,
+    "originalPrice": 7.19,
+    "rating": 4.9,
+    "reviewCount": 100,
+    "featured": true,
+    "flash": false
+  },
+  {
+    "asin": "B0GYZVHDYT",
+    "category": "electronics",
+    "title": "DIAMOND ART CLUB Shimmering Succulents Diamond Painting Kit, Fun DIY Crafts for Adults, Round Diamond Art Canvas, 13\" x 13\" (33 cm x 33 cm) : Arts, Crafts & Sew",
+    "brand": "DIAMOND",
+    "image": "/images/placeholder-product.svg",
+    "images": [
+      "/images/placeholder-product.svg"
+    ],
+    "price": 29.99,
+    "originalPrice": 29.99,
+    "rating": 4.8,
+    "reviewCount": 100,
+    "featured": true,
+    "flash": false
+  },
+  {
+    "asin": "B004Q69HIU",
+    "category": "pet-supplies",
+    "title": "Filtrete 20x25x1 Air Filter, MERV 11, MPR 1000, Allergens & Pet Dander, 3-Month AC and Furnace Filters, Cleaner Air, Reliable Airflow, 2 HVAC Filters (Actual Si",
+    "brand": "Filtrete",
+    "image": "/images/placeholder-product.svg",
+    "images": [
+      "/images/placeholder-product.svg"
+    ],
+    "price": 9.9,
+    "originalPrice": 33.35,
+    "rating": 4.8,
+    "reviewCount": 100,
+    "featured": true,
+    "flash": true
+  },
+  {
+    "asin": "B0FHJ7TKZM",
+    "category": "electronics",
+    "title": "Ring Battery Doorbell (newest model) — Retinal 2K with wide-angle video, up to 6x Enhanced Zoom, Two-Way Talk, and Built-In Battery, Speckled Gray",
+    "brand": "Ring",
+    "image": "https://m.media-amazon.com/images/I/71RqdVcRgDL._SL1500_.jpg",
+    "images": [
+      "https://m.media-amazon.com/images/I/71RqdVcRgDL._SL1500_.jpg"
+    ],
+    "price": 99.99,
+    "originalPrice": 99.99,
+    "rating": 4.4,
+    "reviewCount": 100,
+    "featured": true,
+    "flash": false
+  },
+  {
+    "asin": "B005GZ89WU",
+    "category": "pet-supplies",
+    "title": "Filtrete 16x25x1 Air Filter, MERV 11, MPR 1000, Allergens & Pet Dander, 3-Month AC and Furnace Filters, Cleaner Air, Reliable Airflow, 4 HVAC Filters (Actual Si",
+    "brand": "Filtrete",
+    "image": "/images/placeholder-product.svg",
+    "images": [
+      "/images/placeholder-product.svg"
+    ],
+    "price": 43.98,
+    "originalPrice": 59.75,
+    "rating": 4.8,
+    "reviewCount": 100,
+    "featured": true,
+    "flash": true
+  },
+  {
+    "asin": "B00TUDHFJC",
+    "category": "electronics",
+    "title": "Filtrete 16x25x1 Air Filter, MERV 13 MPR 1900, Allergens, Bacteria, Viruses & Air Pollutants, 3-Month AC/Furnace Filters, Cleaner Air Reliable Airflow, 2 HVAC F",
+    "brand": "Filtrete",
+    "image": "/images/placeholder-product.svg",
+    "images": [
+      "/images/placeholder-product.svg"
+    ],
+    "price": 13.48,
+    "originalPrice": 13.48,
+    "rating": 4.7,
+    "reviewCount": 100,
+    "featured": true,
+    "flash": false
+  },
+  {
+    "asin": "B0FJRLY2NT",
+    "category": "home-kitchen",
+    "title": "Upgraded One Way Window Privacy Film Sun Heat Blocking, Reflective Mirror Window Tint for Home Glass Windows Cover, Static Cling, Removable, Anti-UV, Anti-Glare",
+    "brand": "Upgraded",
+    "image": "/images/placeholder-product.svg",
+    "images": [
+      "/images/placeholder-product.svg"
+    ],
+    "price": 5.97,
+    "originalPrice": 7.99,
+    "rating": 4.4,
+    "reviewCount": 100,
+    "featured": true,
+    "flash": true
+  },
+  {
+    "asin": "B093C29J8H",
+    "category": "home-kitchen",
+    "title": "Tongs For Cooking - Heat Resistant 600 Degrees Stainless Steel Kitchen Tong,Heavy Duty Metal Locking Tongs - Perfect for Food,Salad and BBQ set of 3 (7\",9\" and ",
+    "brand": "Tongs",
+    "image": "/images/placeholder-product.svg",
+    "images": [
+      "/images/placeholder-product.svg"
+    ],
+    "price": 24,
+    "originalPrice": 24,
+    "rating": 4.8,
     "reviewCount": 100,
     "featured": true,
     "flash": false

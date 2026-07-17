@@ -34,6 +34,13 @@ async function checkAsin(asin: string): Promise<Verdict> {
     ) {
       return "dead";
     }
+    if (
+      /currently unavailable\.?\s*we don't know when|this item is no longer available/i.test(html) ||
+      (/currently unavailable/i.test(html) &&
+        !/name="submit\.add-to-cart"|id="add-to-cart-button"|add to cart/i.test(html))
+    ) {
+      return "dead";
+    }
     // Mobile pages sometimes omit productTitle — accept og:title / price / image as alive
     const hasProduct =
       /id="productTitle"|property="og:title"|og:image|"priceAmount"|data-asin=/i.test(html) &&
