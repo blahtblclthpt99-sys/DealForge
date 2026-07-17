@@ -1,3 +1,4 @@
+import Image from "next/image";
 import Link from "next/link";
 
 export function Footer() {
@@ -5,8 +6,19 @@ export function Footer() {
     <footer className="mt-auto border-t border-card-border bg-card">
       <div className="dn-container grid gap-8 py-12 md:grid-cols-4">
         <div className="md:col-span-2">
-          <p className="font-display text-2xl font-semibold text-forest">DealForge</p>
-          <p className="mt-2 max-w-md text-sm leading-relaxed text-forest-muted">
+          <Link href="/" className="inline-flex items-center gap-3">
+            <Image
+              src="/dealforge-logo.png"
+              alt="DealForge"
+              width={56}
+              height={56}
+              className="h-14 w-14 rounded-xl object-cover shadow-sm"
+            />
+            <span className="font-display text-2xl font-semibold tracking-tight text-forest-ink">
+              Deal<span className="text-[#F97316]">Forge</span>
+            </span>
+          </Link>
+          <p className="mt-3 max-w-md text-sm leading-relaxed text-forest-muted">
             Discover trending products, daily deals, and limited-time savings from trusted
             retailers. DealForge is a discovery platform — we do not sell products directly.
           </p>

@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useState } from "react";
@@ -9,7 +10,6 @@ import {
   Menu,
   Moon,
   Search,
-  ShoppingBag,
   Sun,
   User,
   X,
@@ -46,12 +46,22 @@ export function Header({
   return (
     <header className="sticky top-0 z-50 border-b border-card-border/80 bg-background/90 backdrop-blur-md">
       <div className="dn-container flex h-16 items-center gap-3 md:gap-6">
-        <Link href="/" className="flex shrink-0 items-center gap-2" onClick={() => setMenuPath(null)}>
-          <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-forest text-white shadow-sm">
-            <ShoppingBag className="h-4 w-4" />
-          </span>
+        <Link
+          href="/"
+          className="flex shrink-0 items-center gap-2.5"
+          onClick={() => setMenuPath(null)}
+          aria-label="DealForge home"
+        >
+          <Image
+            src="/dealforge-logo.png"
+            alt="DealForge"
+            width={44}
+            height={44}
+            className="h-10 w-10 rounded-xl object-cover shadow-sm"
+            priority
+          />
           <span className="font-display text-xl font-semibold tracking-tight text-forest-ink">
-            DealForge
+            Deal<span className="text-[#F97316]">Forge</span>
           </span>
         </Link>
 
