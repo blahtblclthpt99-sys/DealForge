@@ -57,7 +57,13 @@ export default async function RootLayout({
     <html lang="en" className={`${manrope.variable} ${fraunces.variable} h-full`} suppressHydrationWarning>
       <body className="flex min-h-full flex-col antialiased">
         <ThemeProvider>
-          <Header user={session ? { name: session.name, role: session.role } : null} />
+          <Header
+            user={
+              session
+                ? { name: session.name, role: session.role, email: session.email }
+                : null
+            }
+          />
           <main className="flex-1">{children}</main>
           <Footer />
         </ThemeProvider>

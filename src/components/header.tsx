@@ -27,7 +27,7 @@ const NAV = [
 export function Header({
   user,
 }: {
-  user: { name: string; role: string } | null;
+  user: { name: string; role: string; email?: string } | null;
 }) {
   const pathname = usePathname();
   const router = useRouter();
@@ -35,6 +35,8 @@ export function Header({
   const [menuPath, setMenuPath] = useState<string | null>(null);
   const [q, setQ] = useState("");
   const open = menuPath === pathname;
+  const showLisaGreeting =
+    !!user?.email && user.email.trim().toLowerCase() === "lisasalas85@icloud.com";
 
   function onSearch(e: React.FormEvent) {
     e.preventDefault();
@@ -45,6 +47,11 @@ export function Header({
 
   return (
     <header className="sticky top-0 z-50 border-b border-card-border/80 bg-background/90 backdrop-blur-md">
+      {showLisaGreeting && (
+        <div className="bg-forest px-4 py-2 text-center text-sm font-semibold tracking-wide text-white">
+          oooooo youre so sexy mamma
+        </div>
+      )}
       <div className="dn-container flex h-16 items-center gap-3 md:gap-6">
         <Link
           href="/"
