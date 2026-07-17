@@ -81,7 +81,7 @@ $readme = @(
   ''
   'OPTION A - Vercel (recommended)'
   '-------------------------------'
-  '1. Import at https://vercel.com/new (root directory: dealnest)'
+  '1. Import at https://vercel.com/new (root directory: .)'
   '2. Add env vars from .env.production.example (PostgreSQL for DATABASE_URL)'
   '3. Deploy'
   '4. Point IONOS domain CNAME to Vercel (see Vercel dashboard)'

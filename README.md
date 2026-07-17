@@ -14,9 +14,8 @@ Modern affiliate product discovery platform. DealForge aggregates products from 
 ## Quick start
 
 ```bash
-cd dealnest
 npm install
-cp .env.example .env   # already seeded with titanfieldos-20
+cp .env.example .env
 npm run db:setup       # prisma db push + seed
 npm run dev
 ```
@@ -88,7 +87,6 @@ DealForge is a full Next.js app (API routes + database). It cannot run on plain 
 ### Quick — Vercel (recommended)
 
 ```bash
-cd dealnest
 npm i -g vercel   # once
 vercel login
 vercel --prod
@@ -103,7 +101,6 @@ Point your domain (IONOS, etc.): add a **CNAME** for `www` to your Vercel projec
 Same workflow as TitanOS `ionos:package`, but runs a Node server instead of static files:
 
 ```bash
-cd dealnest
 npm run website:package
 ```
 

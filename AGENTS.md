@@ -1,6 +1,6 @@
 # DealForge agent notes
 
-- App root: `dealnest/`
+- App root: project repository root (DealForge)
 - Amazon tag: `titanfieldos-20`
 - Affiliate connectors: `src/lib/affiliate/`
 - Seed: `npm run db:setup`

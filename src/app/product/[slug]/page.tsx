@@ -170,13 +170,7 @@ export default async function ProductPage({ params }: Props) {
             rel="noopener noreferrer sponsored nofollow"
             className="mt-6 inline-flex items-center gap-2 text-sm text-forest hover:underline"
           >
-            View on{" "}
-            {product.retailer === "ebay"
-              ? "eBay"
-              : product.retailer === "aliexpress"
-                ? "AliExpress"
-                : "Amazon"}{" "}
-            <ExternalLink className="h-3.5 w-3.5" />
+            View listing <ExternalLink className="h-3.5 w-3.5" />
           </a>
         </div>
       </div>
