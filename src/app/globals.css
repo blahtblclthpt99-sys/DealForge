@@ -1,0 +1,123 @@
+@import "tailwindcss";
+
+:root {
+  --forest-primary: #2e8b4a;
+  --forest-primary-dark: #328246;
+  --forest-accent: #6fbf73;
+  --forest-bg: #f5f8f5;
+  --forest-ink: #1a2e22;
+  --forest-muted: #5a7262;
+  --card: #ffffff;
+  --card-border: #e2ebe4;
+  --background: #f5f8f5;
+  --foreground: #1a2e22;
+  --ring: #2e8b4a;
+}
+
+.dark {
+  --forest-primary: #6fbf73;
+  --forest-primary-dark: #2e8b4a;
+  --forest-accent: #8fd492;
+  --forest-bg: #0f1a13;
+  --forest-ink: #e8f2ea;
+  --forest-muted: #9bb5a4;
+  --card: #16251c;
+  --card-border: #24362b;
+  --background: #0f1a13;
+  --foreground: #e8f2ea;
+  --ring: #6fbf73;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-forest: var(--forest-primary);
+  --color-forest-dark: var(--forest-primary-dark);
+  --color-forest-accent: var(--forest-accent);
+  --color-forest-bg: var(--forest-bg);
+  --color-forest-ink: var(--forest-ink);
+  --color-forest-muted: var(--forest-muted);
+  --color-card: var(--card);
+  --color-card-border: var(--card-border);
+  --font-sans: var(--font-manrope);
+  --font-display: var(--font-fraunces);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-manrope), "Segoe UI", sans-serif;
+  min-height: 100vh;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--forest-accent) 45%, white);
+  color: var(--forest-ink);
+}
+
+.dn-card {
+  background: var(--card);
+  border: 1px solid var(--card-border);
+  border-radius: 1rem;
+  box-shadow: 0 8px 24px rgba(30, 70, 45, 0.06);
+}
+
+.dark .dn-card {
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+}
+
+.dn-container {
+  width: 100%;
+  max-width: 72rem;
+  margin-inline: auto;
+  padding-inline: 1rem;
+}
+
+@media (min-width: 768px) {
+  .dn-container {
+    padding-inline: 1.5rem;
+  }
+}
+
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+.animate-fade-up {
+  animation: fade-up 0.55s ease both;
+}
+
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--forest-accent) 12%, var(--card)) 25%,
+    color-mix(in srgb, var(--forest-accent) 22%, var(--card)) 50%,
+    color-mix(in srgb, var(--forest-accent) 12%, var(--card)) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.4s infinite linear;
+}

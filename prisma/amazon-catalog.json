@@ -1,0 +1,186 @@
+[
+  {
+    "asin": "B09XS7JWHH",
+    "category": "electronics",
+    "title": "Sony WH-1000XM5 Wireless Noise Canceling Headphones",
+    "brand": "Sony",
+    "image": "https://m.media-amazon.com/images/I/61O3iMlnJIL._AC_SL1500_.jpg",
+    "price": 328,
+    "originalPrice": 399.99,
+    "rating": 4.6,
+    "reviewCount": 12840,
+    "featured": true,
+    "flash": true,
+    "images": [
+      "https://m.media-amazon.com/images/I/61O3iMlnJIL._AC_SL1500_.jpg"
+    ]
+  },
+  {
+    "asin": "B08C1W5N87",
+    "category": "electronics",
+    "title": "Fire TV Stick Streaming Device with Alexa Voice Remote",
+    "brand": "Amazon",
+    "image": "https://m.media-amazon.com/images/I/71Wt1thqZEL._AC_SL1500_.jpg",
+    "price": 24.99,
+    "originalPrice": 39.99,
+    "rating": 4.5,
+    "reviewCount": 89000,
+    "featured": true,
+    "flash": true,
+    "images": [
+      "https://m.media-amazon.com/images/I/71Wt1thqZEL._AC_SL1500_.jpg"
+    ]
+  },
+  {
+    "asin": "B09B8V1LZ3",
+    "category": "electronics",
+    "title": "Echo Dot (5th Gen) Smart Speaker with Alexa",
+    "brand": "Amazon",
+    "image": "https://m.media-amazon.com/images/I/61J2sQtBYDL._AC_SL1500_.jpg",
+    "price": 29.99,
+    "originalPrice": 49.99,
+    "rating": 4.7,
+    "reviewCount": 210000,
+    "featured": true,
+    "flash": true,
+    "images": [
+      "https://m.media-amazon.com/images/I/61J2sQtBYDL._AC_SL1500_.jpg"
+    ]
+  },
+  {
+    "asin": "B08L5M9BTJ",
+    "category": "electronics",
+    "title": "Apple 20W USB-C Power Adapter",
+    "brand": "Apple",
+    "image": "https://m.media-amazon.com/images/I/41iWogJnZQL._AC_SL500_.jpg",
+    "price": 19,
+    "originalPrice": 19,
+    "rating": 4.7,
+    "reviewCount": 120000,
+    "featured": true,
+    "images": [
+      "https://m.media-amazon.com/images/I/41iWogJnZQL._AC_SL500_.jpg"
+    ]
+  },
+  {
+    "asin": "B08GYKNCCP",
+    "category": "electronics",
+    "title": "SanDisk 128GB Ultra microSDXC UHS-I Memory Card with Adapter",
+    "brand": "SanDisk",
+    "image": "https://m.media-amazon.com/images/I/61EF7HnrWqL._AC_SL1500_.jpg",
+    "price": 12.99,
+    "originalPrice": 24.99,
+    "rating": 4.7,
+    "reviewCount": 450000,
+    "flash": true,
+    "images": [
+      "https://m.media-amazon.com/images/I/61EF7HnrWqL._AC_SL1500_.jpg"
+    ]
+  },
+  {
+    "asin": "B09V3HN1KC",
+    "category": "electronics",
+    "title": "Apple iPad Air (5th Generation) 10.9-inch Wi-Fi 64GB",
+    "brand": "Apple",
+    "image": "https://m.media-amazon.com/images/I/61XZQXFQeVL._AC_SL1500_.jpg",
+    "price": 449,
+    "originalPrice": 599,
+    "rating": 4.8,
+    "reviewCount": 18000,
+    "featured": true,
+    "images": [
+      "https://m.media-amazon.com/images/I/61XZQXFQeVL._AC_SL1500_.jpg"
+    ]
+  },
+  {
+    "asin": "B07FZ8S74R",
+    "category": "electronics",
+    "title": "Echo Dot (3rd Gen) Smart Speaker with Alexa",
+    "brand": "Amazon",
+    "image": "https://m.media-amazon.com/images/I/61MZfowYoaL._AC_SL1000_.jpg",
+    "price": 19.99,
+    "originalPrice": 39.99,
+    "rating": 4.7,
+    "reviewCount": 500000,
+    "images": [
+      "https://m.media-amazon.com/images/I/61MZfowYoaL._AC_SL1000_.jpg"
+    ]
+  },
+  {
+    "asin": "B07VP37KMB",
+    "category": "electronics",
+    "title": "4K HDMI Splitter 1x2 HDR Compatible",
+    "brand": "Compat",
+    "image": "https://m.media-amazon.com/images/I/71p0Thwj7vL._AC_SL1500_.jpg",
+    "price": 15.99,
+    "originalPrice": 29.99,
+    "rating": 4.4,
+    "reviewCount": 8000,
+    "flash": true,
+    "images": [
+      "https://m.media-amazon.com/images/I/71p0Thwj7vL._AC_SL1500_.jpg"
+    ]
+  },
+  {
+    "asin": "B00006JSUA",
+    "category": "home-kitchen",
+    "title": "Lodge Seasoned Cast Iron Skillet, 10.25 Inch",
+    "brand": "Lodge",
+    "image": "https://m.media-amazon.com/images/I/71iH2iNxTZL._AC_SL1500_.jpg",
+    "price": 19.9,
+    "originalPrice": 29.9,
+    "rating": 4.8,
+    "reviewCount": 98000,
+    "featured": true,
+    "images": [
+      "https://m.media-amazon.com/images/I/71iH2iNxTZL._AC_SL1500_.jpg"
+    ]
+  },
+  {
+    "asin": "B00FLYWNYQ",
+    "category": "home-kitchen",
+    "title": "Instant Pot Duo 7-in-1 Electric Pressure Cooker, 6 Quart",
+    "brand": "Instant Pot",
+    "image": "https://m.media-amazon.com/images/I/71Z401LjFFL._AC_SL1500_.jpg",
+    "price": 79.95,
+    "originalPrice": 129.95,
+    "rating": 4.6,
+    "reviewCount": 210000,
+    "featured": true,
+    "flash": true,
+    "images": [
+      "https://m.media-amazon.com/images/I/71Z401LjFFL._AC_SL1500_.jpg"
+    ]
+  },
+  {
+    "asin": "B01N1UX8RW",
+    "category": "sports",
+    "title": "RENPHO Smart Scale for Body Weight with BMI and Body Fat",
+    "brand": "RENPHO",
+    "image": "https://m.media-amazon.com/images/I/61KqTsLN+pL._SL1500_.jpg",
+    "price": 26.99,
+    "originalPrice": 39.99,
+    "rating": 4.5,
+    "reviewCount": 120000,
+    "featured": true,
+    "images": [
+      "https://m.media-amazon.com/images/I/61KqTsLN+pL._SL1500_.jpg"
+    ]
+  },
+  {
+    "asin": "B01AVDVHTI",
+    "category": "sports",
+    "title": "Fit Simplify Resistance Loop Exercise Bands, Set of 5",
+    "brand": "Fit Simplify",
+    "image": "https://m.media-amazon.com/images/I/71S4-NjoTDL._AC_SL1500_.jpg",
+    "price": 12.95,
+    "originalPrice": 19.95,
+    "rating": 4.5,
+    "reviewCount": 200000,
+    "featured": true,
+    "flash": true,
+    "images": [
+      "https://m.media-amazon.com/images/I/71S4-NjoTDL._AC_SL1500_.jpg"
+    ]
+  }
+]

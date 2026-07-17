@@ -1,0 +1,12 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "nextjs",
+  "buildCommand": "prisma generate && next build",
+  "installCommand": "npm install",
+  "regions": ["iad1"],
+  "env": {
+    "AMAZON_ASSOCIATE_TAG": "titanfieldos-20",
+    "AMAZON_PARTNER_TAG": "titanfieldos-20",
+    "NEXT_PUBLIC_APP_NAME": "DealForge"
+  }
+}
