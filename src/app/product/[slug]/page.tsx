@@ -69,6 +69,7 @@ export default async function ProductPage({ params }: Props) {
           <ProductImage
             src={product.images[0]}
             alt={product.title}
+            asin={product.asin}
             priority
             className="aspect-square w-full object-contain p-6"
           />
@@ -78,6 +79,7 @@ export default async function ProductPage({ params }: Props) {
                 <ProductImage
                   key={img}
                   src={img}
+                  asin={product.asin}
                   alt=""
                   className="aspect-square rounded-lg object-contain p-1"
                 />

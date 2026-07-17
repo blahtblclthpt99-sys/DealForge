@@ -237,3 +237,13 @@ $RECYCLE.BIN/
 .env.*.local
 !.env.example
 !.env.production.example
+
+# Ephemeral enrich/scrape artifacts
+/prisma/enrich-queue.json
+/prisma/enrich-results.jsonl
+/prisma/enrich-batch-asins.json
+/prisma/batch*.json
+/prisma/batch*.txt
+/prisma/last-batch.json
+/prisma/enrich-runner*.js
+/prisma/set-asins.js

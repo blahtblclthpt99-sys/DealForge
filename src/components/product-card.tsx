@@ -46,6 +46,7 @@ export function ProductCard({
         <ProductImage
           src={image}
           alt={product.title}
+          asin={product.asin}
           className="h-full w-full object-contain p-3 transition duration-500 group-hover:scale-105"
         />
         {save && (

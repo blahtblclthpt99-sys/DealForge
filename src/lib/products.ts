@@ -137,7 +137,15 @@ export type ProductQuery = {
 };
 
 function buildWhere(params: ProductQuery): Prisma.ProductWhereInput {
-  const where: Prisma.ProductWhereInput = {};
+  const where: Prisma.ProductWhereInput = {
+    // Hide CDN stubs until live Amazon title/price enrichment succeeds
+    AND: [
+      { NOT: { specifications: { contains: '"needsEnrichment":true' } } },
+      { NOT: { specifications: { contains: '"needsEnrichment": true' } } },
+      { NOT: { title: { startsWith: "Coach product " } } },
+      { NOT: { title: { startsWith: "Amazon listing " } } },
+    ],
+  };
 
   if (params.q) {
     where.OR = [
@@ -196,7 +204,7 @@ function buildOrderBy(params: ProductQuery): Prisma.ProductOrderByWithRelationIn
 export async function queryProducts(params: ProductQuery) {
   const page = Math.max(1, params.page ?? 1);
   const limit = Math.min(48, Math.max(1, params.limit ?? 24));
-  const cacheKey = `products:v3:${JSON.stringify(params)}`;
+  const cacheKey = `products:v4:${JSON.stringify(params)}`;
   const cached = await cacheGet<{
     items: ProductDTO[];
     total: number;
@@ -209,7 +217,7 @@ export async function queryProducts(params: ProductQuery) {
   const orderBy = buildOrderBy(params);
   const skip = (page - 1) * limit;
 
-  const countKey = `products:count:v3:${JSON.stringify({
+  const countKey = `products:count:v4:${JSON.stringify({
     q: params.q,
     category: params.category,
     subcategory: params.subcategory,
