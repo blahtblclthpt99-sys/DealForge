@@ -29,6 +29,6 @@ export function parseJson<T>(value: string, fallback: T): T {
 }
 
 export function discountLabel(percent: number) {
-  if (percent <= 0) return null;
+  if (percent <= 0 || percent >= 70) return null;
   return `${Math.round(percent)}% off`;
 }

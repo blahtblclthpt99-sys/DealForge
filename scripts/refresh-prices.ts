@@ -36,10 +36,11 @@ function extractPrice(html: string) {
 }
 
 function extractList(html: string, price: number) {
-  const m = html.match(/List Price[^$]*\$([0-9,]+\.?[0-9]*)/i);
+  const m = html.match(/List Price[^$]{0,40}\$([0-9,]+\.?[0-9]*)/i);
   if (m?.[1]) {
     const v = parseFloat(m[1].replace(/,/g, ""));
-    if (v > price) return v;
+    // Reject absurd list prices (scrape garbage / wrong fields)
+    if (v > price && v <= price * 2.5 && v < 5000) return v;
   }
   return price;
 }
@@ -96,6 +97,28 @@ export async function refreshStalePrices(options?: {
           data: { lastUpdated: new Date() },
         });
         await sleep(1500);
+        continue;
+      }
+
+      // Reject wild swings — usually wrong field scraped from the page
+      if (row.price > 5 && scraped.price < row.price * 0.25) {
+        failed += 1;
+        log(`SKIP ${row.asin}  suspicious drop $${row.price} → $${scraped.price}`);
+        await prisma.product.update({
+          where: { id: row.id },
+          data: { lastUpdated: new Date() },
+        });
+        await sleep(1200);
+        continue;
+      }
+      if (row.price > 0 && scraped.price > row.price * 4 && scraped.price > 100) {
+        failed += 1;
+        log(`SKIP ${row.asin}  suspicious jump $${row.price} → $${scraped.price}`);
+        await prisma.product.update({
+          where: { id: row.id },
+          data: { lastUpdated: new Date() },
+        });
+        await sleep(1200);
         continue;
       }
 

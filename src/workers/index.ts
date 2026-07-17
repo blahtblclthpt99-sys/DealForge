@@ -39,10 +39,10 @@ function extractPrice(html: string) {
 }
 
 function extractList(html: string, price: number) {
-  const m = html.match(/List Price[^$]*\$([0-9,]+\.?[0-9]*)/i);
+  const m = html.match(/List Price[^$]{0,40}\$([0-9,]+\.?[0-9]*)/i);
   if (m?.[1]) {
     const v = parseFloat(m[1].replace(/,/g, ""));
-    if (v > price) return v;
+    if (v > price && v <= price * 2.5 && v < 5000) return v;
   }
   return price;
 }

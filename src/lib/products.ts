@@ -49,12 +49,31 @@ function cleanImages(raw: string): string[] {
   return normalized.length ? Array.from(new Set(normalized)) : ["/images/placeholder-product.svg"];
 }
 
+/** Guard against scrape garbage like $6 sale / $2014 list = 100% off. */
+function sanitizePricing(price: number, originalPrice: number, discountPercent: number) {
+  let p = Number.isFinite(price) && price > 0 ? price : 0;
+  let o = Number.isFinite(originalPrice) && originalPrice > 0 ? originalPrice : p;
+  let d = Number.isFinite(discountPercent) ? discountPercent : 0;
+
+  if (o < p) o = p;
+  if (o > p * 2.5 || d >= 70 || (o >= 500 && d >= 50)) {
+    o = p;
+    d = 0;
+  } else if (o > p) {
+    d = Math.round(((o - p) / o) * 1000) / 10;
+  } else {
+    d = 0;
+  }
+  return { price: p, originalPrice: o, discountPercent: d };
+}
+
 export function toProductDTO(p: ProductWithCategory | Prisma.ProductGetPayload<object>): ProductDTO {
   const withCat = p as ProductWithCategory;
   const images = cleanImages(p.images);
   const specs = parseJson<Record<string, string>>(p.specifications, {});
+  const pricing = sanitizePricing(p.price, p.originalPrice, p.discountPercent);
   const dtoBase = {
-    discountPercent: p.discountPercent,
+    discountPercent: pricing.discountPercent,
     rating: p.rating,
     reviewCount: p.reviewCount,
     trendingScore: p.trendingScore,
@@ -75,9 +94,9 @@ export function toProductDTO(p: ProductWithCategory | Prisma.ProductGetPayload<o
     categoryName: withCat.category?.name,
     subcategory: p.subcategory ?? null,
     images,
-    price: p.price,
-    originalPrice: p.originalPrice,
-    discountPercent: p.discountPercent,
+    price: pricing.price,
+    originalPrice: pricing.originalPrice,
+    discountPercent: pricing.discountPercent,
     rating: p.rating,
     reviewCount: p.reviewCount,
     affiliateUrl: generateAffiliateLink(p.retailer, {
