@@ -6,6 +6,9 @@
   "scripts": {
     "dev": "next dev",
     "build": "prisma generate && next build",
+    "build:vercel": "prisma generate --schema=prisma/schema.postgres.prisma && next build",
+    "db:push:postgres": "prisma db push --schema=prisma/schema.postgres.prisma",
+    "db:setup:postgres": "prisma db push --schema=prisma/schema.postgres.prisma && tsx prisma/seed.ts",
     "start": "next start",
     "lint": "eslint .",
     "db:generate": "prisma generate",

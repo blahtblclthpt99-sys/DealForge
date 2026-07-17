@@ -1,0 +1,151 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id              String   @id @default(cuid())
+  name            String
+  email           String   @unique
+  passwordHash    String
+  role            String   @default("user") // user | admin
+  wishlist        String   @default("[]") // JSON array of product ids
+  savedSearches   String   @default("[]") // JSON array of SavedSearch
+  recentlyViewed  String   @default("[]") // JSON array of product ids
+  priceAlerts     String   @default("[]") // JSON array of PriceAlert
+  settings        String   @default("{}") // JSON account settings
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  clicks          ClickEvent[]
+}
+
+model Category {
+  id        String    @id @default(cuid())
+  name      String
+  slug      String    @unique
+  icon      String
+  products  Product[]
+  createdAt DateTime  @default(now())
+}
+
+model Product {
+  id               String   @id @default(cuid())
+  asin             String?
+  slug             String   @unique
+  title            String
+  description      String
+  brand            String
+  categoryId       String
+  category         Category @relation(fields: [categoryId], references: [id])
+  /** Clothing dept: mens | womens | children | infant | unisex | shoes | accessories */
+  subcategory      String?
+  images           String   // JSON string array
+  price            Float
+  originalPrice    Float
+  discountPercent  Float    @default(0)
+  rating           Float    @default(0)
+  reviewCount      Int      @default(0)
+  affiliateUrl     String
+  retailer         String   @default("amazon")
+  availability     String   @default("in_stock")
+  specifications   String   @default("{}") // JSON
+  trendingScore    Float    @default(0)
+  clickCount       Int      @default(0)
+  viewCount        Int      @default(0)
+  isFeatured       Boolean  @default(false)
+  isFlashDeal      Boolean  @default(false)
+  flashEndsAt      DateTime?
+  lastUpdated      DateTime @default(now())
+  createdAt        DateTime @default(now())
+
+  clicks ClickEvent[]
+
+  @@index([categoryId])
+  @@index([subcategory])
+  @@index([asin])
+  @@index([discountPercent])
+  @@index([rating])
+  @@index([trendingScore])
+  @@index([createdAt])
+  @@index([price])
+  @@index([brand])
+  @@index([isFeatured])
+  @@index([isFlashDeal])
+}
+
+model AffiliateProvider {
+  id             String   @id @default(cuid())
+  provider       String   @unique
+  displayName    String
+  trackingId     String   @default("")
+  apiCredentials String   @default("{}") // JSON encrypted at rest in production
+  enabled        Boolean  @default(false)
+  lastSyncAt     DateTime?
+  lastSyncStatus String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}
+
+model ClickEvent {
+  id        String   @id @default(cuid())
+  productId String
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  source    String   @default("web")
+  createdAt DateTime @default(now())
+
+  @@index([productId])
+  @@index([createdAt])
+}
+
+model ImportJob {
+  id           String   @id @default(cuid())
+  provider     String
+  status       String   @default("pending") // pending | running | success | error
+  itemsTotal   Int      @default(0)
+  itemsSuccess Int      @default(0)
+  itemsFailed  Int      @default(0)
+  errorLog     String   @default("[]")
+  startedAt    DateTime?
+  finishedAt   DateTime?
+  createdAt    DateTime @default(now())
+}
+
+model ApiUsageLog {
+  id        String   @id @default(cuid())
+  provider  String
+  endpoint  String
+  status    Int
+  latencyMs Int
+  createdAt DateTime @default(now())
+
+  @@index([provider])
+  @@index([createdAt])
+}
+
+model SystemLog {
+  id        String   @id @default(cuid())
+  level     String   @default("info")
+  source    String
+  message   String
+  meta      String   @default("{}")
+  createdAt DateTime @default(now())
+
+  @@index([level])
+  @@index([createdAt])
+}
+
+model CacheEntry {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  value     String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([expiresAt])
+}

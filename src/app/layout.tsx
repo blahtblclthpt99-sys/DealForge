@@ -16,6 +16,21 @@ const fraunces = Fraunces({
   subsets: ["latin"],
 });
 
+function resolveAppUrl() {
+  const raw = process.env.NEXT_PUBLIC_APP_URL?.trim();
+  if (raw) {
+    try {
+      return new URL(raw);
+    } catch {
+      /* fall through */
+    }
+  }
+  if (process.env.VERCEL_URL) {
+    return new URL(`https://${process.env.VERCEL_URL}`);
+  }
+  return new URL("http://localhost:3000");
+}
+
 export const metadata: Metadata = {
   title: {
     default: "DealForge — Discover the best deals",
@@ -23,7 +38,7 @@ export const metadata: Metadata = {
   },
   description:
     "DealForge helps you discover trending products, flash deals, and savings from affiliate retailers including Amazon, eBay, and AliExpress.",
-  metadataBase: new URL(process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"),
+  metadataBase: resolveAppUrl(),
 };
 
 export default async function RootLayout({
@@ -31,7 +46,12 @@ export default async function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  const session = await readSession();
+  let session = null;
+  try {
+    session = await readSession();
+  } catch {
+    session = null;
+  }
 
   return (
     <html lang="en" className={`${manrope.variable} ${fraunces.variable} h-full`} suppressHydrationWarning>
