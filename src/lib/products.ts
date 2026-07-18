@@ -137,6 +137,13 @@ export type ProductQuery = {
 };
 
 function buildWhere(params: ProductQuery): Prisma.ProductWhereInput {
+  // Postgres (production) supports case-insensitive contains; SQLite does not.
+  const ci =
+    process.env.DATABASE_URL?.startsWith("postgres") ||
+    process.env.DATABASE_URL?.startsWith("postgresql")
+      ? ({ mode: "insensitive" as const })
+      : {};
+
   const where: Prisma.ProductWhereInput = {
     // Hide CDN stubs until live Amazon title/price enrichment succeeds
     AND: [
@@ -149,14 +156,14 @@ function buildWhere(params: ProductQuery): Prisma.ProductWhereInput {
 
   if (params.q) {
     where.OR = [
-      { title: { contains: params.q } },
-      { brand: { contains: params.q } },
-      { description: { contains: params.q } },
+      { title: { contains: params.q, ...ci } },
+      { brand: { contains: params.q, ...ci } },
+      { description: { contains: params.q, ...ci } },
     ];
   }
   if (params.category) where.category = { slug: params.category };
   if (params.subcategory) where.subcategory = params.subcategory;
-  if (params.brand) where.brand = { contains: params.brand };
+  if (params.brand) where.brand = { contains: params.brand, ...ci };
   if (params.minPrice != null || params.maxPrice != null) {
     where.price = {};
     if (params.minPrice != null) where.price.gte = params.minPrice;
@@ -204,7 +211,7 @@ function buildOrderBy(params: ProductQuery): Prisma.ProductOrderByWithRelationIn
 export async function queryProducts(params: ProductQuery) {
   const page = Math.max(1, params.page ?? 1);
   const limit = Math.min(48, Math.max(1, params.limit ?? 24));
-  const cacheKey = `products:v4:${JSON.stringify(params)}`;
+  const cacheKey = `products:v5:${JSON.stringify(params)}`;
   const cached = await cacheGet<{
     items: ProductDTO[];
     total: number;
