@@ -4,7 +4,8 @@
  */
 export function parseQuantityFromTitle(title: string): number | null {
   if (!title) return null;
-  const t = title.replace(/,/g, "");
+  // Keep structural commas; only strip thousands separators (e.g. 1,008 -> 1008)
+  const t = title.replace(/(\d),(\d{3})\b/g, "$1$2");
 
   const patterns: RegExp[] = [
     /\b(\d{1,5})\s*(?:count|ct\.?|pcs?|pieces?|wipes?|diapers?|pads?)\b/i,
