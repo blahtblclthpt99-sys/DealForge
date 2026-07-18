@@ -7,6 +7,7 @@ import { PrismaClient } from "@prisma/client";
 import { slugify } from "../src/lib/utils";
 import { amazonDpLink } from "../src/lib/affiliate/providers/amazon";
 import { normalizeProductImage } from "../src/lib/product-image";
+import { parseQuantityFromTitle } from "../src/lib/quantity";
 
 const LIMIT = (() => {
   const i = process.argv.indexOf("--limit");
@@ -258,6 +259,7 @@ async function main() {
         categoryId: cat.id,
         subcategory,
         images: JSON.stringify([scraped.image]),
+        quantity: parseQuantityFromTitle(scraped.title),
         price: scraped.price,
         originalPrice: scraped.originalPrice,
         discountPercent: discount,

@@ -6,6 +6,7 @@ import { useState } from "react";
 import type { ProductDTO } from "@/lib/products";
 import { ProductImage } from "@/components/product-image";
 import { cn, discountLabel, formatPrice } from "@/lib/utils";
+import { formatQuantityLabel } from "@/lib/quantity";
 
 export function ProductCard({
   product,
@@ -19,6 +20,7 @@ export function ProductCard({
   const [liked, setLiked] = useState(wishlisted);
   const image = product.images[0];
   const save = discountLabel(product.discountPercent);
+  const qnty = formatQuantityLabel(product.quantity);
 
   async function toggleWish(e: React.MouseEvent) {
     e.preventDefault();
@@ -69,6 +71,7 @@ export function ProductCard({
       <div className="flex flex-1 flex-col gap-2 p-4">
         <p className="text-xs font-medium uppercase tracking-wide text-forest-muted">
           {product.brand}
+          {qnty ? <span className="text-forest"> · {qnty}</span> : null}
         </p>
         <h3 className="line-clamp-2 text-sm font-semibold leading-snug text-forest-ink">
           {product.title}

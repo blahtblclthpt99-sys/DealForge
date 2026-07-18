@@ -44,6 +44,8 @@ model Product {
   /** Clothing dept: mens | womens | children | infant | unisex | shoes | accessories */
   subcategory      String?
   images           String   // JSON string array
+  /** Pack / unit count when known (e.g. 132 diapers). Shown as QNTY. */
+  quantity         Int?
   price            Float
   originalPrice    Float
   discountPercent  Float    @default(0)

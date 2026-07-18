@@ -7,6 +7,7 @@ import { generateAffiliateLink } from "./affiliate/registry";
 import { computeRankScore } from "./ranking";
 import { parseJson } from "./utils";
 import { normalizeProductImage } from "./product-image";
+import { parseQuantityFromTitle } from "./quantity";
 import type { Prisma } from "@prisma/client";
 
 export type ProductDTO = {
@@ -21,6 +22,8 @@ export type ProductDTO = {
   categoryName?: string;
   subcategory: string | null;
   images: string[];
+  /** Pack / unit count when known */
+  quantity: number | null;
   price: number;
   originalPrice: number;
   discountPercent: number;
@@ -94,6 +97,7 @@ export function toProductDTO(p: ProductWithCategory | Prisma.ProductGetPayload<o
     categoryName: withCat.category?.name,
     subcategory: p.subcategory ?? null,
     images,
+    quantity: p.quantity != null && p.quantity >= 1 ? p.quantity : parseQuantityFromTitle(p.title),
     price: pricing.price,
     originalPrice: pricing.originalPrice,
     discountPercent: pricing.discountPercent,
@@ -211,7 +215,7 @@ function buildOrderBy(params: ProductQuery): Prisma.ProductOrderByWithRelationIn
 export async function queryProducts(params: ProductQuery) {
   const page = Math.max(1, params.page ?? 1);
   const limit = Math.min(48, Math.max(1, params.limit ?? 24));
-  const cacheKey = `products:v5:${JSON.stringify(params)}`;
+  const cacheKey = `products:v6:${JSON.stringify(params)}`;
   const cached = await cacheGet<{
     items: ProductDTO[];
     total: number;

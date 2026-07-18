@@ -15,6 +15,7 @@ import {
   recordProductView,
 } from "@/lib/products";
 import { parseJson, formatPrice, discountLabel } from "@/lib/utils";
+import { formatQuantityLabel } from "@/lib/quantity";
 
 type Props = { params: Promise<{ slug: string }> };
 
@@ -61,6 +62,7 @@ export default async function ProductPage({ params }: Props) {
   ]);
 
   const save = discountLabel(product.discountPercent);
+  const qnty = formatQuantityLabel(product.quantity);
 
   return (
     <div className="dn-container py-10">
@@ -99,6 +101,11 @@ export default async function ProductPage({ params }: Props) {
               <Star className="h-3.5 w-3.5 fill-amber-400 text-amber-400" />
               {product.rating.toFixed(1)} · {product.reviewCount.toLocaleString()} reviews
             </span>
+            {qnty && (
+              <span className="rounded-full bg-forest px-3 py-1 text-xs font-semibold uppercase tracking-wide text-white">
+                {qnty}
+              </span>
+            )}
             {product.categoryName && (
               <Link
                 href={`/categories/${product.categorySlug}`}
@@ -133,6 +140,11 @@ export default async function ProductPage({ params }: Props) {
               </span>
             )}
           </div>
+          {qnty && (
+            <p className="mt-2 text-sm font-medium text-forest-ink">
+              Pack quantity: <span className="text-forest">{product.quantity?.toLocaleString()}</span>
+            </p>
+          )}
           <p className="mt-1 text-[11px] text-forest-muted/70">
             Price as of {new Date(product.lastUpdated).toLocaleDateString()}
           </p>
