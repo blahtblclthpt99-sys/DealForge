@@ -13,6 +13,9 @@ export function parseQuantityFromTitle(title: string): number | null {
     /\b(\d{1,5})\s*(?:-?\s*)?pack(?:s)?\b/i,
     /\b(\d{1,5})\s*x\s*(?:flip[- ]?top|packs?)\b/i,
     /\((\d{1,5})\s*(?:count|ct\.?|pcs?|pack)\)/i,
+    // Amazon diaper style: "Size 4 (22-37 lbs), 108, Up to 100%..."
+    /\)\s*,\s*(\d{2,5})\s*,/i,
+    /,\s*(\d{2,5})\s*,\s*(?:up to|fragrance|hypoallergenic|absorbent|nighttime|babyproof)/i,
   ];
 
   for (const re of patterns) {
