@@ -7,6 +7,8 @@ import { SectionHeader } from "@/components/section-header";
 import { getCategories, queryProducts, type ProductDTO } from "@/lib/products";
 import { isDatabaseConfigured } from "@/lib/db";
 
+export const dynamic = "force-dynamic";
+
 function SetupBanner({ message }: { message: string }) {
   return (
     <div className="dn-container py-16">
@@ -17,17 +19,17 @@ function SetupBanner({ message }: { message: string }) {
         </h1>
         <p className="mt-3 text-forest-muted">{message}</p>
         <ol className="mt-6 list-decimal space-y-2 pl-5 text-left text-sm text-forest-ink">
-          <li>Open the DealForge service in Koyeb.</li>
+          <li>Open the DealForge Worker in Cloudflare.</li>
           <li>
-            Add the existing Neon pooled connection string as{" "}
+            Add the existing Neon pooled connection string as a secret named{" "}
             <code className="rounded bg-forest/10 px-1">DATABASE_URL</code>.
           </li>
           <li>
-            Set <code className="rounded bg-forest/10 px-1">AUTH_SECRET</code> and{" "}
+            Add <code className="rounded bg-forest/10 px-1">AUTH_SECRET</code> as a secret and set{" "}
             <code className="rounded bg-forest/10 px-1">NEXT_PUBLIC_APP_URL</code>=
             <code className="rounded bg-forest/10 px-1">https://www.deal-forge.sale</code>.
           </li>
-          <li>Redeploy the Koyeb web service.</li>
+          <li>Deploy a new Worker version.</li>
         </ol>
       </div>
     </div>
@@ -48,7 +50,7 @@ function takeUnique(items: ProductDTO[], seen: Set<string>, limit = 8) {
 export default async function HomePage() {
   if (!isDatabaseConfigured()) {
     return (
-      <SetupBanner message="Connect the existing Neon PostgreSQL database to the Koyeb service and redeploy." />
+      <SetupBanner message="Connect the existing Neon PostgreSQL database to the Cloudflare Worker and deploy a new version." />
     );
   }
 
@@ -71,7 +73,7 @@ export default async function HomePage() {
     const msg = err instanceof Error ? err.message : "Unknown database error";
     return (
       <SetupBanner
-        message={`Could not load products (${msg}). Verify DATABASE_URL and the Neon connection in Koyeb, then redeploy.`}
+        message={`Could not load products (${msg}). Verify DATABASE_URL and the Neon connection in Cloudflare, then deploy again.`}
       />
     );
   }
