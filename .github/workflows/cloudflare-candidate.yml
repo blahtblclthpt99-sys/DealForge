@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - migration/cloudflare-workers
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
