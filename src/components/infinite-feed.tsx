@@ -13,15 +13,24 @@ type FeedResponse = {
 export function InfiniteProductFeed({
   initial,
   query = {},
+  excludeIds = [],
 }: {
   initial: FeedResponse;
   query?: Record<string, string | number | boolean | undefined>;
+  excludeIds?: string[];
 }) {
-  const [items, setItems] = useState(initial.items);
+  const excluded = new Set(excludeIds);
+  const [items, setItems] = useState(() => initial.items.filter((p) => !excluded.has(p.id)));
   const [page, setPage] = useState(initial.page);
   const [hasMore, setHasMore] = useState(initial.hasMore);
   const [loading, setLoading] = useState(false);
   const sentinel = useRef<HTMLDivElement | null>(null);
+  const seenIds = useRef(
+    new Set<string>([
+      ...excludeIds,
+      ...initial.items.map((product) => product.id),
+    ]),
+  );
 
   const loadMore = useCallback(async () => {
     if (loading || !hasMore) return;
@@ -34,10 +43,20 @@ export function InfiniteProductFeed({
       params.set("page", String(page + 1));
       params.set("limit", "24");
       const res = await fetch(`/api/products?${params.toString()}`);
+      if (!res.ok) throw new Error(`Product feed request failed (${res.status})`);
+
       const data = (await res.json()) as FeedResponse;
-      setItems((prev) => [...prev, ...data.items]);
+      const uniqueItems = data.items.filter((product) => {
+        if (seenIds.current.has(product.id)) return false;
+        seenIds.current.add(product.id);
+        return true;
+      });
+
+      setItems((prev) => [...prev, ...uniqueItems]);
       setPage(data.page);
       setHasMore(data.hasMore);
+    } catch (error) {
+      console.error("Failed to load more products", error);
     } finally {
       setLoading(false);
     }
