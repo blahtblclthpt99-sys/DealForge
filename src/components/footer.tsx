@@ -66,11 +66,6 @@ export function Footer() {
                 Wishlist
               </Link>
             </li>
-            <li>
-              <Link href="/admin" className="hover:text-forest">
-                Admin
-              </Link>
-            </li>
           </ul>
         </div>
       </div>
