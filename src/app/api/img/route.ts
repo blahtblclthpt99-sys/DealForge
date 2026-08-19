@@ -16,6 +16,7 @@ function allowedUrl(value: string, base?: URL): URL | null {
     const url = base ? new URL(value, base) : new URL(value);
     if (url.protocol !== "https:") return null;
     if (url.username || url.password) return null;
+    if (url.port && url.port !== "443") return null;
     if (!ALLOWED_HOSTS.has(url.hostname.toLowerCase())) return null;
     url.hash = "";
     return url;
@@ -53,6 +54,36 @@ async function fetchAllowedImage(initial: URL) {
   return null;
 }
 
+async function readBoundedBody(body: ReadableStream<Uint8Array>) {
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+      total += value.byteLength;
+      if (total > MAX_IMAGE_BYTES) {
+        await reader.cancel();
+        return null;
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  const output = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    output.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return output;
+}
+
 export async function GET(req: NextRequest) {
   // URLSearchParams already decodes the query value once. Do not decode it again.
   const raw = req.nextUrl.searchParams.get("u") || "";
@@ -75,18 +106,26 @@ export async function GET(req: NextRequest) {
 
     const contentType = (upstream.headers.get("content-type") || "").toLowerCase();
     if (!contentType.startsWith("image/")) {
+      await upstream.body.cancel();
       return new NextResponse("Unsupported upstream content", { status: 415 });
     }
 
     const declaredLength = Number(upstream.headers.get("content-length") || 0);
     if (Number.isFinite(declaredLength) && declaredLength > MAX_IMAGE_BYTES) {
+      await upstream.body.cancel();
       return new NextResponse("Image too large", { status: 413 });
     }
 
-    return new NextResponse(upstream.body, {
+    const body = await readBoundedBody(upstream.body);
+    if (!body) {
+      return new NextResponse("Image too large", { status: 413 });
+    }
+
+    return new NextResponse(body, {
       status: 200,
       headers: {
         "Content-Type": contentType,
+        "Content-Length": String(body.byteLength),
         "Cache-Control": "public, max-age=604800, stale-while-revalidate=86400, immutable",
         "X-Content-Type-Options": "nosniff",
       },
