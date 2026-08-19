@@ -31,8 +31,8 @@ jobs:
           node-version: 20
           cache: npm
 
-      - name: Install Cloudflare candidate dependencies
-        run: npm install --no-fund --no-audit
+      - name: Install locked Cloudflare candidate dependencies
+        run: npm ci --no-fund --no-audit
 
       - name: Lint
         run: npm run lint
