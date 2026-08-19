@@ -1,0 +1,3 @@
+Cloudflare candidate deployment trigger.
+Branch: migration/cloudflare-workers
+Purpose: force a fresh Git-connected build from the certified Cloudflare branch after build settings were corrected.
