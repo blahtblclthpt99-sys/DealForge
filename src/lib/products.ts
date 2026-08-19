@@ -46,6 +46,68 @@ export type ProductDTO = {
 
 type ProductWithCategory = Prisma.ProductGetPayload<{ include: { category: true } }>;
 
+const MAX_QUERY_LENGTH = 120;
+const MAX_FILTER_LENGTH = 100;
+const MAX_PAGE = 500;
+const MAX_LIMIT = 48;
+const MAX_PRICE = 1_000_000;
+const ALLOWED_SORTS = new Set([
+  "rank",
+  "newest",
+  "rating",
+  "popularity",
+  "savings",
+  "price_asc",
+  "price_desc",
+]);
+
+function boundedText(value: string | undefined, max: number) {
+  if (!value) return undefined;
+  const text = value.trim().slice(0, max);
+  return text || undefined;
+}
+
+function boundedNumber(value: number | undefined, min: number, max: number) {
+  if (value == null || !Number.isFinite(value)) return undefined;
+  return Math.min(max, Math.max(min, value));
+}
+
+/**
+ * Normalize all public/product-query inputs before they reach Prisma or cache
+ * keys. This prevents NaN/Infinity errors, excessive offsets, and unbounded
+ * attacker-controlled cache keys on the small production web instance.
+ */
+export function normalizeProductQuery(params: ProductQuery): ProductQuery {
+  const rawPage = boundedNumber(params.page, 1, MAX_PAGE) ?? 1;
+  const rawLimit = boundedNumber(params.limit, 1, MAX_LIMIT) ?? 24;
+  let minPrice = boundedNumber(params.minPrice, 0, MAX_PRICE);
+  let maxPrice = boundedNumber(params.maxPrice, 0, MAX_PRICE);
+
+  if (minPrice != null && maxPrice != null && minPrice > maxPrice) {
+    [minPrice, maxPrice] = [maxPrice, minPrice];
+  }
+
+  const sort = params.sort && ALLOWED_SORTS.has(params.sort) ? params.sort : undefined;
+
+  return {
+    q: boundedText(params.q, MAX_QUERY_LENGTH),
+    category: boundedText(params.category, MAX_FILTER_LENGTH),
+    subcategory: boundedText(params.subcategory, MAX_FILTER_LENGTH),
+    brand: boundedText(params.brand, MAX_FILTER_LENGTH),
+    minPrice,
+    maxPrice,
+    minRating: boundedNumber(params.minRating, 0, 5),
+    minDiscount: boundedNumber(params.minDiscount, 0, 100),
+    sort,
+    page: Math.floor(rawPage),
+    limit: Math.floor(rawLimit),
+    featured: Boolean(params.featured),
+    flash: Boolean(params.flash),
+    trending: Boolean(params.trending),
+    newest: Boolean(params.newest),
+  };
+}
+
 function cleanImages(raw: string): string[] {
   const list = parseJson<string[]>(raw, []).filter(Boolean);
   const normalized = list.map((u) => normalizeProductImage(u)).filter((u) => u && !u.includes("placeholder"));
@@ -213,9 +275,10 @@ function buildOrderBy(params: ProductQuery): Prisma.ProductOrderByWithRelationIn
 }
 
 export async function queryProducts(params: ProductQuery) {
-  const page = Math.max(1, params.page ?? 1);
-  const limit = Math.min(48, Math.max(1, params.limit ?? 24));
-  const cacheKey = `products:v6:${JSON.stringify(params)}`;
+  const normalized = normalizeProductQuery(params);
+  const page = normalized.page ?? 1;
+  const limit = normalized.limit ?? 24;
+  const cacheKey = `products:v7:${JSON.stringify(normalized)}`;
   const cached = await cacheGet<{
     items: ProductDTO[];
     total: number;
@@ -224,21 +287,21 @@ export async function queryProducts(params: ProductQuery) {
   }>(cacheKey);
   if (cached) return cached;
 
-  const where = buildWhere(params);
-  const orderBy = buildOrderBy(params);
+  const where = buildWhere(normalized);
+  const orderBy = buildOrderBy(normalized);
   const skip = (page - 1) * limit;
 
-  const countKey = `products:count:v4:${JSON.stringify({
-    q: params.q,
-    category: params.category,
-    subcategory: params.subcategory,
-    brand: params.brand,
-    minPrice: params.minPrice,
-    maxPrice: params.maxPrice,
-    minRating: params.minRating,
-    minDiscount: params.minDiscount,
-    featured: params.featured,
-    flash: params.flash,
+  const countKey = `products:count:v5:${JSON.stringify({
+    q: normalized.q,
+    category: normalized.category,
+    subcategory: normalized.subcategory,
+    brand: normalized.brand,
+    minPrice: normalized.minPrice,
+    maxPrice: normalized.maxPrice,
+    minRating: normalized.minRating,
+    minDiscount: normalized.minDiscount,
+    featured: normalized.featured,
+    flash: normalized.flash,
   })}`;
 
   const [cachedTotal, rows] = await Promise.all([
@@ -279,6 +342,7 @@ export async function getProductBySlug(slug: string) {
 }
 
 export async function getSimilarProducts(product: ProductDTO, limit = 8) {
+  const take = Math.min(24, Math.max(1, Math.floor(Number.isFinite(limit) ? limit : 8)));
   const rows = await prisma.product.findMany({
     where: {
       categoryId: product.categoryId,
@@ -286,12 +350,13 @@ export async function getSimilarProducts(product: ProductDTO, limit = 8) {
     },
     include: { category: true },
     orderBy: [{ discountPercent: "desc" }, { rating: "desc" }],
-    take: limit,
+    take,
   });
   return rows.map(toProductDTO);
 }
 
 export async function getRelatedProducts(product: ProductDTO, limit = 8) {
+  const take = Math.min(24, Math.max(1, Math.floor(Number.isFinite(limit) ? limit : 8)));
   const rows = await prisma.product.findMany({
     where: {
       brand: product.brand,
@@ -299,7 +364,7 @@ export async function getRelatedProducts(product: ProductDTO, limit = 8) {
     },
     include: { category: true },
     orderBy: [{ rating: "desc" }, { reviewCount: "desc" }],
-    take: limit,
+    take,
   });
   return rows.map(toProductDTO);
 }
@@ -321,7 +386,8 @@ async function fetchCategories() {
 
 /** Top brands by product count — keeps the search filter fast. */
 export async function getTopBrands(limit = 200) {
-  const cacheKey = `brands:top:${limit}`;
+  const take = Math.min(300, Math.max(1, Math.floor(Number.isFinite(limit) ? limit : 200)));
+  const cacheKey = `brands:top:${take}`;
   const cached = await cacheGet<string[]>(cacheKey);
   if (cached) return cached;
 
@@ -329,7 +395,7 @@ export async function getTopBrands(limit = 200) {
     by: ["brand"],
     _count: { brand: true },
     orderBy: { _count: { brand: "desc" } },
-    take: limit,
+    take,
   });
   const brands = grouped.map((g) => g.brand).filter(Boolean).sort((a, b) => a.localeCompare(b));
   await cacheSet(cacheKey, brands, 300);
