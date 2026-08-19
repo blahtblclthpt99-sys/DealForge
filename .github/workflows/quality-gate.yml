@@ -41,5 +41,45 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Production route smoke tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run start > /tmp/dealforge-next.log 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true' EXIT
+
+          for attempt in {1..30}; do
+            if curl --silent --fail http://localhost:3000/ >/dev/null; then
+              break
+            fi
+            if ! kill -0 "$server_pid" 2>/dev/null; then
+              cat /tmp/dealforge-next.log
+              exit 1
+            fi
+            sleep 1
+          done
+
+          check_status() {
+            local expected="$1"
+            local path="$2"
+            local actual
+            actual=$(curl --silent --output /dev/null --write-out '%{http_code}' "http://localhost:3000${path}")
+            if [ "$actual" != "$expected" ]; then
+              echo "Expected ${expected} for ${path}, got ${actual}"
+              cat /tmp/dealforge-next.log
+              exit 1
+            fi
+          }
+
+          check_status 200 /
+          check_status 200 /categories
+          check_status 200 /deals
+          check_status 200 /search
+          check_status 200 /login
+          check_status 200 /register
+          check_status 400 '/api/img?u=https%3A%2F%2Fexample.com%2Fimage.jpg'
+          check_status 404 /definitely-not-a-real-route
+
       - name: Dependency audit
         run: npm audit --audit-level=high
