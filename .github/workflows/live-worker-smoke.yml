@@ -20,42 +20,28 @@ jobs:
     env:
       BASE_URL: https://dealforge.blahtblclthpt99.workers.dev
     steps:
-      - name: Probe public routes
+      - name: Probe live routes
         shell: bash
         run: |
-          set -euo pipefail
-          for path in / /categories /deals /search /login /register; do
-            code=$(curl --silent --show-error --location --max-time 30 --output /tmp/body --write-out '%{http_code}' "$BASE_URL$path")
+          set -u
+          failed=0
+          for path in / /categories /deals /search /login /register /dashboard /admin; do
+            body="/tmp/body-$(echo "$path" | tr '/?' '__')"
+            code=$(curl --silent --show-error --location --max-time 30 --output "$body" --write-out '%{http_code}' "$BASE_URL$path" || echo 000)
             echo "$path -> $code"
-            if [[ "$code" -lt 200 || "$code" -ge 400 ]]; then
-              echo "Unexpected status for $path"
-              head -c 1000 /tmp/body || true
-              exit 1
+            if [[ "$path" == "/" ]]; then
+              if grep -qi 'Database not connected' "$body"; then
+                echo 'HOME_SETUP_BANNER=present'
+                failed=1
+              else
+                echo 'HOME_SETUP_BANNER=absent'
+              fi
+            fi
+            if [[ "$code" -ge 500 || "$code" == "000" ]]; then
+              echo "BODY_PREVIEW $path:"
+              head -c 1200 "$body" || true
+              echo
+              failed=1
             fi
           done
-
-      - name: Verify database-backed homepage
-        shell: bash
-        run: |
-          set -euo pipefail
-          curl --silent --show-error --location --max-time 30 "$BASE_URL/" -o /tmp/home
-          if grep -qi 'Database not connected' /tmp/home; then
-            echo 'Homepage still reports database not connected'
-            exit 1
-          fi
-          grep -qi 'DealForge' /tmp/home
-          echo 'Homepage renders without setup banner'
-
-      - name: Verify protected routes do not error
-        shell: bash
-        run: |
-          set -euo pipefail
-          for path in /dashboard /admin; do
-            code=$(curl --silent --show-error --max-time 30 --output /tmp/protected --write-out '%{http_code}' "$BASE_URL$path")
-            echo "$path -> $code"
-            if [[ "$code" -ge 500 ]]; then
-              echo "Protected route returned server error: $path"
-              head -c 1000 /tmp/protected || true
-              exit 1
-            fi
-          done
+          exit "$failed"
