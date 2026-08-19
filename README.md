@@ -5,9 +5,10 @@ Modern affiliate product discovery platform. DealForge aggregates products from 
 ## Stack
 
 - **Next.js 15** (App Router) + TypeScript + Tailwind CSS v4
-- **Prisma** + SQLite (swap `DATABASE_URL` to PostgreSQL for production)
+- **Prisma** + SQLite for local development
+- **PostgreSQL (Neon)** for hosted production
 - **JWT sessions** with bcrypt password hashing
-- **Modular affiliate connectors** (Amazon Associates live; Walmart, eBay, CJ, Impact, Awin, Rakuten, ShareASale, Etsy stubbed)
+- **Modular affiliate connectors**
 - **Redis-ready cache** with in-memory + DB fallback
 - **Background worker** for trending scores, flash expiry, cache purge, price alerts
 
@@ -16,99 +17,75 @@ Modern affiliate product discovery platform. DealForge aggregates products from 
 ```bash
 npm install
 cp .env.example .env
-npm run db:setup       # prisma db push + seed
+npm run db:setup
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000).
+Open `http://localhost:3000`.
 
-### Demo accounts
+## Production deployment
 
-| Role  | Email               | Password           |
-|-------|---------------------|--------------------|
-| User  | demo@dealforge.com   | DemoUser123!       |
-| Admin | admin@dealforge.com  | AdminDealForge2026! |
+DealForge is a full Next.js application with API routes and a database. Production hosting is configured for **Netlify + Neon PostgreSQL**.
 
-## Amazon Associates
+### Netlify
 
-Tracking ID: **`titanfieldos-20`**
+Connect the GitHub repository to Netlify. Netlify supports modern Next.js features including App Router, SSR, route handlers, middleware, and image optimization.
 
-Every Amazon purchase link is generated as:
+Build settings are checked into `netlify.toml`:
 
+- Build command: `npm run build:netlify`
+- Publish directory: `.next`
+- Node: 20
+
+Set these environment variables in Netlify:
+
+```text
+DATABASE_URL=<Neon pooled PostgreSQL connection string>
+AUTH_SECRET=<long random secret>
+ADMIN_EMAIL=<admin email>
+ADMIN_PASSWORD=<strong admin password>
+AMAZON_ASSOCIATE_TAG=titanfieldos-20
+AMAZON_PARTNER_TAG=titanfieldos-20
+NEXT_PUBLIC_APP_URL=https://deal-forge.sale
+NEXT_PUBLIC_APP_NAME=DealForge
 ```
-https://www.amazon.com/dp/{ASIN}?tag=titanfieldos-20
+
+### Neon database
+
+Create a Neon PostgreSQL database and use its pooled connection string as `DATABASE_URL`.
+
+Initialize the production schema once:
+
+```bash
+DATABASE_URL="postgresql://..." npm run db:setup:postgres
 ```
 
-See `src/lib/affiliate/providers/amazon.ts`. To enable Product Advertising API imports, set `AMAZON_ACCESS_KEY` and `AMAZON_SECRET_KEY` in `.env`.
+Then deploy DealForge from Netlify.
 
-## Adding another affiliate network
+### Custom domain
 
-1. Implement `AffiliateConnector` in `src/lib/affiliate/providers/`
-2. Register it in `src/lib/affiliate/registry.ts`
-3. Enable the row in Admin → Affiliate networks (or seed `AffiliateProvider`)
+Attach `deal-forge.sale` to the Netlify site and update the domain DNS to the records Netlify provides. Keep `NEXT_PUBLIC_APP_URL=https://deal-forge.sale`.
 
-## Scripts
+## Catalog maintenance
 
-| Command            | Description                          |
-|--------------------|--------------------------------------|
-| `npm run dev`      | Local development                    |
-| `npm run build`    | Production build                     |
-| `npm run db:setup` | Push schema + seed                   |
-| `npm run worker`   | Background jobs (loop every 5 min)   |
-| `npm run worker -- --once` | Single worker pass            |
+| Command | Purpose |
+|---|---|
+| `npm run catalog:validate` | Check Amazon listings and remove confirmed dead products |
+| `npm run catalog:repair-images` | Repair product images |
+| `npm run catalog:sync-images` | Synchronize product images |
+| `npm run catalog:refresh-prices` | Refresh catalog prices |
+| `npm run worker -- --once` | Run a single background maintenance pass |
 
 ## Pages
 
-- `/` — Home (hero, featured, trending, flash, categories, infinite feed)
+- `/` — Home
 - `/categories`, `/categories/[slug]`
-- `/product/[slug]` — SEO product detail + buy CTA
-- `/search` — Live search + filters + sort
+- `/product/[slug]` — Product detail + retailer CTA
+- `/search` — Search, filters and sort
 - `/deals` — Flash deals
 - `/dashboard/*` — Wishlist, saved searches, recent, alerts, settings
-- `/admin` — Affiliate stats, imports, logs, cache, users, products
+- `/admin` — Admin tools
 
 ## Affiliate disclosure
 
-A required disclosure appears in the site footer stating DealForge may earn commissions from qualifying purchases through affiliate links.
-
-## Production notes
-
-- Set a strong `AUTH_SECRET`
-- Use PostgreSQL: change Prisma `provider` to `postgresql` and set `DATABASE_URL`
-- Set `REDIS_URL` for shared cache / rate-limit counters
-- Put images behind a CDN; seed currently uses inline SVG placeholders for offline demos
-- Run `npm run worker` as a separate process (or cron)
-- Configure Amazon PA-API credentials before live catalog sync
-
-## Deploy to the web (website launcher)
-
-DealForge is a full Next.js app (API routes + database). It cannot run on plain static file hosting alone.
-
-### Quick — Vercel (recommended)
-
-```bash
-npm i -g vercel   # once
-vercel login
-vercel --prod
-```
-
-Set env vars in the Vercel dashboard from `.env.production.example`. Use **PostgreSQL** for `DATABASE_URL` (Neon, Supabase, or Vercel Postgres). After connecting the DB, run `npm run db:setup` once locally against that URL, or use `vercel env pull` + `db:setup`.
-
-Point your domain (IONOS, etc.): add a **CNAME** for `www` to your Vercel project.
-
-### Upload zip — self-hosted Node (VPS / Node hosting)
-
-Same workflow as TitanOS `ionos:package`, but runs a Node server instead of static files:
-
-```bash
-npm run website:package
-```
-
-Upload **`release/DealForge-Web.zip`** to your server, unzip, edit `.env`, then run `START.bat` or `node server.js`. Full instructions are inside the zip (`UPLOAD-INSTRUCTIONS.txt`).
-
-The zip includes the seeded SQLite catalog (~15k products) so the live site works immediately.
-
-| Command | Purpose |
-|---------|---------|
-| `npm run website:package` | Build + zip for Node self-host |
-| `npm run deploy:vercel` | Deploy to Vercel production |
+The footer states that product links may be affiliate links and that DealForge may earn commissions from qualifying purchases.
