@@ -1,0 +1,65 @@
+name: DealForge Cloudflare Candidate
+
+on:
+  push:
+    branches:
+      - migration/cloudflare-workers
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-workers-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      CLOUDFLARE_WORKERS: "1"
+      DATABASE_URL: postgresql://dealforge:ci-only@db.invalid/dealforge?sslmode=require
+      AUTH_SECRET: ci-only-not-for-production-00000000000000000000000000000000
+      NEXT_PUBLIC_APP_URL: https://www.deal-forge.sale
+      NEXT_PUBLIC_APP_NAME: DealForge
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install Cloudflare candidate dependencies
+        run: npm install --no-fund --no-audit
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build for Cloudflare workerd
+        run: npm run cf:build
+
+      - name: Wrangler dry-run bundle
+        run: npm run cf:dry-run 2>&1 | tee wrangler-dry-run.log
+
+      - name: Enforce Workers Free compressed bundle limit
+        run: |
+          python - <<'PY'
+          import re
+          from pathlib import Path
+
+          text = Path("wrangler-dry-run.log").read_text(errors="replace")
+          match = re.search(r"gzip:\s*([0-9.]+)\s*(KiB|MiB|MB|kB)", text, re.IGNORECASE)
+          if not match:
+              raise SystemExit("Could not find Wrangler gzip bundle size in dry-run output")
+
+          value = float(match.group(1))
+          unit = match.group(2).lower()
+          kib = value * 1024 if unit in {"mib", "mb"} else value
+          limit_kib = 3 * 1024
+          print(f"Compressed Worker bundle: {kib:.2f} KiB (free limit: {limit_kib} KiB)")
+          if kib > limit_kib:
+              raise SystemExit("Cloudflare Workers Free candidate exceeds the 3 MB compressed Worker limit")
+          PY
+
+      - name: Dependency audit
+        run: npm audit --audit-level=high
