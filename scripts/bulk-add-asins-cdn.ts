@@ -130,7 +130,7 @@ async function main() {
       const result = await prisma.product.createMany({ data: rows, skipDuplicates: true });
       added += result.count;
       console.log(`INSERT ${added}/${ready.length}`);
-    } catch (e) {
+    } catch {
       // Fallback one-by-one if batch hits slug conflicts
       for (const row of rows) {
         try {
