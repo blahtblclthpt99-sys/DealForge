@@ -5,6 +5,7 @@ import { prisma } from "./db";
 
 const COOKIE_NAME = "dealforge_session";
 const SESSION_DAYS = 14;
+const MIN_PRODUCTION_SECRET_LENGTH = 32;
 
 export type SessionUser = {
   id: string;
@@ -14,7 +15,17 @@ export type SessionUser = {
 };
 
 function secretKey() {
-  const secret = process.env.AUTH_SECRET || "dev-insecure-secret";
+  const configured = process.env.AUTH_SECRET?.trim();
+
+  if (process.env.NODE_ENV === "production") {
+    if (!configured || configured.length < MIN_PRODUCTION_SECRET_LENGTH) {
+      throw new Error(
+        `AUTH_SECRET must be configured with at least ${MIN_PRODUCTION_SECRET_LENGTH} characters in production`,
+      );
+    }
+  }
+
+  const secret = configured || "dev-insecure-secret";
   return new TextEncoder().encode(secret);
 }
 
@@ -45,6 +56,7 @@ export async function readSession(): Promise<SessionUser | null> {
   if (!token) return null;
   try {
     const { payload } = await jwtVerify(token, secretKey());
+    if (!payload.id || !payload.email || !payload.name || !payload.role) return null;
     return {
       id: String(payload.id),
       email: String(payload.email),
@@ -72,10 +84,18 @@ export async function clearSessionCookie() {
   jar.delete(COOKIE_NAME);
 }
 
-export async function requireUser() {
-  const user = await readSession();
-  if (!user) throw new Error("UNAUTHORIZED");
-  return user;
+export async function requireUser(): Promise<SessionUser> {
+  const session = await readSession();
+  if (!session) throw new Error("UNAUTHORIZED");
+
+  // Rehydrate from the database so deleted users and role/profile changes take
+  // effect immediately instead of remaining trusted for the JWT's full lifetime.
+  const current = await prisma.user.findUnique({
+    where: { id: session.id },
+    select: { id: true, email: true, name: true, role: true },
+  });
+  if (!current) throw new Error("UNAUTHORIZED");
+  return current;
 }
 
 export async function requireAdmin() {
