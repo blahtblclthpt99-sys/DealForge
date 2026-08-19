@@ -1,0 +1,1 @@
+This branch is the Koyeb + Neon migration source of truth. Netlify configuration inherited from the earlier migration branch is removed before release.
