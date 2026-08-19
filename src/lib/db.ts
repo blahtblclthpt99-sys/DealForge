@@ -1,18 +1,20 @@
 /**
- * Lazy Prisma client — never construct on import (avoids Vercel boot crashes
- * when DATABASE_URL is missing or points at a local SQLite file).
+ * Lazy Prisma client — never construct on import. This keeps local development usable
+ * without a hosted database and avoids boot failures when production configuration is missing.
  */
 import { PrismaClient } from "@prisma/client";
 
 const globalForPrisma = globalThis as unknown as {
   prisma?: PrismaClient;
-  prismaReady?: boolean;
 };
 
 export function isDatabaseConfigured() {
   const url = (process.env.DATABASE_URL || "").trim();
   if (!url) return false;
-  if (process.env.VERCEL === "1") {
+
+  // Koyeb production must use PostgreSQL/Neon. Never allow a local SQLite path to
+  // masquerade as a production database because Koyeb's filesystem is ephemeral.
+  if (process.env.KOYEB_APP_ID) {
     if (url.startsWith("file:") || url.includes("dev.db") || /sqlite/i.test(url)) {
       return false;
     }
@@ -20,6 +22,7 @@ export function isDatabaseConfigured() {
       return false;
     }
   }
+
   return true;
 }
 
