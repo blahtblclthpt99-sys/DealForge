@@ -68,13 +68,21 @@ The free Koyeb allocation is used for the web service. Do not create a second pa
 
 ## Catalog maintenance
 
+Catalog link validation is intentionally **non-destructive by default**. A listing must be classified dead twice before it is reported as confirmed dead, and ambiguous/blocked/error results are left untouched.
+
 | Command | Purpose |
 |---|---|
-| `npm run catalog:validate` | Check Amazon listings |
+| `npm run catalog:validate` | Report Amazon listing health without deleting products |
+| `npm run catalog:validate -- --dry-run` | Explicit report-only scan |
+| `npm run catalog:validate -- --delete-confirmed` | Delete only listings independently confirmed dead twice |
 | `npm run catalog:repair-images` | Repair product images |
 | `npm run catalog:sync-images` | Synchronize product images |
 | `npm run catalog:refresh-prices` | Refresh catalog prices |
 | `npm run worker -- --once` | Run a single background maintenance pass |
+
+## Homepage de-duplication
+
+Featured, Trending, Flash Deals, New Arrivals, and the infinite All Deals feed share a page-level product-ID exclusion set. A product already rendered in a promoted section is not rendered again by another promoted section or by the infinite feed during the same page visit.
 
 ## Pages
 
