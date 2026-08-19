@@ -1,0 +1,21 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "dealforge",
+  "main": ".open-next/worker.js",
+  "compatibility_date": "2026-08-19",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS"
+  },
+  "vars": {
+    "CLOUDFLARE_WORKERS": "1",
+    "NEXT_PUBLIC_APP_URL": "https://www.deal-forge.sale",
+    "NEXT_PUBLIC_APP_NAME": "DealForge",
+    "AMAZON_ASSOCIATE_TAG": "titanfieldos-20",
+    "AMAZON_PARTNER_TAG": "titanfieldos-20"
+  },
+  "observability": {
+    "enabled": true
+  }
+}
