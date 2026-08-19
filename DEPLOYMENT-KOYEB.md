@@ -45,6 +45,8 @@ Never commit the real `DATABASE_URL`, authentication secret, or production admin
 
 GitHub Actions runs `.github/workflows/quality-gate.yml` on migration-branch pushes and pull requests. The release is not ready if dependency installation, linting, or the production build fails.
 
+If GitHub Actions is unavailable or does not start, use the Koyeb build itself as the temporary build gate and do not merge until its logs show a successful install and production build.
+
 ## Catalog safety gate
 
 `npm run catalog:validate` is report-only. It does not delete products. A listing must be independently classified dead twice before it is reported as confirmed dead. Blocked or error responses are left untouched.
