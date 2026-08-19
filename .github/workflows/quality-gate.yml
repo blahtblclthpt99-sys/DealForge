@@ -17,7 +17,7 @@ jobs:
     timeout-minutes: 20
     env:
       DATABASE_URL: file:./ci.db
-      AUTH_SECRET: ci-only-not-for-production
+      AUTH_SECRET: ci-only-not-for-production-00000000000000000000000000000000
       NEXT_PUBLIC_APP_URL: http://localhost:3000
     steps:
       - name: Checkout
