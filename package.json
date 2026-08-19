@@ -8,7 +8,7 @@
   },
   "scripts": {
     "dev": "next dev",
-    "build": "node scripts/prisma-generate.js && next build",
+    "build": "node scripts/prisma-generate.mjs && next build",
     "db:push:postgres": "prisma db push --schema=prisma/schema.postgres.prisma",
     "db:setup:postgres": "prisma db push --schema=prisma/schema.postgres.prisma && tsx prisma/seed.ts",
     "start": "next start -H 0.0.0.0",
@@ -29,7 +29,7 @@
     "ebay:enable": "tsx scripts/enable-ebay.ts",
     "worker": "tsx src/workers/index.ts",
     "website:package": "powershell -ExecutionPolicy Bypass -File scripts/package-website.ps1",
-    "postinstall": "node scripts/prisma-generate.js"
+    "postinstall": "node scripts/prisma-generate.mjs"
   },
   "dependencies": {
     "@prisma/client": "^6.9.0",
