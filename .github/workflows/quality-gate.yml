@@ -1,6 +1,9 @@
 name: DealForge Quality Gate
 
 on:
+  push:
+    branches:
+      - "migration/**"
   pull_request:
     branches: [main]
   workflow_dispatch:
