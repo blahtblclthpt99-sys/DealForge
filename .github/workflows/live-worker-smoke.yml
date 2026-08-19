@@ -1,0 +1,56 @@
+name: DealForge Live Worker Smoke
+
+on:
+  push:
+    branches:
+      - migration/cloudflare-workers
+    paths:
+      - .github/workflows/live-worker-smoke.yml
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      BASE_URL: https://dealforge.blahtblclthpt99.workers.dev
+    steps:
+      - name: Probe public routes
+        shell: bash
+        run: |
+          set -euo pipefail
+          for path in / /categories /deals /search /login /register; do
+            code=$(curl --silent --show-error --location --max-time 30 --output /tmp/body --write-out '%{http_code}' "$BASE_URL$path")
+            echo "$path -> $code"
+            if [[ "$code" -lt 200 || "$code" -ge 400 ]]; then
+              echo "Unexpected status for $path"
+              head -c 1000 /tmp/body || true
+              exit 1
+            fi
+          done
+
+      - name: Verify database-backed homepage
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --silent --show-error --location --max-time 30 "$BASE_URL/" -o /tmp/home
+          if grep -qi 'Database not connected' /tmp/home; then
+            echo 'Homepage still reports database not connected'
+            exit 1
+          fi
+          grep -qi 'DealForge' /tmp/home
+          echo 'Homepage renders without setup banner'
+
+      - name: Verify protected routes do not error
+        shell: bash
+        run: |
+          set -euo pipefail
+          for path in /dashboard /admin; do
+            code=$(curl --silent --show-error --max-time 30 --output /tmp/protected --write-out '%{http_code}' "$BASE_URL$path")
+            echo "$path -> $code"
+            if [[ "$code" -ge 500 ]]; then
+              echo "Protected route returned server error: $path"
+              head -c 1000 /tmp/protected || true
+              exit 1
+            fi
+          done
