@@ -11,28 +11,43 @@ import {
 import { prisma } from "@/lib/db";
 
 const credsSchema = z.object({
-  email: z.string().email(),
-  password: z.string().min(8),
-  name: z.string().min(2).optional(),
+  email: z.string().trim().email().max(254),
+  password: z.string().min(8).max(128),
+  name: z.string().trim().min(2).max(80).optional(),
 });
 
+async function readJson(req: Request): Promise<Record<string, unknown> | null> {
+  try {
+    const value: unknown = await req.json();
+    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+    return value as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
 export async function POST(req: Request) {
-  const body = await req.json();
-  const action = body.action as string;
+  const body = await readJson(req);
+  if (!body) {
+    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+  }
+
+  const action = typeof body.action === "string" ? body.action : "";
 
   if (action === "register") {
     const parsed = credsSchema.safeParse(body);
     if (!parsed.success || !parsed.data.name) {
       return NextResponse.json({ error: "Invalid registration data" }, { status: 400 });
     }
-    const existing = await getUserByEmail(parsed.data.email);
+    const email = parsed.data.email.toLowerCase();
+    const existing = await getUserByEmail(email);
     if (existing) {
       return NextResponse.json({ error: "Email already registered" }, { status: 409 });
     }
     const user = await prisma.user.create({
       data: {
         name: parsed.data.name,
-        email: parsed.data.email.toLowerCase(),
+        email,
         passwordHash: await hashPassword(parsed.data.password),
         role: "user",
       },
