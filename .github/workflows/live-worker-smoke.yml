@@ -6,6 +6,11 @@ on:
       - migration/cloudflare-workers
     paths:
       - .github/workflows/live-worker-smoke.yml
+  pull_request:
+    branches:
+      - main
+    paths:
+      - .github/workflows/live-worker-smoke.yml
   workflow_dispatch:
 
 jobs:
