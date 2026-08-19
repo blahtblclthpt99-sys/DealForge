@@ -1,3 +1,0 @@
-# Migration target
-
-Koyeb + Neon.
