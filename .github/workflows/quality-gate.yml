@@ -15,6 +15,10 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      DATABASE_URL: file:./ci.db
+      AUTH_SECRET: ci-only-not-for-production
+      NEXT_PUBLIC_APP_URL: http://localhost:3000
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -28,8 +32,14 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Create ephemeral CI database
+        run: npx prisma db push --schema=prisma/schema.prisma --skip-generate
+
       - name: Lint
         run: npm run lint
 
       - name: Build
         run: npm run build
+
+      - name: Dependency audit
+        run: npm audit --audit-level=high
