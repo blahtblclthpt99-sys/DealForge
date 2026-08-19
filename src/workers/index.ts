@@ -8,6 +8,9 @@
  *
  * Run: npm run worker
  * Once: npm run worker -- --once
+ *
+ * This process is intentionally separate from the Koyeb web service. Do not
+ * start it from the production web command on the free hosting allocation.
  */
 
 import { prisma } from "../lib/db";
@@ -21,6 +24,9 @@ type PriceAlert = {
 
 const UA =
   "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1";
+const WORKER_INTERVAL_MS = 5 * 60 * 1000;
+const AMAZON_FETCH_TIMEOUT_MS = 10_000;
+const MAX_ALERTS_PER_RUN = 2_000;
 
 function extractPrice(html: string) {
   const patterns = [
@@ -48,16 +54,21 @@ function extractList(html: string, price: number) {
 }
 
 async function scrapePrice(asin: string) {
-  const res = await fetch(`https://www.amazon.com/gp/aw/d/${asin}`, {
-    headers: { "User-Agent": UA, "Accept-Language": "en-US,en;q=0.9" },
-    redirect: "follow",
-  });
-  if (!res.ok) return null;
-  const html = await res.text();
-  if (/captcha|robot check|automated access/i.test(html.slice(0, 4000))) return null;
-  const price = extractPrice(html);
-  if (!price) return null;
-  return { price, originalPrice: extractList(html, price) };
+  try {
+    const res = await fetch(`https://www.amazon.com/gp/aw/d/${asin}`, {
+      headers: { "User-Agent": UA, "Accept-Language": "en-US,en;q=0.9" },
+      redirect: "follow",
+      signal: AbortSignal.timeout(AMAZON_FETCH_TIMEOUT_MS),
+    });
+    if (!res.ok) return null;
+    const html = await res.text();
+    if (/captcha|robot check|automated access/i.test(html.slice(0, 4000))) return null;
+    const price = extractPrice(html);
+    if (!price) return null;
+    return { price, originalPrice: extractList(html, price) };
+  } catch {
+    return null;
+  }
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -66,13 +77,21 @@ async function refreshTrending() {
   const products = await prisma.product.findMany({
     select: { id: true, clickCount: true, viewCount: true, discountPercent: true, lastUpdated: true },
   });
+
+  const updates: Array<ReturnType<typeof prisma.product.update>> = [];
   for (const p of products) {
     const ctr = p.viewCount > 0 ? p.clickCount / p.viewCount : 0;
     const ageDays = (Date.now() - p.lastUpdated.getTime()) / (1000 * 60 * 60 * 24);
     const freshness = Math.max(0, 1 - ageDays / 30);
     const score = Math.round((ctr * 40 + p.discountPercent * 0.4 + freshness * 30) * 10) / 10;
-    await prisma.product.update({ where: { id: p.id }, data: { trendingScore: score } });
+    updates.push(prisma.product.update({ where: { id: p.id }, data: { trendingScore: score } }));
+
+    if (updates.length >= 100) {
+      await prisma.$transaction(updates.splice(0, updates.length));
+    }
   }
+  if (updates.length) await prisma.$transaction(updates);
+
   await prisma.systemLog.create({
     data: { level: "info", source: "worker", message: `Refreshed trending for ${products.length} products` },
   });
@@ -100,24 +119,46 @@ async function cleanCache() {
 }
 
 async function processPriceAlerts() {
-  const users = await prisma.user.findMany();
-  let hits = 0;
+  const users = await prisma.user.findMany({ select: { id: true, priceAlerts: true } });
+  const alertRows: Array<{ userId: string; alert: PriceAlert }> = [];
+
   for (const user of users) {
     const alerts = parseJson<PriceAlert[]>(user.priceAlerts, []);
-    if (!alerts.length) continue;
     for (const alert of alerts) {
-      const product = await prisma.product.findUnique({ where: { id: alert.productId } });
-      if (product && product.price <= alert.targetPrice) {
-        hits += 1;
-        await prisma.systemLog.create({
-          data: {
-            level: "info",
-            source: "price-alert",
-            message: `Price drop for user ${user.email}: ${product.title} now $${product.price}`,
-            meta: JSON.stringify({ userId: user.id, productId: product.id, price: product.price }),
-          },
-        });
+      if (
+        alertRows.length >= MAX_ALERTS_PER_RUN ||
+        !alert?.productId ||
+        !Number.isFinite(alert.targetPrice) ||
+        alert.targetPrice <= 0
+      ) {
+        continue;
       }
+      alertRows.push({ userId: user.id, alert });
+    }
+  }
+
+  if (!alertRows.length) return 0;
+
+  const productIds = Array.from(new Set(alertRows.map((row) => row.alert.productId)));
+  const products = await prisma.product.findMany({
+    where: { id: { in: productIds } },
+    select: { id: true, title: true, price: true },
+  });
+  const byId = new Map(products.map((product) => [product.id, product]));
+
+  let hits = 0;
+  for (const { userId, alert } of alertRows) {
+    const product = byId.get(alert.productId);
+    if (product && product.price <= alert.targetPrice) {
+      hits += 1;
+      await prisma.systemLog.create({
+        data: {
+          level: "info",
+          source: "price-alert",
+          message: `Price threshold reached for product ${product.id}`,
+          meta: JSON.stringify({ userId, productId: product.id, price: product.price }),
+        },
+      });
     }
   }
   return hits;
@@ -125,6 +166,7 @@ async function processPriceAlerts() {
 
 /** Keep prices current — scrapes a small batch of stale Amazon listings each cycle. */
 async function refreshPrices(limit = 15) {
+  const safeLimit = Math.min(25, Math.max(1, Math.trunc(limit)));
   const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000);
   const rows = await prisma.product.findMany({
     where: {
@@ -133,7 +175,7 @@ async function refreshPrices(limit = 15) {
       lastUpdated: { lt: cutoff },
     },
     orderBy: { lastUpdated: "asc" },
-    take: limit,
+    take: safeLimit,
     select: { id: true, asin: true, price: true },
   });
 
@@ -192,13 +234,27 @@ async function runOnce() {
 }
 
 const once = process.argv.includes("--once");
+let running = false;
 
-runOnce()
+async function guardedRun() {
+  if (running) {
+    console.warn("[worker] previous cycle still running; skipping overlapping cycle");
+    return;
+  }
+  running = true;
+  try {
+    await runOnce();
+  } finally {
+    running = false;
+  }
+}
+
+guardedRun()
   .then(() => {
     if (once) process.exit(0);
     setInterval(() => {
-      runOnce().catch(console.error);
-    }, 5 * 60 * 1000);
+      guardedRun().catch(console.error);
+    }, WORKER_INTERVAL_MS);
   })
   .catch((err) => {
     console.error(err);
