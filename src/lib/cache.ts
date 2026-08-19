@@ -1,5 +1,5 @@
 /**
- * Cache layer with Redis support and in-memory / DB fallback.
+ * Cache layer with Redis support and bounded in-memory / DB fallback.
  * Set REDIS_URL to enable Redis (install `ioredis` optionally).
  */
 
@@ -8,6 +8,13 @@ import { prisma } from "./db";
 type MemoryEntry = { value: string; expiresAt: number };
 
 const memory = new Map<string, MemoryEntry>();
+const MAX_MEMORY_ENTRIES = 500;
+const MAX_CACHE_KEY_LENGTH = 512;
+const MAX_CACHE_VALUE_CHARS = 1_000_000;
+const MIN_TTL_SECONDS = 1;
+const MAX_TTL_SECONDS = 86_400;
+const DB_PRUNE_INTERVAL_MS = 60_000;
+let lastDbPruneAt = 0;
 
 type RedisLike = {
   get: (key: string) => Promise<string | null>;
@@ -17,6 +24,39 @@ type RedisLike = {
 
 let redisClient: RedisLike | null = null;
 let redisTried = false;
+
+function validKey(key: string) {
+  return Boolean(key) && key.length <= MAX_CACHE_KEY_LENGTH;
+}
+
+function normalizedTtl(ttlSeconds: number) {
+  if (!Number.isFinite(ttlSeconds)) return 300;
+  return Math.min(MAX_TTL_SECONDS, Math.max(MIN_TTL_SECONDS, Math.floor(ttlSeconds)));
+}
+
+function pruneMemory(now: number) {
+  for (const [key, entry] of memory) {
+    if (entry.expiresAt <= now) memory.delete(key);
+  }
+
+  while (memory.size >= MAX_MEMORY_ENTRIES) {
+    const oldest = memory.keys().next().value as string | undefined;
+    if (!oldest) break;
+    memory.delete(oldest);
+  }
+}
+
+async function pruneExpiredDbRows(now: number) {
+  if (now - lastDbPruneAt < DB_PRUNE_INTERVAL_MS) return;
+  lastDbPruneAt = now;
+  try {
+    await prisma.cacheEntry.deleteMany({
+      where: { expiresAt: { lt: new Date(now) } },
+    });
+  } catch {
+    // DB cache cleanup is best-effort.
+  }
+}
 
 async function getRedis(): Promise<RedisLike | null> {
   if (redisTried) return redisClient;
@@ -40,6 +80,8 @@ async function getRedis(): Promise<RedisLike | null> {
 }
 
 export async function cacheGet<T>(key: string): Promise<T | null> {
+  if (!validKey(key)) return null;
+
   const redis = await getRedis();
   if (redis) {
     const raw = await redis.get(key);
@@ -57,6 +99,7 @@ export async function cacheGet<T>(key: string): Promise<T | null> {
       try {
         return JSON.parse(mem.value) as T;
       } catch {
+        memory.delete(key);
         return null;
       }
     }
@@ -77,17 +120,33 @@ export async function cacheGet<T>(key: string): Promise<T | null> {
 }
 
 export async function cacheSet(key: string, value: unknown, ttlSeconds = 300) {
-  const serialized = JSON.stringify(value);
-  const expiresAt = Date.now() + ttlSeconds * 1000;
+  if (!validKey(key)) return;
+
+  let serialized: string;
+  try {
+    serialized = JSON.stringify(value);
+  } catch {
+    return;
+  }
+  if (serialized.length > MAX_CACHE_VALUE_CHARS) return;
+
+  const ttl = normalizedTtl(ttlSeconds);
+  const now = Date.now();
+  const expiresAt = now + ttl * 1000;
 
   const redis = await getRedis();
   if (redis) {
-    await redis.set(key, serialized, "EX", ttlSeconds);
+    await redis.set(key, serialized, "EX", ttl);
     return;
   }
 
+  // Refresh insertion order so the Map can act as a simple bounded FIFO/LRU-ish
+  // fallback without introducing another dependency.
+  memory.delete(key);
+  pruneMemory(now);
   memory.set(key, { value: serialized, expiresAt });
 
+  await pruneExpiredDbRows(now);
   try {
     await prisma.cacheEntry.upsert({
       where: { key },
@@ -100,6 +159,7 @@ export async function cacheSet(key: string, value: unknown, ttlSeconds = 300) {
 }
 
 export async function cacheDel(key: string) {
+  if (!validKey(key)) return;
   memory.delete(key);
   const redis = await getRedis();
   if (redis) await redis.del(key);
@@ -112,6 +172,10 @@ export async function cacheDel(key: string) {
 
 export async function cacheStatus() {
   const redis = await getRedis();
+  const now = Date.now();
+  pruneMemory(now);
+  await pruneExpiredDbRows(now);
+
   const memKeys = memory.size;
   let dbKeys = 0;
   try {
