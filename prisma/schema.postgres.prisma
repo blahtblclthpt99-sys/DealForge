@@ -66,6 +66,10 @@ model Product {
 
   clicks ClickEvent[]
 
+  // Prevent the same retailer listing from being imported more than once.
+  // PostgreSQL permits multiple rows where asin is NULL, so retailers without
+  // an external ID can still coexist until their connector supplies one.
+  @@unique([retailer, asin])
   @@index([categoryId])
   @@index([subcategory])
   @@index([asin])
