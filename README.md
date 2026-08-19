@@ -45,14 +45,14 @@ Set production configuration in Koyeb environment variables / Secrets:
 
 ```text
 DATABASE_URL=<existing DealForge Neon pooled PostgreSQL connection string>
-AUTH_SECRET=<long random secret>
-ADMIN_EMAIL=<admin email>
-ADMIN_PASSWORD=<strong admin password>
+AUTH_SECRET=<long random secret at least 32 characters>
 AMAZON_ASSOCIATE_TAG=titanfieldos-20
 AMAZON_PARTNER_TAG=titanfieldos-20
 NEXT_PUBLIC_APP_URL=https://www.deal-forge.sale
 NEXT_PUBLIC_APP_NAME=DealForge
 ```
+
+Do **not** configure seed/admin passwords in Koyeb. The existing Neon production database is already initialized and production deploys must not reseed it.
 
 ### Neon database
 
