@@ -38,6 +38,7 @@ function allowedHttpsUrl(value: string | null | undefined, allowedHosts: string[
   try {
     const url = new URL(value);
     if (url.protocol !== "https:" || url.username || url.password) return null;
+    if (url.port && url.port !== "443") return null;
     if (!allowedHosts.some((host) => hostnameMatches(url.hostname, host))) return null;
     return url.toString();
   } catch {
