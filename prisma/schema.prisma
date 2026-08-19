@@ -66,6 +66,8 @@ model Product {
 
   clicks ClickEvent[]
 
+  // Keep local/test behavior aligned with production duplicate protection.
+  @@unique([retailer, asin])
   @@index([categoryId])
   @@index([subcategory])
   @@index([asin])
