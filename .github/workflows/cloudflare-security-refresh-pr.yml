@@ -1,0 +1,44 @@
+name: Cloudflare Security Lock Verification
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  refresh-security-lock:
+    if: github.head_ref == 'migration/cloudflare-workers' && github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout Cloudflare candidate branch
+        uses: actions/checkout@v4
+        with:
+          ref: migration/cloudflare-workers
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Resolve patched dependency tree
+        run: npm install --package-lock-only --ignore-scripts --no-fund --no-audit
+
+      - name: Verify patched deepmerge resolution
+        run: npm ls deepmerge-ts --all
+
+      - name: Commit package lock
+        run: |
+          if git diff --quiet -- package-lock.json; then
+            echo "package-lock.json already current"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package-lock.json
+          git commit -m "chore: lock patched Cloudflare dependency tree"
+          git push origin HEAD:migration/cloudflare-workers
