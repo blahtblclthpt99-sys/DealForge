@@ -2,6 +2,8 @@ import type { Metadata } from "next";
 import { CategoryGrid } from "@/components/category-grid";
 import { getCategories } from "@/lib/products";
 
+export const dynamic = "force-dynamic";
+
 export const metadata: Metadata = {
   title: "Categories",
   description: "Browse DealForge categories from electronics to outdoor gear.",
