@@ -1,9 +1,0 @@
-[build]
-  command = "npm run build:netlify"
-  publish = ".next"
-
-[build.environment]
-  NODE_VERSION = "20"
-
-[context.production.environment]
-  NEXT_PUBLIC_APP_URL = "https://deal-forge.sale"
