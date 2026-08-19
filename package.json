@@ -4,7 +4,7 @@
   "private": true,
   "description": "DealForge — affiliate product discovery platform",
   "engines": {
-    "node": "20.x"
+    "node": ">=22 <25"
   },
   "scripts": {
     "dev": "next dev",
