@@ -1,11 +1,13 @@
 /**
- * Pick SQLite schema locally, Postgres schema on Vercel / when DATABASE_URL is Postgres.
+ * Pick SQLite for local development and PostgreSQL for hosted production.
+ * Netlify sets NETLIFY=true during builds; a PostgreSQL DATABASE_URL also forces Postgres.
  */
 const { execSync } = require("child_process");
 
 const url = process.env.DATABASE_URL || "";
 const usePostgres =
-  process.env.VERCEL === "1" ||
+  process.env.NETLIFY === "true" ||
+  process.env.CONTEXT === "production" ||
   url.startsWith("postgres://") ||
   url.startsWith("postgresql://");
 
