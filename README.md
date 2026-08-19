@@ -10,7 +10,7 @@ Modern affiliate product discovery platform. DealForge aggregates products from 
 - **JWT sessions** with bcrypt password hashing
 - **Modular affiliate connectors**
 - **Redis-ready cache** with in-memory + DB fallback
-- **Background worker** for trending scores, flash expiry, cache purge, price alerts
+- **Background maintenance scripts** for trending scores, flash expiry, cache purge and price alerts
 
 ## Quick start
 
@@ -25,52 +25,52 @@ Open `http://localhost:3000`.
 
 ## Production deployment
 
-DealForge is a full Next.js application with API routes and a database. Production hosting is configured for **Netlify + Neon PostgreSQL**.
+DealForge is a full Next.js application with API routes and a database. The no-recurring-hosting-cost deployment target is **Koyeb Free Web Service + the existing DealForge Neon PostgreSQL database**.
 
-### Netlify
+See `DEPLOYMENT-KOYEB.md` for the release checklist.
 
-Connect the GitHub repository to Netlify. Netlify supports modern Next.js features including App Router, SSR, route handlers, middleware, and image optimization.
+### Koyeb
 
-Build settings are checked into `netlify.toml`:
+Create a Web Service from the GitHub repository and use:
 
-- Build command: `npm run build:netlify`
-- Publish directory: `.next`
-- Node: 20
+- Runtime: Node.js 20
+- Region: Washington, D.C.
+- Instance: Free
+- Build command: `npm run build`
+- Run command: `npm run start`
+- Port: `3000`
+- Route: `/`
 
-Set these environment variables in Netlify:
+Set production configuration in Koyeb environment variables / Secrets:
 
 ```text
-DATABASE_URL=<Neon pooled PostgreSQL connection string>
+DATABASE_URL=<existing DealForge Neon pooled PostgreSQL connection string>
 AUTH_SECRET=<long random secret>
 ADMIN_EMAIL=<admin email>
 ADMIN_PASSWORD=<strong admin password>
 AMAZON_ASSOCIATE_TAG=titanfieldos-20
 AMAZON_PARTNER_TAG=titanfieldos-20
-NEXT_PUBLIC_APP_URL=https://deal-forge.sale
+NEXT_PUBLIC_APP_URL=https://www.deal-forge.sale
 NEXT_PUBLIC_APP_NAME=DealForge
 ```
 
 ### Neon database
 
-Create a Neon PostgreSQL database and use its pooled connection string as `DATABASE_URL`.
-
-Initialize the production schema once:
-
-```bash
-DATABASE_URL="postgresql://..." npm run db:setup:postgres
-```
-
-Then deploy DealForge from Netlify.
+The existing DealForge Neon project is the production database. Do not create or seed a replacement database during hosting migration.
 
 ### Custom domain
 
-Attach `deal-forge.sale` to the Netlify site and update the domain DNS to the records Netlify provides. Keep `NEXT_PUBLIC_APP_URL=https://deal-forge.sale`.
+Attach `www.deal-forge.sale` to the Koyeb App and create the CNAME value Koyeb provides at the DNS provider. Configure `deal-forge.sale` to redirect to `https://www.deal-forge.sale` if the DNS provider cannot point the apex domain directly to Koyeb.
+
+### Background maintenance
+
+The free Koyeb allocation is used for the web service. Do not create a second paid Worker service just to run DealForge maintenance. Catalog validation and maintenance can be run separately until a scheduled no-cost workflow is configured.
 
 ## Catalog maintenance
 
 | Command | Purpose |
 |---|---|
-| `npm run catalog:validate` | Check Amazon listings and remove confirmed dead products |
+| `npm run catalog:validate` | Check Amazon listings |
 | `npm run catalog:repair-images` | Repair product images |
 | `npm run catalog:sync-images` | Synchronize product images |
 | `npm run catalog:refresh-prices` | Refresh catalog prices |
