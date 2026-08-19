@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "node scripts/prisma-generate.js && next build",
-    "build:vercel": "prisma generate --schema=prisma/schema.postgres.prisma && next build",
+    "build:netlify": "prisma generate --schema=prisma/schema.postgres.prisma && next build",
     "db:push:postgres": "prisma db push --schema=prisma/schema.postgres.prisma",
     "db:setup:postgres": "prisma db push --schema=prisma/schema.postgres.prisma && tsx prisma/seed.ts",
     "start": "next start",
@@ -27,7 +27,6 @@
     "ebay:enable": "tsx scripts/enable-ebay.ts",
     "worker": "tsx src/workers/index.ts",
     "website:package": "powershell -ExecutionPolicy Bypass -File scripts/package-website.ps1",
-    "deploy:vercel": "vercel --prod",
     "postinstall": "node scripts/prisma-generate.js"
   },
   "dependencies": {
