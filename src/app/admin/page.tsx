@@ -9,7 +9,13 @@ import { prisma } from "@/lib/db";
 export default async function AdminPage() {
   const session = await readSession();
   if (!session) redirect("/login?next=/admin");
-  if (session.role !== "admin") redirect("/dashboard");
+
+  const currentUser = await prisma.user.findUnique({
+    where: { id: session.id },
+    select: { role: true },
+  });
+  if (!currentUser) redirect("/login?next=/admin");
+  if (currentUser.role !== "admin") redirect("/dashboard");
 
   const [
     productCount,
