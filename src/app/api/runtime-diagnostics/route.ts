@@ -1,6 +1,7 @@
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { PrismaClient } from "@prisma/client";
 import { PrismaNeon } from "@prisma/adapter-neon";
+import { getCategories } from "@/lib/products";
 
 export const dynamic = "force-dynamic";
 
@@ -25,6 +26,13 @@ function safeError(error: unknown) {
       : null;
   return { name, code, message };
 }
+
+type Probe = {
+  attempted: boolean;
+  ok: boolean;
+  count?: number;
+  error: ReturnType<typeof safeError> | null;
+};
 
 export async function GET() {
   const processDatabaseUrl = process.env.DATABASE_URL;
@@ -53,22 +61,29 @@ export async function GET() {
       ? contextDatabaseUrl.trim()
       : (processDatabaseUrl || "").trim();
 
-  const databaseProbe: {
-    attempted: boolean;
-    ok: boolean;
-    error: ReturnType<typeof safeError> | null;
-  } = { attempted: false, ok: false, error: null };
+  const databaseProbe: Probe = { attempted: false, ok: false, error: null };
+  const freshCategoryProbe: Probe = { attempted: false, ok: false, error: null };
+  const appCategoryProbe: Probe = { attempted: true, ok: false, error: null };
 
   if (databaseUrl.startsWith("postgresql://") || databaseUrl.startsWith("postgres://")) {
     databaseProbe.attempted = true;
+    freshCategoryProbe.attempted = true;
     let prisma: PrismaClient | null = null;
     try {
       const adapter = new PrismaNeon({ connectionString: databaseUrl });
       prisma = new PrismaClient({ adapter });
       await prisma.$queryRaw`SELECT 1`;
       databaseProbe.ok = true;
+      const categories = await prisma.category.findMany({
+        orderBy: { name: "asc" },
+        include: { _count: { select: { products: true } } },
+      });
+      freshCategoryProbe.ok = true;
+      freshCategoryProbe.count = categories.length;
     } catch (error) {
-      databaseProbe.error = safeError(error);
+      const sanitized = safeError(error);
+      if (!databaseProbe.ok) databaseProbe.error = sanitized;
+      else freshCategoryProbe.error = sanitized;
     } finally {
       if (prisma) {
         try {
@@ -78,6 +93,14 @@ export async function GET() {
         }
       }
     }
+  }
+
+  try {
+    const categories = await getCategories();
+    appCategoryProbe.ok = true;
+    appCategoryProbe.count = categories.length;
+  } catch (error) {
+    appCategoryProbe.error = safeError(error);
   }
 
   return Response.json(
@@ -103,6 +126,8 @@ export async function GET() {
           typeof contextCloudflareWorkers === "string" ? contextCloudflareWorkers : null,
       },
       databaseProbe,
+      freshCategoryProbe,
+      appCategoryProbe,
     },
     {
       headers: {
