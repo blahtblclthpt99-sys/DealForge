@@ -1,13 +1,23 @@
 /**
- * Lazy Prisma client — never construct on import. This keeps local development usable
- * without a hosted database and avoids boot failures when production configuration is missing.
+ * Lazy Prisma access for local Node and Cloudflare Workers.
+ *
+ * Long-running Node runtimes can safely reuse a singleton client. Cloudflare
+ * Workers cannot reuse a database client across requests, so Worker clients are
+ * scoped to the current request's ExecutionContext instead of globalThis.
  */
 import { PrismaClient } from "@prisma/client";
 import { PrismaNeon } from "@prisma/adapter-neon";
+import { getCloudflareContext } from "@opennextjs/cloudflare";
 
 const globalForPrisma = globalThis as unknown as {
   prisma?: PrismaClient;
 };
+
+// The WeakMap itself may live for the Worker isolate, but its keys are unique
+// per-request ExecutionContext objects and are not retained after the request.
+// This preserves a single client within one request (including transactions)
+// without leaking the same client into a later request.
+const cloudflareRequestClients = new WeakMap<object, PrismaClient>();
 
 function isCloudflareRuntime() {
   return process.env.CLOUDFLARE_WORKERS === "1";
@@ -46,7 +56,22 @@ function createClient() {
   });
 }
 
+function getCloudflareRequestClient() {
+  const { ctx } = getCloudflareContext();
+  const requestKey = ctx as unknown as object;
+  const existing = cloudflareRequestClients.get(requestKey);
+  if (existing) return existing;
+
+  const client = createClient();
+  cloudflareRequestClients.set(requestKey, client);
+  return client;
+}
+
 export function getPrisma() {
+  if (isCloudflareRuntime()) {
+    return getCloudflareRequestClient();
+  }
+
   if (!globalForPrisma.prisma) {
     globalForPrisma.prisma = createClient();
   }
@@ -54,8 +79,8 @@ export function getPrisma() {
 }
 
 /**
- * Deferred client: first property access constructs PrismaClient.
- * Safe to import from layout/auth without a live DATABASE_URL.
+ * Deferred client: first property access resolves the correct client for the
+ * current runtime/request. This keeps existing call sites transaction-safe.
  */
 export const prisma: PrismaClient = new Proxy({} as PrismaClient, {
   get(_target, prop, receiver) {
