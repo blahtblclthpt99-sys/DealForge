@@ -1,0 +1,50 @@
+name: DealForge Custom Domain Diagnostics
+
+on:
+  push:
+    branches:
+      - migration/cloudflare-workers
+    paths:
+      - .github/workflows/custom-domain-diagnostics.yml
+  pull_request:
+    branches:
+      - main
+    paths:
+      - .github/workflows/custom-domain-diagnostics.yml
+  workflow_dispatch:
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Inspect DNS and HTTP response
+        shell: bash
+        run: |
+          set +e
+          for host in deal-forge.sale www.deal-forge.sale; do
+            echo "===== $host DNS ====="
+            getent ahosts "$host" || true
+            command -v dig >/dev/null && {
+              echo "A records:"
+              dig +short A "$host"
+              echo "AAAA records:"
+              dig +short AAAA "$host"
+              echo "CNAME:"
+              dig +short CNAME "$host"
+              echo "NS:"
+              dig +short NS deal-forge.sale
+            }
+
+            echo "===== $host HTTPS ====="
+            curl --silent --show-error --max-time 20 --max-redirs 0 \
+              --dump-header "/tmp/${host}.headers" \
+              --output "/tmp/${host}.body" \
+              --write-out 'status=%{http_code}\nremote_ip=%{remote_ip}\nssl_verify=%{ssl_verify_result}\n' \
+              "https://$host/" || true
+            echo "--- headers ---"
+            cat "/tmp/${host}.headers" || true
+            echo "--- body preview ---"
+            head -c 1500 "/tmp/${host}.body" || true
+            echo
+          done
