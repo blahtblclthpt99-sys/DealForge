@@ -5,6 +5,7 @@ import { InfiniteProductFeed } from "@/components/infinite-feed";
 import { ProductCard } from "@/components/product-card";
 import { SectionHeader } from "@/components/section-header";
 import { AdSlot } from "@/components/ad-slot";
+import { AffiliateSpotlight } from "@/components/affiliate-spotlight";
 import { getCategories, queryProducts, type ProductDTO } from "@/lib/products";
 import { isDatabaseConfigured } from "@/lib/db";
 import { getAdsenseConfig } from "@/lib/ads";
@@ -68,82 +69,83 @@ export default async function HomePage() {
   const promotedProductIds = Array.from(seen);
   const ads = getAdsenseConfig();
   const spotlight = [...featured, ...trending].slice(0, 3);
+  const affiliateSpotlight = newest[0] ?? featured[0] ?? trending[0] ?? null;
 
   return (
     <div>
-      <section className="dn-hero relative overflow-hidden border-b border-card-border">
+      <section className="dn-hero relative overflow-hidden border-b border-white/10">
         <div className="dn-container relative grid items-center gap-10 py-12 md:grid-cols-[1.08fr_.92fr] md:py-20 lg:py-24">
           <div className="animate-fade-up">
-            <div className="inline-flex items-center gap-2 rounded-full border border-forest/15 bg-card/75 px-3 py-1.5 text-xs font-bold uppercase tracking-[0.14em] text-forest shadow-sm backdrop-blur">
-              <Sparkles className="h-3.5 w-3.5" /> Smarter product discovery
+            <div className="inline-flex items-center gap-2 rounded-full border border-[#F97316]/30 bg-[#F97316]/10 px-3 py-1.5 text-xs font-bold uppercase tracking-[0.14em] text-[#FB923C] shadow-sm backdrop-blur">
+              <Sparkles className="h-3.5 w-3.5" /> Forge better deals
             </div>
-            <h1 className="mt-5 max-w-3xl font-display text-4xl font-semibold leading-[1.02] tracking-[-0.035em] text-forest-ink sm:text-5xl md:text-6xl lg:text-7xl">
-              Find something worth buying — <span className="text-[#F97316]">without the price guesswork.</span>
+            <h1 className="mt-5 max-w-3xl font-display text-4xl font-semibold leading-[1.01] tracking-[-0.04em] text-white sm:text-5xl md:text-6xl lg:text-7xl">
+              Forge better deals. <span className="text-[#F97316]">Save more every day.</span>
             </h1>
-            <p className="mt-5 max-w-2xl text-base leading-7 text-forest-muted md:text-lg">
-              Browse useful products, popular categories, and retailer offers. When an Amazon price is not freshly verified, DealForge sends you to Amazon instead of pretending an old price is current.
+            <p className="mt-5 max-w-2xl text-base leading-7 text-white/60 md:text-lg">
+              Discover products from Amazon and other trusted retailers without stale-price guesswork. DealForge helps you find the item, then sends you to the retailer for the current offer and checkout.
             </p>
 
             <form action="/search" method="get" className="mt-7 max-w-2xl">
-              <div className="flex items-center gap-2 rounded-2xl border border-card-border bg-card p-2 shadow-xl shadow-forest/5">
-                <Search className="ml-2 h-5 w-5 shrink-0 text-forest-muted" />
+              <div className="flex items-center gap-2 rounded-2xl border border-white/10 bg-white/[0.07] p-2 shadow-xl shadow-black/30 backdrop-blur">
+                <Search className="ml-2 h-5 w-5 shrink-0 text-white/45" />
                 <input
                   name="q"
                   type="search"
                   placeholder="Search headphones, tools, home, books…"
-                  className="min-w-0 flex-1 bg-transparent px-1 py-2 text-sm text-forest-ink outline-none placeholder:text-forest-muted/70"
+                  className="min-w-0 flex-1 bg-transparent px-1 py-2 text-sm text-white outline-none placeholder:text-white/35"
                 />
-                <button type="submit" className="min-h-11 shrink-0 rounded-xl bg-forest px-4 text-sm font-bold text-white transition hover:bg-forest-dark sm:px-6">
+                <button type="submit" className="min-h-11 shrink-0 rounded-xl bg-[#F97316] px-4 text-sm font-bold text-white shadow-[0_8px_24px_rgba(249,115,22,.22)] transition hover:bg-[#EA580C] sm:px-6">
                   Search
                 </button>
               </div>
             </form>
 
-            <div className="mt-5 flex flex-wrap gap-x-5 gap-y-2 text-xs font-medium text-forest-muted">
-              <span className="inline-flex items-center gap-1.5"><ShieldCheck className="h-4 w-4 text-forest" /> Price freshness guard</span>
-              <span className="inline-flex items-center gap-1.5"><BadgeCheck className="h-4 w-4 text-forest" /> Tagged affiliate links</span>
-              <span className="inline-flex items-center gap-1.5"><Zap className="h-4 w-4 text-forest" /> Fast retailer handoff</span>
+            <div className="mt-5 flex flex-wrap gap-x-5 gap-y-2 text-xs font-medium text-white/50">
+              <span className="inline-flex items-center gap-1.5"><ShieldCheck className="h-4 w-4 text-[#FB923C]" /> Price freshness guard</span>
+              <span className="inline-flex items-center gap-1.5"><BadgeCheck className="h-4 w-4 text-[#FB923C]" /> Tagged affiliate links</span>
+              <span className="inline-flex items-center gap-1.5"><Zap className="h-4 w-4 text-[#FB923C]" /> Fast retailer handoff</span>
             </div>
 
-            <div className="mt-8 grid max-w-2xl grid-cols-3 divide-x divide-card-border overflow-hidden rounded-2xl border border-card-border bg-card/70 shadow-sm backdrop-blur">
+            <div className="mt-8 grid max-w-2xl grid-cols-3 divide-x divide-white/10 overflow-hidden rounded-2xl border border-white/10 bg-white/[0.06] shadow-sm backdrop-blur">
               <div className="p-4 sm:p-5">
-                <p className="text-xl font-extrabold text-forest-ink sm:text-2xl">{feed.total.toLocaleString()}</p>
-                <p className="mt-0.5 text-[10px] font-bold uppercase tracking-[0.12em] text-forest-muted">products</p>
+                <p className="text-xl font-extrabold text-white sm:text-2xl">{feed.total.toLocaleString()}</p>
+                <p className="mt-0.5 text-[10px] font-bold uppercase tracking-[0.12em] text-white/40">products</p>
               </div>
               <div className="p-4 sm:p-5">
-                <p className="text-xl font-extrabold text-forest-ink sm:text-2xl">{categories.length}</p>
-                <p className="mt-0.5 text-[10px] font-bold uppercase tracking-[0.12em] text-forest-muted">categories</p>
+                <p className="text-xl font-extrabold text-white sm:text-2xl">{categories.length}</p>
+                <p className="mt-0.5 text-[10px] font-bold uppercase tracking-[0.12em] text-white/40">categories</p>
               </div>
               <div className="p-4 sm:p-5">
-                <p className="text-xl font-extrabold text-forest-ink sm:text-2xl">24h</p>
-                <p className="mt-0.5 text-[10px] font-bold uppercase tracking-[0.12em] text-forest-muted">Amazon price TTL</p>
+                <p className="text-xl font-extrabold text-white sm:text-2xl">24h</p>
+                <p className="mt-0.5 text-[10px] font-bold uppercase tracking-[0.12em] text-white/40">price freshness target</p>
               </div>
             </div>
           </div>
 
           <div className="relative hidden animate-fade-up md:block" style={{ animationDelay: "100ms" }}>
-            <div className="absolute -inset-8 rounded-full bg-forest-accent/15 blur-3xl" />
-            <div className="dn-card relative overflow-hidden p-4 lg:p-5">
-              <div className="flex items-center justify-between gap-3 border-b border-card-border pb-4">
+            <div className="absolute -inset-8 rounded-full bg-[#F97316]/15 blur-3xl" />
+            <div className="dn-forge-glow relative overflow-hidden rounded-[1.4rem] border border-white/10 bg-[#151515]/90 p-4 lg:p-5">
+              <div className="flex items-center justify-between gap-3 border-b border-white/10 pb-4">
                 <div>
-                  <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-forest">DealForge radar</p>
-                  <p className="mt-1 font-display text-xl font-semibold text-forest-ink">Popular right now</p>
+                  <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#FB923C]">DealForge radar</p>
+                  <p className="mt-1 font-display text-xl font-semibold text-white">Popular right now</p>
                 </div>
                 <Flame className="h-5 w-5 text-[#F97316]" />
               </div>
-              <div className="mt-2 divide-y divide-card-border">
+              <div className="mt-2 divide-y divide-white/10">
                 {spotlight.map((product, index) => (
                   <Link key={product.id} href={`/product/${product.slug}`} className="group flex items-center gap-4 py-4">
-                    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-forest/10 text-xs font-extrabold text-forest">{String(index + 1).padStart(2, "0")}</span>
+                    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-[#F97316]/12 text-xs font-extrabold text-[#FB923C]">{String(index + 1).padStart(2, "0")}</span>
                     <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-bold text-forest-ink group-hover:text-forest">{product.title}</p>
-                      <p className="mt-0.5 text-xs text-forest-muted">{retailerLabel(product.retailer)} · {product.brand}</p>
+                      <p className="truncate text-sm font-bold text-white group-hover:text-[#FB923C]">{product.title}</p>
+                      <p className="mt-0.5 text-xs text-white/40">{retailerLabel(product.retailer)} · {product.brand}</p>
                     </div>
-                    <ArrowRight className="h-4 w-4 shrink-0 text-forest-muted transition group-hover:translate-x-1 group-hover:text-forest" />
+                    <ArrowRight className="h-4 w-4 shrink-0 text-white/35 transition group-hover:translate-x-1 group-hover:text-[#FB923C]" />
                   </Link>
                 ))}
               </div>
-              <Link href="/search?sort=popularity" className="mt-2 inline-flex items-center gap-2 rounded-xl bg-forest/10 px-4 py-3 text-sm font-bold text-forest hover:bg-forest/15">
+              <Link href="/search?sort=popularity" className="mt-2 inline-flex items-center gap-2 rounded-xl bg-[#F97316] px-4 py-3 text-sm font-bold text-white shadow-[0_8px_24px_rgba(249,115,22,.18)] transition hover:bg-[#EA580C]">
                 Explore popular products <ArrowRight className="h-4 w-4" />
               </Link>
             </div>
@@ -152,6 +154,8 @@ export default async function HomePage() {
       </section>
 
       <AdSlot client={ads.client} slot={ads.homeTop} className="dn-container mt-8" />
+
+      {affiliateSpotlight ? <AffiliateSpotlight product={affiliateSpotlight} /> : null}
 
       {featured.length ? (
         <section className="dn-container py-12 md:py-16">
