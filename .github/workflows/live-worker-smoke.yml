@@ -43,7 +43,7 @@ jobs:
                 echo 'HOME_SETUP_BANNER=absent'
               fi
             fi
-            if [[ "$code" -ge 500 || "$code" == "000" ]]; then
+            if [[ "$code" != "200" ]]; then
               echo "BODY_PREVIEW $path:"
               head -c 1200 "$body" || true
               echo
