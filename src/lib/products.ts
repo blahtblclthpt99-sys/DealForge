@@ -22,7 +22,6 @@ export type ProductDTO = {
   categoryName?: string;
   subcategory: string | null;
   images: string[];
-  /** Pack / unit count when known */
   quantity: number | null;
   price: number;
   originalPrice: number;
@@ -72,11 +71,6 @@ function boundedNumber(value: number | undefined, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
 }
 
-/**
- * Normalize all public/product-query inputs before they reach Prisma or cache
- * keys. This prevents NaN/Infinity errors, excessive offsets, and unbounded
- * attacker-controlled cache keys on the small production web instance.
- */
 export function normalizeProductQuery(params: ProductQuery): ProductQuery {
   const rawPage = boundedNumber(params.page, 1, MAX_PAGE) ?? 1;
   const rawLimit = boundedNumber(params.limit, 1, MAX_LIMIT) ?? 24;
@@ -110,8 +104,12 @@ export function normalizeProductQuery(params: ProductQuery): ProductQuery {
 
 function cleanImages(raw: string): string[] {
   const list = parseJson<string[]>(raw, []).filter(Boolean);
-  const normalized = list.map((u) => normalizeProductImage(u)).filter((u) => u && !u.includes("placeholder"));
-  return normalized.length ? Array.from(new Set(normalized)) : ["/images/placeholder-product.svg"];
+  const normalized = list
+    .map((u) => normalizeProductImage(u))
+    .filter((u) => u && !u.includes("placeholder"));
+  return normalized.length
+    ? Array.from(new Set(normalized))
+    : ["/images/placeholder-product.svg"];
 }
 
 /** Guard against scrape garbage like $6 sale / $2014 list = 100% off. */
@@ -132,7 +130,9 @@ function sanitizePricing(price: number, originalPrice: number, discountPercent: 
   return { price: p, originalPrice: o, discountPercent: d };
 }
 
-export function toProductDTO(p: ProductWithCategory | Prisma.ProductGetPayload<object>): ProductDTO {
+export function toProductDTO(
+  p: ProductWithCategory | Prisma.ProductGetPayload<object>,
+): ProductDTO {
   const withCat = p as ProductWithCategory;
   const images = cleanImages(p.images);
   const specs = parseJson<Record<string, string>>(p.specifications, {});
@@ -159,7 +159,10 @@ export function toProductDTO(p: ProductWithCategory | Prisma.ProductGetPayload<o
     categoryName: withCat.category?.name,
     subcategory: p.subcategory ?? null,
     images,
-    quantity: p.quantity != null && p.quantity >= 1 ? p.quantity : parseQuantityFromTitle(p.title),
+    quantity:
+      p.quantity != null && p.quantity >= 1
+        ? p.quantity
+        : parseQuantityFromTitle(p.title),
     price: pricing.price,
     originalPrice: pricing.originalPrice,
     discountPercent: pricing.discountPercent,
@@ -203,7 +206,6 @@ export type ProductQuery = {
 };
 
 function buildWhere(params: ProductQuery): Prisma.ProductWhereInput {
-  // Postgres (production) supports case-insensitive contains; SQLite does not.
   const ci =
     process.env.DATABASE_URL?.startsWith("postgres") ||
     process.env.DATABASE_URL?.startsWith("postgresql")
@@ -211,7 +213,6 @@ function buildWhere(params: ProductQuery): Prisma.ProductWhereInput {
       : {};
 
   const where: Prisma.ProductWhereInput = {
-    // Hide CDN stubs until live Amazon title/price enrichment succeeds
     AND: [
       { NOT: { specifications: { contains: '"needsEnrichment":true' } } },
       { NOT: { specifications: { contains: '"needsEnrichment": true' } } },
@@ -244,7 +245,7 @@ function buildWhere(params: ProductQuery): Prisma.ProductWhereInput {
 
 function buildOrderBy(params: ProductQuery): Prisma.ProductOrderByWithRelationInput[] {
   if (params.trending) {
-    return [{ trendingScore: "desc" }, { reviewCount: "desc" }];
+    return [{ clickCount: "desc" }, { viewCount: "desc" }, { createdAt: "desc" }];
   }
   if (params.newest && !params.sort) {
     return [{ createdAt: "desc" }];
@@ -255,22 +256,19 @@ function buildOrderBy(params: ProductQuery): Prisma.ProductOrderByWithRelationIn
     case "rating":
       return [{ rating: "desc" }, { reviewCount: "desc" }];
     case "popularity":
-      return [{ clickCount: "desc" }, { viewCount: "desc" }];
+      return [{ clickCount: "desc" }, { viewCount: "desc" }, { createdAt: "desc" }];
     case "savings":
-      return [{ discountPercent: "desc" }, { rating: "desc" }];
+      return [{ discountPercent: "desc" }, { createdAt: "desc" }];
     case "price_asc":
       return [{ price: "asc" }];
     case "price_desc":
       return [{ price: "desc" }];
     case "rank":
     default:
-      // Approximate rank score with indexed columns — avoids loading the full catalog
-      return [
-        { discountPercent: "desc" },
-        { rating: "desc" },
-        { reviewCount: "desc" },
-        { trendingScore: "desc" },
-      ];
+      // Public default ranking uses first-party engagement and catalog recency.
+      // Legacy Amazon price/rating fields remain available to internal tools but
+      // are not trusted enough to control the storefront order.
+      return [{ clickCount: "desc" }, { viewCount: "desc" }, { createdAt: "desc" }];
   }
 }
 
@@ -278,7 +276,7 @@ export async function queryProducts(params: ProductQuery) {
   const normalized = normalizeProductQuery(params);
   const page = normalized.page ?? 1;
   const limit = normalized.limit ?? 24;
-  const cacheKey = `products:v7:${JSON.stringify(normalized)}`;
+  const cacheKey = `products:v8:${JSON.stringify(normalized)}`;
   const cached = await cacheGet<{
     items: ProductDTO[];
     total: number;
@@ -291,7 +289,7 @@ export async function queryProducts(params: ProductQuery) {
   const orderBy = buildOrderBy(normalized);
   const skip = (page - 1) * limit;
 
-  const countKey = `products:count:v5:${JSON.stringify({
+  const countKey = `products:count:v6:${JSON.stringify({
     q: normalized.q,
     category: normalized.category,
     subcategory: normalized.subcategory,
@@ -341,85 +339,81 @@ export async function getProductBySlug(slug: string) {
   return toProductDTO(product);
 }
 
-export async function getSimilarProducts(product: ProductDTO, limit = 8) {
-  const take = Math.min(24, Math.max(1, Math.floor(Number.isFinite(limit) ? limit : 8)));
-  const rows = await prisma.product.findMany({
-    where: {
-      categoryId: product.categoryId,
-      id: { not: product.id },
-    },
-    include: { category: true },
-    orderBy: [{ discountPercent: "desc" }, { rating: "desc" }],
-    take,
-  });
-  return rows.map(toProductDTO);
-}
-
-export async function getRelatedProducts(product: ProductDTO, limit = 8) {
-  const take = Math.min(24, Math.max(1, Math.floor(Number.isFinite(limit) ? limit : 8)));
-  const rows = await prisma.product.findMany({
-    where: {
-      brand: product.brand,
-      id: { not: product.id },
-    },
-    include: { category: true },
-    orderBy: [{ rating: "desc" }, { reviewCount: "desc" }],
-    take,
-  });
-  return rows.map(toProductDTO);
-}
-
 export async function getCategories() {
-  const cached = await cacheGet<Awaited<ReturnType<typeof fetchCategories>>>("categories:all");
+  const key = "categories:all:v2";
+  const cached = await cacheGet<
+    { id: string; name: string; slug: string; icon: string; count: number }[]
+  >(key);
   if (cached) return cached;
-  const data = await fetchCategories();
-  await cacheSet("categories:all", data, 60);
-  return data;
-}
-
-async function fetchCategories() {
-  return prisma.category.findMany({
-    orderBy: { name: "asc" },
+  const cats = await prisma.category.findMany({
     include: { _count: { select: { products: true } } },
+    orderBy: { name: "asc" },
   });
+  const result = cats.map((c) => ({
+    id: c.id,
+    name: c.name,
+    slug: c.slug,
+    icon: c.icon,
+    count: c._count.products,
+  }));
+  await cacheSet(key, result, 300);
+  return result;
 }
 
-/** Top brands by product count — keeps the search filter fast. */
-export async function getTopBrands(limit = 200) {
-  const take = Math.min(300, Math.max(1, Math.floor(Number.isFinite(limit) ? limit : 200)));
-  const cacheKey = `brands:top:${take}`;
-  const cached = await cacheGet<string[]>(cacheKey);
-  if (cached) return cached;
-
-  const grouped = await prisma.product.groupBy({
+export async function getTopBrands(limit = 100) {
+  const safeLimit = Math.min(200, Math.max(1, Math.trunc(limit)));
+  const brands = await prisma.product.groupBy({
     by: ["brand"],
     _count: { brand: true },
     orderBy: { _count: { brand: "desc" } },
-    take,
+    take: safeLimit,
   });
-  const brands = grouped.map((g) => g.brand).filter(Boolean).sort((a, b) => a.localeCompare(b));
-  await cacheSet(cacheKey, brands, 300);
-  return brands;
+  return brands.map((b) => b.brand).filter(Boolean);
+}
+
+export async function getSimilarProducts(product: ProductDTO, limit = 4) {
+  const safeLimit = Math.min(12, Math.max(1, Math.trunc(limit)));
+  const rows = await prisma.product.findMany({
+    where: {
+      id: { not: product.id },
+      categoryId: product.categoryId,
+      NOT: [
+        { specifications: { contains: '"needsEnrichment":true' } },
+        { specifications: { contains: '"needsEnrichment": true' } },
+      ],
+    },
+    include: { category: true },
+    orderBy: [{ clickCount: "desc" }, { viewCount: "desc" }, { createdAt: "desc" }],
+    take: safeLimit,
+  });
+  return rows.map(toProductDTO);
+}
+
+export async function getRelatedProducts(product: ProductDTO, limit = 4) {
+  const safeLimit = Math.min(12, Math.max(1, Math.trunc(limit)));
+  const rows = await prisma.product.findMany({
+    where: {
+      id: { not: product.id },
+      brand: product.brand,
+      NOT: [
+        { specifications: { contains: '"needsEnrichment":true' } },
+        { specifications: { contains: '"needsEnrichment": true' } },
+      ],
+    },
+    include: { category: true },
+    orderBy: [{ clickCount: "desc" }, { viewCount: "desc" }, { createdAt: "desc" }],
+    take: safeLimit,
+  });
+  return rows.map(toProductDTO);
 }
 
 export async function recordProductView(productId: string) {
-  await prisma.product.update({
-    where: { id: productId },
-    data: { viewCount: { increment: 1 } },
-  });
-}
-
-export async function recordClick(productId: string, userId?: string) {
-  await prisma.$transaction([
-    prisma.clickEvent.create({
-      data: { productId, userId: userId ?? null, source: "web" },
-    }),
-    prisma.product.update({
+  try {
+    await prisma.product.update({
       where: { id: productId },
-      data: {
-        clickCount: { increment: 1 },
-        trendingScore: { increment: 1.5 },
-      },
-    }),
-  ]);
+      data: { viewCount: { increment: 1 } },
+    });
+  } catch {
+    // Analytics must never break product rendering.
+  }
 }
