@@ -42,6 +42,13 @@ jobs:
               else
                 echo 'HOME_SETUP_BANNER=absent'
               fi
+              if grep -qi 'Forge better deals' "$body"; then
+                echo 'REDESIGNED_STOREFRONT=present'
+              else
+                echo '::error::Latest DealForge redesign is not yet visible on the Worker.'
+                echo 'REDESIGNED_STOREFRONT=missing'
+                failed=1
+              fi
             fi
             if [[ "$code" != "200" ]]; then
               echo "BODY_PREVIEW $path:"
@@ -146,6 +153,8 @@ jobs:
           [[ "$ready" == "1" ]]
           ! grep -qi 'Database not connected' /tmp/www-home.html
           ! grep -qi 'Database not connected' /tmp/apex-home.html
+          grep -qi 'Forge better deals' /tmp/www-home.html
+          grep -qi 'Forge better deals' /tmp/apex-home.html
 
           for path in /categories /deals /search /login /register; do
             code=$(curl --silent --show-error --location --max-time 30 --output /tmp/custom-route.html --write-out '%{http_code}' "$PRODUCTION_URL$path" || echo 000)
