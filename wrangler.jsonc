@@ -5,6 +5,16 @@
   "compatibility_date": "2026-08-19",
   "compatibility_flags": ["nodejs_compat"],
   "keep_vars": true,
+  "routes": [
+    {
+      "pattern": "deal-forge.sale",
+      "custom_domain": true
+    },
+    {
+      "pattern": "www.deal-forge.sale",
+      "custom_domain": true
+    }
+  ],
   "secrets": {
     "required": ["DATABASE_URL", "AUTH_SECRET"]
   },
