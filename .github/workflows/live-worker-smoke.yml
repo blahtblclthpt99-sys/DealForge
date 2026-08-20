@@ -19,6 +19,8 @@ jobs:
     timeout-minutes: 10
     env:
       BASE_URL: https://dealforge.blahtblclthpt99.workers.dev
+      PRODUCTION_URL: https://www.deal-forge.sale
+      APEX_URL: https://deal-forge.sale
       PRODUCT_ID: cmrp6aaeu06kgtk3shzktm0h9
       PRODUCT_SLUG: teling-100-pcs-rainbow-colored-pencils-multicolored-7-in-1-pencils-for-kids-blac-b0bpxv8vky
       PRODUCT_ASIN: B0BPXV8VKY
@@ -113,3 +115,56 @@ jobs:
           code=$(curl --silent --show-error --max-time 30 --max-redirs 0 --output /tmp/diagnostics-removed.txt --write-out '%{http_code}' "$BASE_URL/api/runtime-diagnostics" || true)
           echo "runtime diagnostics endpoint -> $code"
           [[ "$code" == "404" ]]
+
+      - name: Wait for custom domains and certify production URL
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ready=0
+          for attempt in $(seq 1 30); do
+            www_code=$(curl --silent --show-error --location --max-time 20 --output /tmp/www-home.html --write-out '%{http_code}' "$PRODUCTION_URL/" || echo 000)
+            apex_code=$(curl --silent --show-error --location --max-time 20 --output /tmp/apex-home.html --write-out '%{http_code}' "$APEX_URL/" || echo 000)
+            echo "custom domains attempt $attempt -> www=$www_code apex=$apex_code"
+            if [[ "$www_code" == "200" && "$apex_code" == "200" ]]; then
+              ready=1
+              break
+            fi
+            sleep 10
+          done
+          [[ "$ready" == "1" ]]
+          ! grep -qi 'Database not connected' /tmp/www-home.html
+          ! grep -qi 'Database not connected' /tmp/apex-home.html
+
+          for path in /categories /deals /search /login /register; do
+            code=$(curl --silent --show-error --location --max-time 30 --output /tmp/custom-route.html --write-out '%{http_code}' "$PRODUCTION_URL$path" || echo 000)
+            echo "production $path -> $code"
+            [[ "$code" == "200" ]]
+          done
+
+          product_code=$(curl --silent --show-error --max-time 30 --output /tmp/custom-product.html --write-out '%{http_code}' "$PRODUCTION_URL/product/$PRODUCT_SLUG")
+          echo "production product detail -> $product_code"
+          [[ "$product_code" == "200" ]]
+
+          go_code=$(curl --silent --show-error --max-time 30 --max-redirs 0 --dump-header /tmp/custom-go.headers --output /tmp/custom-go.body --write-out '%{http_code}' "$PRODUCTION_URL/go/$PRODUCT_ID" || true)
+          location=$(awk 'BEGIN{IGNORECASE=1} /^location:/{sub(/\r$/, ""); sub(/^[^:]+:[[:space:]]*/, ""); print}' /tmp/custom-go.headers | tail -n 1)
+          echo "production affiliate redirect -> $go_code $location"
+          [[ "$go_code" == "302" ]]
+          [[ "$location" == https://amazon.com/* || "$location" == https://*.amazon.com/* ]]
+          [[ "$location" == *"/dp/$PRODUCT_ASIN"* ]]
+          [[ "$location" == *"tag=titanfieldos-20"* ]]
+
+          image_code=$(curl --silent --show-error --max-time 30 --get --data-urlencode "u=$IMAGE_URL" --dump-header /tmp/custom-image.headers --output /tmp/custom-image.bin --write-out '%{http_code}' "$PRODUCTION_URL/api/img")
+          image_type=$(awk 'BEGIN{IGNORECASE=1} /^content-type:/{sub(/\r$/, ""); sub(/^[^:]+:[[:space:]]*/, ""); print}' /tmp/custom-image.headers | tail -n 1)
+          echo "production image proxy -> $image_code ($image_type)"
+          [[ "$image_code" == "200" ]]
+          [[ "$image_type" == image/* ]]
+
+          for path in /dashboard /admin; do
+            headers="/tmp/custom$(echo "$path" | tr '/' '_').headers"
+            code=$(curl --silent --show-error --max-time 30 --max-redirs 0 --dump-header "$headers" --output /dev/null --write-out '%{http_code}' "$PRODUCTION_URL$path" || true)
+            location=$(awk 'BEGIN{IGNORECASE=1} /^location:/{sub(/\r$/, ""); sub(/^[^:]+:[[:space:]]*/, ""); print}' "$headers" | tail -n 1)
+            echo "production $path unauthenticated -> $code $location"
+            [[ "$code" =~ ^30[2378]$ ]]
+            [[ "$location" == *"/login"* ]]
+          done
