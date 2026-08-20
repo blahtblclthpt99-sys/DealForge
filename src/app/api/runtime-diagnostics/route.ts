@@ -53,7 +53,7 @@ export async function GET() {
       ? contextDatabaseUrl.trim()
       : (processDatabaseUrl || "").trim();
 
-  let databaseProbe: {
+  const databaseProbe: {
     attempted: boolean;
     ok: boolean;
     error: ReturnType<typeof safeError> | null;
