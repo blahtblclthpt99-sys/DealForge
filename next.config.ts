@@ -8,6 +8,9 @@ const nextConfig: NextConfig = {
   ...(!isVercel
     ? { output: "standalone" as const, outputFileTracingRoot: path.join(__dirname) }
     : {}),
+  // OpenNext/Cloudflare must keep Prisma's Workerd-specific exports external so
+  // the adapter can patch and include the generated client and WASM compiler.
+  serverExternalPackages: ["@prisma/client", ".prisma/client"],
   images: {
     remotePatterns: [
       { protocol: "https", hostname: "m.media-amazon.com" },
