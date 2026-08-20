@@ -1,4 +1,6 @@
 import { getCloudflareContext } from "@opennextjs/cloudflare";
+import { PrismaClient } from "@prisma/client";
+import { PrismaNeon } from "@prisma/adapter-neon";
 
 export const dynamic = "force-dynamic";
 
@@ -9,6 +11,19 @@ function summarize(value: unknown) {
     postgresScheme: text.startsWith("postgresql://") || text.startsWith("postgres://"),
     length: text.length,
   };
+}
+
+function safeError(error: unknown) {
+  const name = error instanceof Error ? error.name : "unknown";
+  const raw = error instanceof Error ? error.message : String(error);
+  const message = raw
+    .replace(/postgres(?:ql)?:\/\/[^@\s]+@/gi, "postgresql://[redacted]@")
+    .slice(0, 500);
+  const code =
+    typeof error === "object" && error !== null && "code" in error
+      ? String((error as { code?: unknown }).code ?? "") || null
+      : null;
+  return { name, code, message };
 }
 
 export async function GET() {
@@ -33,6 +48,38 @@ export async function GET() {
     contextError = error instanceof Error ? error.name : "unknown";
   }
 
+  const databaseUrl =
+    typeof contextDatabaseUrl === "string" && contextDatabaseUrl.trim()
+      ? contextDatabaseUrl.trim()
+      : (processDatabaseUrl || "").trim();
+
+  let databaseProbe: {
+    attempted: boolean;
+    ok: boolean;
+    error: ReturnType<typeof safeError> | null;
+  } = { attempted: false, ok: false, error: null };
+
+  if (databaseUrl.startsWith("postgresql://") || databaseUrl.startsWith("postgres://")) {
+    databaseProbe.attempted = true;
+    let prisma: PrismaClient | null = null;
+    try {
+      const adapter = new PrismaNeon({ connectionString: databaseUrl });
+      prisma = new PrismaClient({ adapter });
+      await prisma.$queryRaw`SELECT 1`;
+      databaseProbe.ok = true;
+    } catch (error) {
+      databaseProbe.error = safeError(error);
+    } finally {
+      if (prisma) {
+        try {
+          await prisma.$disconnect();
+        } catch {
+          // Diagnostic cleanup only; do not hide the query result.
+        }
+      }
+    }
+  }
+
   return Response.json(
     {
       ok: true,
@@ -55,6 +102,7 @@ export async function GET() {
         cloudflareWorkers:
           typeof contextCloudflareWorkers === "string" ? contextCloudflareWorkers : null,
       },
+      databaseProbe,
     },
     {
       headers: {
