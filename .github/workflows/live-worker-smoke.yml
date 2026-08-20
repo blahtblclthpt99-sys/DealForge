@@ -28,7 +28,7 @@ jobs:
           for attempt in $(seq 1 30); do
             code=$(curl --silent --show-error --max-time 20 --output /tmp/runtime-diagnostics.json --write-out '%{http_code}' "$url" || echo 000)
             echo "runtime diagnostics attempt $attempt -> $code"
-            if [[ "$code" == "200" ]] && grep -q '"databaseProbe"' /tmp/runtime-diagnostics.json; then
+            if [[ "$code" == "200" ]] && grep -q '"appCategoryProbe"' /tmp/runtime-diagnostics.json; then
               cat /tmp/runtime-diagnostics.json
               echo
               exit 0
