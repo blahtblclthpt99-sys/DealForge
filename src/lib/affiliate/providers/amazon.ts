@@ -5,10 +5,11 @@ import {
   type NormalizedProduct,
 } from "../types";
 import { AMAZON_ASSOCIATE_TAG, buildAmazonProductUrl, withAmazonTag } from "../amazon-config";
+import { searchAmazonCreatorItems } from "../amazon-creators";
 
 /**
- * Amazon Associates connector for store ID: titanfieldos-20
- * Purchase links: https://www.amazon.com/dp/{ASIN}?tag=titanfieldos-20
+ * Amazon Associates connector for store ID: titanfieldos-20.
+ * Product data is retrieved through Amazon Creators API when credentials are configured.
  */
 export const amazonConnector: AffiliateConnector = {
   id: "amazon",
@@ -20,13 +21,9 @@ export const amazonConnector: AffiliateConnector = {
     return `https://www.amazon.com/?tag=${AMAZON_ASSOCIATE_TAG}`;
   },
 
-  async fetchProducts(query) {
-    // Production: Amazon Product Advertising API 5.0
-    if (!process.env.AMAZON_ACCESS_KEY || !process.env.AMAZON_SECRET_KEY) {
-      return [];
-    }
-    void query;
-    return [];
+  async fetchProducts(query, options) {
+    const items = await searchAmazonCreatorItems(query, options);
+    return items;
   },
 
   normalize(input: AffiliateProductInput): NormalizedProduct {
@@ -46,19 +43,17 @@ export const amazonConnector: AffiliateConnector = {
       images: input.images?.length
         ? input.images
         : input.asin
-          ? [
-              `https://m.media-amazon.com/images/P/${input.asin.toUpperCase()}.01._SCLZZZZZZZ_SX500_.jpg`,
-            ]
+          ? [`https://m.media-amazon.com/images/P/${input.asin.toUpperCase()}.01._SCLZZZZZZZ_SX500_.jpg`]
           : ["/images/placeholder-product.svg"],
       category: input.category ?? "electronics",
-      availability: input.availability ?? "in_stock",
+      availability: input.availability ?? "unknown",
       affiliateUrl: amazonConnector.generateLink({ asin: input.asin, url: input.url }),
       retailer: "amazon",
     };
   },
 };
 
-export function amazonDpLink(asin: string) {
+export function amazonDpLink(asin: string, _tag?: string) {
   return buildAmazonProductUrl(asin);
 }
 
