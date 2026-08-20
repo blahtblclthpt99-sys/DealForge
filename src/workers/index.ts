@@ -3,18 +3,20 @@
  * - refreshes trending scores
  * - expires flash deals
  * - cleans cache entries
- * - checks price alerts
- * - refreshes stale Amazon prices (keeps catalog current)
+ * - checks price alerts only against trusted fresh prices
+ * - refreshes stale Amazon products through Amazon Creators API
  *
  * Run: npm run worker
  * Once: npm run worker -- --once
- *
- * This process is intentionally separate from the Koyeb web service. Do not
- * start it from the production web command on the free hosting allocation.
  */
 
 import { prisma } from "../lib/db";
 import { parseJson } from "../lib/utils";
+import {
+  amazonCreatorsConfigured,
+  getAmazonCreatorItems,
+} from "../lib/affiliate/amazon-creators";
+import { buildAmazonProductUrl } from "../lib/affiliate/amazon-config";
 
 type PriceAlert = {
   id: string;
@@ -22,60 +24,34 @@ type PriceAlert = {
   targetPrice: number;
 };
 
-const UA =
-  "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1";
 const WORKER_INTERVAL_MS = 5 * 60 * 1000;
-const AMAZON_FETCH_TIMEOUT_MS = 10_000;
 const MAX_ALERTS_PER_RUN = 2_000;
+const AMAZON_PRICE_TTL_MS = 24 * 60 * 60 * 1000;
 
-function extractPrice(html: string) {
-  const patterns = [
-    /"priceAmount":\s*([0-9]+(?:\.[0-9]+)?)/,
-    /class="a-offscreen">\$([0-9,]+\.?[0-9]*)</,
-    /"displayPrice":"\$([0-9,]+\.?[0-9]*)"/,
-  ];
-  for (const re of patterns) {
-    const m = html.match(re);
-    if (m?.[1]) {
-      const v = parseFloat(m[1].replace(/,/g, ""));
-      if (v > 0 && v < 10000) return v;
-    }
-  }
-  return null;
+function isFreshTrustedAmazonPrice(product: {
+  retailer: string;
+  lastUpdated: Date;
+  specifications: string;
+}) {
+  if (product.retailer !== "amazon") return true;
+  const specs = parseJson<Record<string, string>>(product.specifications, {});
+  return (
+    specs.priceSource === "amazon-creators-api" &&
+    Date.now() - product.lastUpdated.getTime() <= AMAZON_PRICE_TTL_MS
+  );
 }
-
-function extractList(html: string, price: number) {
-  const m = html.match(/List Price[^$]{0,40}\$([0-9,]+\.?[0-9]*)/i);
-  if (m?.[1]) {
-    const v = parseFloat(m[1].replace(/,/g, ""));
-    if (v > price && v <= price * 2.5 && v < 5000) return v;
-  }
-  return price;
-}
-
-async function scrapePrice(asin: string) {
-  try {
-    const res = await fetch(`https://www.amazon.com/gp/aw/d/${asin}`, {
-      headers: { "User-Agent": UA, "Accept-Language": "en-US,en;q=0.9" },
-      redirect: "follow",
-      signal: AbortSignal.timeout(AMAZON_FETCH_TIMEOUT_MS),
-    });
-    if (!res.ok) return null;
-    const html = await res.text();
-    if (/captcha|robot check|automated access/i.test(html.slice(0, 4000))) return null;
-    const price = extractPrice(html);
-    if (!price) return null;
-    return { price, originalPrice: extractList(html, price) };
-  } catch {
-    return null;
-  }
-}
-
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 async function refreshTrending() {
   const products = await prisma.product.findMany({
-    select: { id: true, clickCount: true, viewCount: true, discountPercent: true, lastUpdated: true },
+    select: {
+      id: true,
+      clickCount: true,
+      viewCount: true,
+      discountPercent: true,
+      lastUpdated: true,
+      retailer: true,
+      specifications: true,
+    },
   });
 
   const updates: Array<ReturnType<typeof prisma.product.update>> = [];
@@ -83,7 +59,8 @@ async function refreshTrending() {
     const ctr = p.viewCount > 0 ? p.clickCount / p.viewCount : 0;
     const ageDays = (Date.now() - p.lastUpdated.getTime()) / (1000 * 60 * 60 * 24);
     const freshness = Math.max(0, 1 - ageDays / 30);
-    const score = Math.round((ctr * 40 + p.discountPercent * 0.4 + freshness * 30) * 10) / 10;
+    const trustedDiscount = isFreshTrustedAmazonPrice(p) ? p.discountPercent : 0;
+    const score = Math.round((ctr * 40 + trustedDiscount * 0.4 + freshness * 30) * 10) / 10;
     updates.push(prisma.product.update({ where: { id: p.id }, data: { trendingScore: score } }));
 
     if (updates.length >= 100) {
@@ -93,7 +70,11 @@ async function refreshTrending() {
   if (updates.length) await prisma.$transaction(updates);
 
   await prisma.systemLog.create({
-    data: { level: "info", source: "worker", message: `Refreshed trending for ${products.length} products` },
+    data: {
+      level: "info",
+      source: "worker",
+      message: `Refreshed trending for ${products.length} products`,
+    },
   });
 }
 
@@ -142,14 +123,25 @@ async function processPriceAlerts() {
   const productIds = Array.from(new Set(alertRows.map((row) => row.alert.productId)));
   const products = await prisma.product.findMany({
     where: { id: { in: productIds } },
-    select: { id: true, title: true, price: true },
+    select: {
+      id: true,
+      title: true,
+      price: true,
+      retailer: true,
+      lastUpdated: true,
+      specifications: true,
+    },
   });
   const byId = new Map(products.map((product) => [product.id, product]));
 
   let hits = 0;
   for (const { userId, alert } of alertRows) {
     const product = byId.get(alert.productId);
-    if (product && product.price <= alert.targetPrice) {
+    if (
+      product &&
+      isFreshTrustedAmazonPrice(product) &&
+      product.price <= alert.targetPrice
+    ) {
       hits += 1;
       await prisma.systemLog.create({
         data: {
@@ -164,10 +156,25 @@ async function processPriceAlerts() {
   return hits;
 }
 
-/** Keep prices current — scrapes a small batch of stale Amazon listings each cycle. */
-async function refreshPrices(limit = 15) {
-  const safeLimit = Math.min(25, Math.max(1, Math.trunc(limit)));
-  const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000);
+/**
+ * Refresh a bounded batch of Amazon listings using the approved Creators API.
+ * If credentials are unavailable, no product timestamp is touched: an old price
+ * must never become "fresh" just because a refresh attempt failed.
+ */
+async function refreshPrices(limit = 20) {
+  if (!amazonCreatorsConfigured()) {
+    await prisma.systemLog.create({
+      data: {
+        level: "warn",
+        source: "worker",
+        message: "Amazon price refresh skipped: Creators API credentials are not configured",
+      },
+    });
+    return 0;
+  }
+
+  const safeLimit = Math.min(50, Math.max(1, Math.trunc(limit)));
+  const cutoff = new Date(Date.now() - AMAZON_PRICE_TTL_MS);
   const rows = await prisma.product.findMany({
     where: {
       retailer: "amazon",
@@ -176,38 +183,61 @@ async function refreshPrices(limit = 15) {
     },
     orderBy: { lastUpdated: "asc" },
     take: safeLimit,
-    select: { id: true, asin: true, price: true },
+    select: {
+      id: true,
+      asin: true,
+      title: true,
+      images: true,
+      specifications: true,
+    },
   });
 
   let updated = 0;
-  for (const row of rows) {
-    if (!row.asin) continue;
-    const scraped = await scrapePrice(row.asin);
-    if (!scraped) {
-      await prisma.product.update({
-        where: { id: row.id },
-        data: { lastUpdated: new Date() },
-      });
-      await sleep(1200);
-      continue;
-    }
-    const discountPercent =
-      scraped.originalPrice > scraped.price
-        ? Math.round(
-            ((scraped.originalPrice - scraped.price) / scraped.originalPrice) * 1000,
-          ) / 10
-        : 0;
-    await prisma.product.update({
-      where: { id: row.id },
-      data: {
-        price: scraped.price,
-        originalPrice: Math.max(scraped.originalPrice, scraped.price),
-        discountPercent,
-        lastUpdated: new Date(),
-      },
+  for (let offset = 0; offset < rows.length; offset += 10) {
+    const batch = rows.slice(offset, offset + 10);
+    const items = await getAmazonCreatorItems(batch.flatMap((row) => (row.asin ? [row.asin] : [])));
+    const byAsin = new Map(items.map((item) => [item.asin, item]));
+
+    const writes = batch.flatMap((row) => {
+      if (!row.asin) return [];
+      const item = byAsin.get(row.asin.toUpperCase());
+      if (!item || !(item.price > 0)) return [];
+
+      const originalPrice = Math.max(item.originalPrice || item.price, item.price);
+      const discountPercent =
+        originalPrice > item.price
+          ? Math.round(((originalPrice - item.price) / originalPrice) * 1000) / 10
+          : 0;
+      const specs = parseJson<Record<string, string>>(row.specifications, {});
+      const images = item.images?.length ? JSON.stringify(item.images) : row.images;
+
+      updated += 1;
+      return [
+        prisma.product.update({
+          where: { id: row.id },
+          data: {
+            title: item.title || row.title,
+            description: item.description || item.title || row.title,
+            brand: item.brand || undefined,
+            images,
+            price: item.price,
+            originalPrice,
+            discountPercent,
+            affiliateUrl: buildAmazonProductUrl(row.asin),
+            availability: item.availability || "unknown",
+            isFlashDeal: discountPercent >= 10,
+            lastUpdated: new Date(item.checkedAt),
+            specifications: JSON.stringify({
+              ...specs,
+              priceSource: "amazon-creators-api",
+              priceCheckedAt: item.checkedAt,
+            }),
+          },
+        }),
+      ];
     });
-    updated += 1;
-    await sleep(1800);
+
+    if (writes.length) await prisma.$transaction(writes);
   }
 
   if (rows.length) {
@@ -216,7 +246,7 @@ async function refreshPrices(limit = 15) {
       data: {
         level: "info",
         source: "worker",
-        message: `Price refresh: ${updated}/${rows.length} updated`,
+        message: `Creators API price refresh: ${updated}/${rows.length} updated`,
       },
     });
   }
@@ -225,10 +255,10 @@ async function refreshPrices(limit = 15) {
 
 async function runOnce() {
   console.log(`[worker] starting ${new Date().toISOString()}`);
+  const priceUpdates = await refreshPrices(20);
   await refreshTrending();
   await expireFlashDeals();
   await cleanCache();
-  const priceUpdates = await refreshPrices(15);
   const alerts = await processPriceAlerts();
   console.log(`[worker] done — ${priceUpdates} prices, ${alerts} price alert hits`);
 }
