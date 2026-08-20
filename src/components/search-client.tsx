@@ -8,15 +8,12 @@ import type { ProductDTO } from "@/lib/products";
 
 const SORTS = [
   { value: "rank", label: "Best match" },
-  { value: "newest", label: "Newest" },
-  { value: "rating", label: "Rating" },
+  { value: "newest", label: "Recently added" },
   { value: "popularity", label: "Popularity" },
-  { value: "savings", label: "Biggest savings" },
-  { value: "price_asc", label: "Lowest price" },
-  { value: "price_desc", label: "Highest price" },
 ];
 
 const PENDING_KEY = "df_pending_saved_search";
+const LEGACY_COMMERCE_PARAMS = ["minPrice", "maxPrice", "minRating", "minDiscount"];
 
 function cleanFilters(raw: Record<string, string>) {
   const out: Record<string, string> = {};
@@ -49,19 +46,27 @@ export function SearchClient({
     () => ({
       category: searchParams.get("category") || "",
       brand: searchParams.get("brand") || "",
-      minPrice: searchParams.get("minPrice") || "",
-      maxPrice: searchParams.get("maxPrice") || "",
-      minRating: searchParams.get("minRating") || "",
-      minDiscount: searchParams.get("minDiscount") || "",
       sort: searchParams.get("sort") || "rank",
     }),
     [searchParams],
   );
 
   useEffect(() => {
+    const hasLegacyCommerceParams = LEGACY_COMMERCE_PARAMS.some((key) => searchParams.has(key));
+    const unsafeSort = !SORTS.some((sort) => sort.value === filters.sort);
+    if (!hasLegacyCommerceParams && !unsafeSort) return;
+
+    const params = new URLSearchParams(searchParams.toString());
+    for (const key of LEGACY_COMMERCE_PARAMS) params.delete(key);
+    if (unsafeSort) params.set("sort", "rank");
+    startTransition(() => router.replace(`/search?${params.toString()}`));
+  }, [filters.sort, router, searchParams]);
+
+  useEffect(() => {
     const t = setTimeout(() => {
       if (q === (searchParams.get("q") || "")) return;
       const params = new URLSearchParams(searchParams.toString());
+      for (const key of LEGACY_COMMERCE_PARAMS) params.delete(key);
       if (q) params.set("q", q);
       else params.delete("q");
       startTransition(() => router.push(`/search?${params.toString()}`));
@@ -69,7 +74,6 @@ export function SearchClient({
     return () => clearTimeout(t);
   }, [q, router, searchParams]);
 
-  // After login redirect, finish a pending save
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -104,6 +108,7 @@ export function SearchClient({
 
   function setFilter(key: string, value: string) {
     const params = new URLSearchParams(searchParams.toString());
+    for (const legacy of LEGACY_COMMERCE_PARAMS) params.delete(legacy);
     if (value) params.set(key, value);
     else params.delete(key);
     startTransition(() => router.push(`/search?${params.toString()}`));
@@ -111,6 +116,7 @@ export function SearchClient({
 
   function currentSearchPath() {
     const params = new URLSearchParams(searchParams.toString());
+    for (const key of LEGACY_COMMERCE_PARAMS) params.delete(key);
     if (q) params.set("q", q);
     else params.delete("q");
     const qs = params.toString();
@@ -155,8 +161,13 @@ export function SearchClient({
 
   return (
     <div className="grid gap-8 lg:grid-cols-[260px_1fr]">
-      <aside className="dn-card h-fit space-y-4 p-5">
-        <h2 className="font-semibold text-forest-ink">Filters</h2>
+      <aside className="dn-card h-fit space-y-5 p-5">
+        <div>
+          <h2 className="font-semibold text-forest-ink">Refine results</h2>
+          <p className="mt-1 text-xs leading-relaxed text-forest-muted">
+            Price and savings filters return after Amazon pricing is refreshed through an approved source.
+          </p>
+        </div>
 
         <label className="block text-sm">
           <span className="mb-1 block text-forest-muted">Category</span>
@@ -165,7 +176,7 @@ export function SearchClient({
             onChange={(e) => setFilter("category", e.target.value)}
             className="w-full rounded-xl border border-card-border bg-background px-3 py-2"
           >
-            <option value="">All</option>
+            <option value="">All categories</option>
             {categories.map((c) => (
               <option key={c.slug} value={c.slug}>
                 {c.name}
@@ -181,7 +192,7 @@ export function SearchClient({
             onChange={(e) => setFilter("brand", e.target.value)}
             className="w-full rounded-xl border border-card-border bg-background px-3 py-2"
           >
-            <option value="">All</option>
+            <option value="">All brands</option>
             {brands.map((b) => (
               <option key={b} value={b}>
                 {b}
@@ -190,60 +201,11 @@ export function SearchClient({
           </select>
         </label>
 
-        <div className="grid grid-cols-2 gap-2">
-          <label className="block text-sm">
-            <span className="mb-1 block text-forest-muted">Min $</span>
-            <input
-              type="number"
-              value={filters.minPrice}
-              onChange={(e) => setFilter("minPrice", e.target.value)}
-              className="w-full rounded-xl border border-card-border bg-background px-3 py-2"
-            />
-          </label>
-          <label className="block text-sm">
-            <span className="mb-1 block text-forest-muted">Max $</span>
-            <input
-              type="number"
-              value={filters.maxPrice}
-              onChange={(e) => setFilter("maxPrice", e.target.value)}
-              className="w-full rounded-xl border border-card-border bg-background px-3 py-2"
-            />
-          </label>
-        </div>
-
-        <label className="block text-sm">
-          <span className="mb-1 block text-forest-muted">Min rating</span>
-          <select
-            value={filters.minRating}
-            onChange={(e) => setFilter("minRating", e.target.value)}
-            className="w-full rounded-xl border border-card-border bg-background px-3 py-2"
-          >
-            <option value="">Any</option>
-            <option value="4">4+</option>
-            <option value="4.5">4.5+</option>
-          </select>
-        </label>
-
-        <label className="block text-sm">
-          <span className="mb-1 block text-forest-muted">Min discount %</span>
-          <select
-            value={filters.minDiscount}
-            onChange={(e) => setFilter("minDiscount", e.target.value)}
-            className="w-full rounded-xl border border-card-border bg-background px-3 py-2"
-          >
-            <option value="">Any</option>
-            <option value="10">10%+</option>
-            <option value="20">20%+</option>
-            <option value="30">30%+</option>
-            <option value="40">40%+</option>
-          </select>
-        </label>
-
         <button
           type="button"
           onClick={saveSearch}
           disabled={saveState === "saving"}
-          className="w-full rounded-xl border border-card-border py-2 text-sm font-medium text-forest hover:bg-forest/5 disabled:opacity-60"
+          className="w-full rounded-xl border border-card-border py-2.5 text-sm font-medium text-forest hover:bg-forest/5 disabled:opacity-60"
         >
           {saveLabel}
         </button>
@@ -266,17 +228,17 @@ export function SearchClient({
             <input
               value={q}
               onChange={(e) => setQ(e.target.value)}
-              placeholder="Live search products, brands…"
+              placeholder="Search products and brands…"
               className="w-full rounded-2xl border border-card-border bg-card px-4 py-3 text-sm outline-none ring-forest focus:ring-2"
             />
             <p className="mt-2 text-sm text-forest-muted">
-              {pending ? "Updating…" : `${total} results`}
+              {pending ? "Updating…" : `${total.toLocaleString()} results`}
             </p>
           </div>
           <label className="text-sm">
             <span className="mr-2 text-forest-muted">Sort</span>
             <select
-              value={filters.sort}
+              value={SORTS.some((sort) => sort.value === filters.sort) ? filters.sort : "rank"}
               onChange={(e) => setFilter("sort", e.target.value)}
               className="rounded-xl border border-card-border bg-card px-3 py-2"
             >
