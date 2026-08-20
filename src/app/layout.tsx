@@ -1,9 +1,11 @@
 import type { Metadata } from "next";
+import Script from "next/script";
 import { Fraunces, Manrope } from "next/font/google";
 import { Header } from "@/components/header";
 import { Footer } from "@/components/footer";
 import { ThemeProvider } from "@/components/theme-provider";
 import { readSession } from "@/lib/auth";
+import { normalizeAdsenseClient } from "@/lib/ads";
 import "./globals.css";
 
 const manrope = Manrope({
@@ -33,11 +35,11 @@ function resolveAppUrl() {
 
 export const metadata: Metadata = {
   title: {
-    default: "DealForge — Discover the best deals",
+    default: "DealForge — Discover better deals",
     template: "%s · DealForge",
   },
   description:
-    "DealForge helps you discover trending products, flash deals, and savings from affiliate retailers including Amazon, eBay, and AliExpress.",
+    "DealForge helps you discover useful products, recent deals, and affiliate offers from trusted retailers including Amazon.",
   metadataBase: resolveAppUrl(),
 };
 
@@ -53,9 +55,20 @@ export default async function RootLayout({
     session = null;
   }
 
+  const adsenseClient = normalizeAdsenseClient();
+
   return (
     <html lang="en" className={`${manrope.variable} ${fraunces.variable} h-full`} suppressHydrationWarning>
       <body className="flex min-h-full flex-col antialiased">
+        {adsenseClient ? (
+          <Script
+            id="dealforge-adsense"
+            async
+            strategy="afterInteractive"
+            crossOrigin="anonymous"
+            src={`https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=${encodeURIComponent(adsenseClient)}`}
+          />
+        ) : null}
         <ThemeProvider>
           <Header
             user={
