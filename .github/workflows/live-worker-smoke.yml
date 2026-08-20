@@ -121,6 +121,17 @@ jobs:
         run: |
           set -euo pipefail
 
+          nameservers=$(dig +short NS deal-forge.sale | tr '\n' ' ')
+          echo "authoritative nameservers -> $nameservers"
+          if [[ "$nameservers" == *"vercel-dns.com"* ]]; then
+            echo "::error::deal-forge.sale is still delegated to Vercel DNS. Change the registrar nameservers to the Cloudflare-assigned pair before custom-domain certification."
+            exit 1
+          fi
+          if [[ "$nameservers" != *"ns.cloudflare.com"* ]]; then
+            echo "::error::deal-forge.sale is not yet delegated to Cloudflare nameservers."
+            exit 1
+          fi
+
           ready=0
           for attempt in $(seq 1 30); do
             www_code=$(curl --silent --show-error --location --max-time 20 --output /tmp/www-home.html --write-out '%{http_code}' "$PRODUCTION_URL/" || echo 000)
