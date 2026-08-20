@@ -1,6 +1,10 @@
 /**
- * Ranking algorithm for DealForge product discovery.
- * Prioritizes discount, rating, reviews, trending, freshness, and CTR.
+ * DealForge discovery ranking.
+ *
+ * Price, discount, rating, and review values from legacy Amazon imports are not
+ * authoritative enough to drive ranking. Until those fields are refreshed by
+ * an approved retailer source, ranking is based on first-party engagement and
+ * catalog recency only.
  */
 
 export type RankableProduct = {
@@ -14,56 +18,41 @@ export type RankableProduct = {
   viewCount: number;
 };
 
-const WEIGHTS = {
-  discount: 0.28,
-  rating: 0.2,
-  reviews: 0.15,
-  trending: 0.15,
-  freshness: 0.12,
-  ctr: 0.1,
-} as const;
-
 function clamp01(n: number) {
   return Math.max(0, Math.min(1, n));
 }
 
-function freshnessScore(date: Date | string) {
+function recencyScore(date: Date | string) {
   const ts = new Date(date).getTime();
-  const ageDays = (Date.now() - ts) / (1000 * 60 * 60 * 24);
-  // Full score within 2 days, decays toward 0 over ~45 days
-  return clamp01(1 - ageDays / 45);
+  if (!Number.isFinite(ts)) return 0;
+  const ageDays = Math.max(0, (Date.now() - ts) / (1000 * 60 * 60 * 24));
+  return clamp01(1 - ageDays / 90);
 }
 
-function reviewScore(count: number) {
-  // Log-scale so mega-reviewed items don't dominate
-  return clamp01(Math.log10(count + 1) / 5);
+function clickScore(clicks: number) {
+  if (!Number.isFinite(clicks) || clicks <= 0) return 0;
+  return clamp01(Math.log10(clicks + 1) / 4);
+}
+
+function viewScore(views: number) {
+  if (!Number.isFinite(views) || views <= 0) return 0;
+  return clamp01(Math.log10(views + 1) / 5);
 }
 
 function ctrScore(clicks: number, views: number) {
-  if (views <= 0) return clicks > 0 ? 0.5 : 0;
-  return clamp01(clicks / Math.max(views, 1));
+  if (!Number.isFinite(clicks) || !Number.isFinite(views) || views <= 0) return 0;
+  return clamp01(clicks / views);
 }
 
 export function computeRankScore(product: RankableProduct): number {
-  const discount = clamp01(product.discountPercent / 70);
-  const rating = clamp01(product.rating / 5);
-  const reviews = reviewScore(product.reviewCount);
-  const trending = clamp01(product.trendingScore / 100);
-  const freshness = freshnessScore(product.lastUpdated || product.createdAt);
+  const clicks = clickScore(product.clickCount);
+  const views = viewScore(product.viewCount);
   const ctr = ctrScore(product.clickCount, product.viewCount);
+  const recent = recencyScore(product.createdAt);
 
-  return (
-    discount * WEIGHTS.discount +
-    rating * WEIGHTS.rating +
-    reviews * WEIGHTS.reviews +
-    trending * WEIGHTS.trending +
-    freshness * WEIGHTS.freshness +
-    ctr * WEIGHTS.ctr
-  );
+  return clicks * 0.38 + views * 0.22 + ctr * 0.2 + recent * 0.2;
 }
 
 export function sortByRank<T extends RankableProduct>(products: T[]): T[] {
-  return [...products].sort(
-    (a, b) => computeRankScore(b) - computeRankScore(a),
-  );
+  return [...products].sort((a, b) => computeRankScore(b) - computeRankScore(a));
 }
