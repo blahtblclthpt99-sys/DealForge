@@ -105,3 +105,11 @@ jobs:
 
           check_redirect "/dashboard" "/login?next=/dashboard"
           check_redirect "/admin" "/login?next=/admin"
+
+      - name: Verify temporary diagnostics are removed
+        shell: bash
+        run: |
+          set -euo pipefail
+          code=$(curl --silent --show-error --max-time 30 --max-redirs 0 --output /tmp/diagnostics-removed.txt --write-out '%{http_code}' "$BASE_URL/api/runtime-diagnostics" || true)
+          echo "runtime diagnostics endpoint -> $code"
+          [[ "$code" == "404" ]]
