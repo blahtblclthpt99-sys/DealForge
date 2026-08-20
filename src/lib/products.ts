@@ -112,7 +112,6 @@ function cleanImages(raw: string): string[] {
     : ["/images/placeholder-product.svg"];
 }
 
-/** Guard against scrape garbage like $6 sale / $2014 list = 100% off. */
 function sanitizePricing(price: number, originalPrice: number, discountPercent: number) {
   const p = Number.isFinite(price) && price > 0 ? price : 0;
   let o = Number.isFinite(originalPrice) && originalPrice > 0 ? originalPrice : p;
@@ -265,9 +264,6 @@ function buildOrderBy(params: ProductQuery): Prisma.ProductOrderByWithRelationIn
       return [{ price: "desc" }];
     case "rank":
     default:
-      // Public default ranking uses first-party engagement and catalog recency.
-      // Legacy Amazon price/rating fields remain available to internal tools but
-      // are not trusted enough to control the storefront order.
       return [{ clickCount: "desc" }, { viewCount: "desc" }, { createdAt: "desc" }];
   }
 }
@@ -416,4 +412,19 @@ export async function recordProductView(productId: string) {
   } catch {
     // Analytics must never break product rendering.
   }
+}
+
+export async function recordClick(productId: string, userId?: string) {
+  await prisma.$transaction([
+    prisma.clickEvent.create({
+      data: { productId, userId: userId ?? null, source: "web" },
+    }),
+    prisma.product.update({
+      where: { id: productId },
+      data: {
+        clickCount: { increment: 1 },
+        trendingScore: { increment: 1.5 },
+      },
+    }),
+  ]);
 }
