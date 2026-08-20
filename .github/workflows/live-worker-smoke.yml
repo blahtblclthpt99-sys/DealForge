@@ -24,27 +24,6 @@ jobs:
       PRODUCT_ASIN: B0BPXV8VKY
       IMAGE_URL: https://m.media-amazon.com/images/I/71ye0K8jt7L._AC_SL1500_.jpg
     steps:
-      - name: Wait for current runtime diagnostics deployment
-        shell: bash
-        run: |
-          set -euo pipefail
-          url="$BASE_URL/api/runtime-diagnostics"
-          for attempt in $(seq 1 30); do
-            code=$(curl --silent --show-error --max-time 20 --output /tmp/runtime-diagnostics.json --write-out '%{http_code}' "$url" || echo 000)
-            echo "runtime diagnostics attempt $attempt -> $code"
-            if [[ "$code" == "200" ]] && grep -q '"appCategoryProbe"' /tmp/runtime-diagnostics.json; then
-              cat /tmp/runtime-diagnostics.json
-              echo
-              exit 0
-            fi
-            if [[ "$code" == "200" ]]; then
-              echo "Previous diagnostic version is still serving; waiting for current Worker deployment"
-            fi
-            sleep 10
-          done
-          echo "Current runtime diagnostics did not become available in time"
-          exit 1
-
       - name: Probe live routes
         shell: bash
         run: |
@@ -57,13 +36,6 @@ jobs:
             if [[ "$path" == "/" ]]; then
               if grep -qi 'Database not connected' "$body"; then
                 echo 'HOME_SETUP_BANNER=present'
-                if grep -qi 'Could not load products' "$body"; then
-                  echo 'HOME_SETUP_REASON=database-query-error'
-                elif grep -qi 'Connect the existing Neon PostgreSQL database' "$body"; then
-                  echo 'HOME_SETUP_REASON=configuration-missing'
-                else
-                  echo 'HOME_SETUP_REASON=unknown'
-                fi
                 failed=1
               else
                 echo 'HOME_SETUP_BANNER=absent'
