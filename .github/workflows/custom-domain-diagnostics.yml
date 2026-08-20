@@ -48,3 +48,42 @@ jobs:
             head -c 1500 "/tmp/${host}.body" || true
             echo
           done
+
+      - name: Inspect registry and registrar
+        shell: bash
+        run: |
+          set +e
+          curl --silent --show-error --max-time 30 \
+            -H 'Accept: application/rdap+json' \
+            'https://rdap.identitydigital.services/rdap/domain/deal-forge.sale' \
+            -o /tmp/rdap.json || true
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p = Path('/tmp/rdap.json')
+          if not p.exists() or not p.read_text().strip():
+              print('RDAP unavailable')
+              raise SystemExit(0)
+          data = json.loads(p.read_text())
+          print('domain:', data.get('ldhName'))
+          print('status:', ', '.join(data.get('status', [])))
+          print('nameservers:', ', '.join(ns.get('ldhName','') for ns in data.get('nameservers', [])))
+          for entity in data.get('entities', []):
+              if 'registrar' not in entity.get('roles', []):
+                  continue
+              name = None
+              vc = entity.get('vcardArray') or []
+              if len(vc) > 1:
+                  for row in vc[1]:
+                      if row and row[0] == 'fn':
+                          name = row[3]
+                          break
+              print('registrar:', name or entity.get('handle'))
+              print('registrar_handle:', entity.get('handle'))
+              for link in entity.get('links', []):
+                  if link.get('rel') == 'about':
+                      print('registrar_url:', link.get('href'))
+          for event in data.get('events', []):
+              if event.get('eventAction') in {'registration','expiration','last changed'}:
+                  print(event.get('eventAction') + ':', event.get('eventDate'))
+          PY
