@@ -1,33 +1,33 @@
 @import "tailwindcss";
 
 :root {
-  --forest-primary: #247443;
-  --forest-primary-dark: #185a32;
-  --forest-accent: #74c982;
-  --forest-bg: #f4f8f4;
-  --forest-ink: #17261d;
-  --forest-muted: #5d7164;
+  --forest-primary: #f97316;
+  --forest-primary-dark: #ea580c;
+  --forest-accent: #ffb15c;
+  --forest-bg: #f6f4f1;
+  --forest-ink: #171717;
+  --forest-muted: #6f665f;
   --deal-orange: #f97316;
   --card: #ffffff;
-  --card-border: #dfe9e1;
-  --background: #f4f8f4;
-  --foreground: #17261d;
-  --ring: #247443;
+  --card-border: #e8e1da;
+  --background: #f6f4f1;
+  --foreground: #171717;
+  --ring: #f97316;
 }
 
 .dark {
-  --forest-primary: #76cf87;
-  --forest-primary-dark: #4fac63;
-  --forest-accent: #8fdc9b;
-  --forest-bg: #0c1710;
-  --forest-ink: #edf6ef;
-  --forest-muted: #9db3a3;
+  --forest-primary: #fb923c;
+  --forest-primary-dark: #f97316;
+  --forest-accent: #fdba74;
+  --forest-bg: #0d0d0e;
+  --forest-ink: #f8f7f5;
+  --forest-muted: #aaa29b;
   --deal-orange: #fb923c;
-  --card: #142219;
-  --card-border: #26382c;
-  --background: #0c1710;
-  --foreground: #edf6ef;
-  --ring: #76cf87;
+  --card: #171718;
+  --card-border: #2b2927;
+  --background: #0d0d0e;
+  --foreground: #f8f7f5;
+  --ring: #fb923c;
 }
 
 @theme inline {
@@ -55,7 +55,7 @@ html {
 
 body {
   background:
-    radial-gradient(circle at 18% 0%, color-mix(in srgb, var(--forest-accent) 7%, transparent), transparent 30rem),
+    radial-gradient(circle at 14% 0%, rgba(249, 115, 22, 0.07), transparent 30rem),
     var(--background);
   color: var(--foreground);
   font-family: var(--font-manrope), "Segoe UI", sans-serif;
@@ -63,7 +63,7 @@ body {
 }
 
 ::selection {
-  background: color-mix(in srgb, var(--forest-accent) 45%, white);
+  background: rgba(249, 115, 22, 0.28);
   color: var(--forest-ink);
 }
 
@@ -72,14 +72,14 @@ body {
   border: 1px solid var(--card-border);
   border-radius: 1.15rem;
   box-shadow:
-    0 1px 2px rgba(23, 38, 29, 0.03),
-    0 10px 30px rgba(30, 70, 45, 0.055);
+    0 1px 2px rgba(23, 23, 23, 0.04),
+    0 12px 34px rgba(41, 30, 20, 0.07);
 }
 
 .dark .dn-card {
   box-shadow:
-    0 1px 2px rgba(0, 0, 0, 0.3),
-    0 12px 34px rgba(0, 0, 0, 0.2);
+    0 1px 2px rgba(0, 0, 0, 0.35),
+    0 16px 38px rgba(0, 0, 0, 0.28);
 }
 
 .dn-container {
@@ -90,10 +90,23 @@ body {
 }
 
 .dn-hero {
+  color: #f8f7f5;
   background:
-    radial-gradient(circle at 12% 18%, color-mix(in srgb, var(--forest-accent) 28%, transparent) 0, transparent 28rem),
-    radial-gradient(circle at 88% 8%, color-mix(in srgb, var(--deal-orange) 13%, transparent) 0, transparent 23rem),
-    linear-gradient(180deg, color-mix(in srgb, var(--card) 82%, var(--forest-bg)), var(--forest-bg));
+    radial-gradient(circle at 12% 22%, rgba(249, 115, 22, 0.26) 0, transparent 28rem),
+    radial-gradient(circle at 88% 18%, rgba(251, 146, 60, 0.14) 0, transparent 22rem),
+    linear-gradient(135deg, #0b0b0c 0%, #151210 52%, #0b0b0c 100%);
+}
+
+.dn-hero::before {
+  content: "";
+  position: absolute;
+  inset: auto -8% -42% auto;
+  width: 34rem;
+  height: 34rem;
+  border-radius: 999px;
+  background: radial-gradient(circle, rgba(249, 115, 22, 0.2), transparent 65%);
+  filter: blur(18px);
+  pointer-events: none;
 }
 
 .dn-hero::after {
@@ -101,12 +114,34 @@ body {
   position: absolute;
   inset: 0;
   pointer-events: none;
-  opacity: 0.35;
+  opacity: 0.22;
   background-image:
-    linear-gradient(color-mix(in srgb, var(--forest-primary) 7%, transparent) 1px, transparent 1px),
-    linear-gradient(90deg, color-mix(in srgb, var(--forest-primary) 7%, transparent) 1px, transparent 1px);
-  background-size: 32px 32px;
-  mask-image: linear-gradient(to bottom, black, transparent 72%);
+    linear-gradient(rgba(249, 115, 22, 0.18) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(249, 115, 22, 0.18) 1px, transparent 1px);
+  background-size: 34px 34px;
+  mask-image: linear-gradient(to bottom, black, transparent 78%);
+}
+
+.dn-hero .text-forest-ink {
+  color: #fffaf5;
+}
+
+.dn-hero .text-forest-muted {
+  color: #c9c0b9;
+}
+
+.dn-hero .bg-card,
+.dn-hero .bg-card\/70,
+.dn-hero .bg-card\/75 {
+  background: rgba(24, 22, 21, 0.82);
+}
+
+.dn-hero .border-card-border {
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+.dn-hero .shadow-forest\/5 {
+  --tw-shadow-color: rgba(249, 115, 22, 0.08);
 }
 
 .dn-ad-shell {
@@ -115,7 +150,7 @@ body {
   overflow: hidden;
   border: 1px solid var(--card-border);
   border-radius: 1rem;
-  background: color-mix(in srgb, var(--card) 80%, transparent);
+  background: color-mix(in srgb, var(--card) 88%, transparent);
   padding: 1.4rem 0.75rem 0.5rem;
 }
 
@@ -124,10 +159,16 @@ body {
   left: 0.75rem;
   top: 0.35rem;
   font-size: 9px;
-  font-weight: 700;
-  letter-spacing: 0.12em;
+  font-weight: 800;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: color-mix(in srgb, var(--forest-muted) 75%, transparent);
+  color: color-mix(in srgb, var(--forest-muted) 78%, transparent);
+}
+
+.dn-forge-glow {
+  box-shadow:
+    0 0 0 1px rgba(249, 115, 22, 0.22),
+    0 14px 50px rgba(249, 115, 22, 0.13);
 }
 
 @media (min-width: 768px) {
@@ -174,9 +215,9 @@ body {
 .skeleton {
   background: linear-gradient(
     90deg,
-    color-mix(in srgb, var(--forest-accent) 12%, var(--card)) 25%,
-    color-mix(in srgb, var(--forest-accent) 22%, var(--card)) 50%,
-    color-mix(in srgb, var(--forest-accent) 12%, var(--card)) 75%
+    color-mix(in srgb, var(--forest-accent) 8%, var(--card)) 25%,
+    color-mix(in srgb, var(--forest-accent) 18%, var(--card)) 50%,
+    color-mix(in srgb, var(--forest-accent) 8%, var(--card)) 75%
   );
   background-size: 200% 100%;
   animation: shimmer 1.4s infinite linear;
