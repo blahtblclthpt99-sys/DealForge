@@ -19,6 +19,10 @@ jobs:
     timeout-minutes: 10
     env:
       BASE_URL: https://dealforge.blahtblclthpt99.workers.dev
+      PRODUCT_ID: cmrp6aaeu06kgtk3shzktm0h9
+      PRODUCT_SLUG: teling-100-pcs-rainbow-colored-pencils-multicolored-7-in-1-pencils-for-kids-blac-b0bpxv8vky
+      PRODUCT_ASIN: B0BPXV8VKY
+      IMAGE_URL: https://m.media-amazon.com/images/I/71ye0K8jt7L._AC_SL1500_.jpg
     steps:
       - name: Wait for current runtime diagnostics deployment
         shell: bash
@@ -73,3 +77,59 @@ jobs:
             fi
           done
           exit "$failed"
+
+      - name: Verify product and affiliate redirect
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          product_code=$(curl --silent --show-error --max-time 30 --output /tmp/product.html --write-out '%{http_code}' "$BASE_URL/product/$PRODUCT_SLUG")
+          echo "product detail -> $product_code"
+          [[ "$product_code" == "200" ]]
+
+          go_code=$(curl --silent --show-error --max-time 30 --max-redirs 0 --dump-header /tmp/go.headers --output /tmp/go.body --write-out '%{http_code}' "$BASE_URL/go/$PRODUCT_ID" || true)
+          location=$(awk 'BEGIN{IGNORECASE=1} /^location:/{sub(/\r$/, ""); sub(/^[^:]+:[[:space:]]*/, ""); print}' /tmp/go.headers | tail -n 1)
+          echo "affiliate redirect -> $go_code"
+          echo "affiliate host/location -> $location"
+          [[ "$go_code" == "302" ]]
+          [[ "$location" == https://amazon.com/* || "$location" == https://*.amazon.com/* ]]
+          [[ "$location" == *"/dp/$PRODUCT_ASIN"* ]]
+          [[ "$location" == *"tag=titanfieldos-20"* ]]
+
+      - name: Verify image proxy allowlist
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          image_code=$(curl --silent --show-error --max-time 30 --get --data-urlencode "u=$IMAGE_URL" --dump-header /tmp/image.headers --output /tmp/image.bin --write-out '%{http_code}' "$BASE_URL/api/img")
+          image_type=$(awk 'BEGIN{IGNORECASE=1} /^content-type:/{sub(/\r$/, ""); sub(/^[^:]+:[[:space:]]*/, ""); print}' /tmp/image.headers | tail -n 1)
+          echo "allowed image -> $image_code ($image_type)"
+          [[ "$image_code" == "200" ]]
+          [[ "$image_type" == image/* ]]
+
+          blocked_code=$(curl --silent --show-error --max-time 30 --get --data-urlencode "u=https://example.com/not-allowed.png" --output /tmp/blocked-image.txt --write-out '%{http_code}' "$BASE_URL/api/img")
+          echo "blocked image host -> $blocked_code"
+          [[ "$blocked_code" == "400" ]]
+
+      - name: Verify unauthenticated access controls
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          check_redirect() {
+            local path="$1"
+            local expected="$2"
+            local key
+            key=$(echo "$path" | tr '/' '_')
+            local headers="/tmp/${key}.headers"
+            local code
+            code=$(curl --silent --show-error --max-time 30 --max-redirs 0 --dump-header "$headers" --output /dev/null --write-out '%{http_code}' "$BASE_URL$path" || true)
+            local location
+            location=$(awk 'BEGIN{IGNORECASE=1} /^location:/{sub(/\r$/, ""); sub(/^[^:]+:[[:space:]]*/, ""); print}' "$headers" | tail -n 1)
+            echo "$path unauthenticated -> $code $location"
+            [[ "$code" =~ ^30[2378]$ ]]
+            [[ "$location" == *"$expected"* ]]
+          }
+
+          check_redirect "/dashboard" "/login?next=/dashboard"
+          check_redirect "/admin" "/login?next=/admin"
