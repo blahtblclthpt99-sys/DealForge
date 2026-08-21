@@ -37,6 +37,7 @@
     "catalog:clothing": "tsx scripts/expand-clothing.ts",
     "catalog:refresh-prices": "tsx scripts/refresh-prices.ts",
     "ebay:enable": "tsx scripts/enable-ebay.ts",
+    "test:price-alert-transitions": "tsx scripts/test-price-alert-transitions.ts",
     "worker": "tsx src/workers/index.ts",
     "website:package": "powershell -ExecutionPolicy Bypass -File scripts/package-website.ps1",
     "postinstall": "node scripts/prisma-generate.mjs"
