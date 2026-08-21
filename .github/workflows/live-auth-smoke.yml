@@ -1,0 +1,146 @@
+name: DealForge Live Auth Smoke
+
+on:
+  push:
+    branches:
+      - migration/cloudflare-workers
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  auth-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      BASE_URL: https://dealforge.blahtblclthpt99.workers.dev
+      EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - name: Wait for exact Worker deployment
+        shell: bash
+        run: |
+          set -euo pipefail
+          deployed=0
+          for attempt in $(seq 1 30); do
+            code=$(curl --silent --show-error --max-time 20 --output /tmp/build.json --write-out '%{http_code}' "$BASE_URL/api/build" || echo 000)
+            actual_sha=""
+            if [[ "$code" == "200" ]]; then
+              actual_sha=$(python - <<'PY'
+          import json
+          from pathlib import Path
+          try:
+              print(json.loads(Path('/tmp/build.json').read_text()).get('sha', ''))
+          except Exception:
+              print('')
+          PY
+              )
+            fi
+            echo "auth deployment attempt $attempt -> code=$code sha=${actual_sha:-missing} expected=$EXPECTED_SHA"
+            if [[ "$code" == "200" && "$actual_sha" == "$EXPECTED_SHA" ]]; then
+              deployed=1
+              break
+            fi
+            sleep 10
+          done
+          [[ "$deployed" == "1" ]]
+
+      - name: Register, login, delete, and verify deletion
+        shell: bash
+        run: |
+          set -euo pipefail
+          email="dealforge-smoke-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}@example.com"
+          password="DealForge-Smoke-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}!"
+          cookies=/tmp/dealforge-auth-smoke.cookies
+          registered=0
+
+          cleanup() {
+            if [[ "$registered" == "1" && -f "$cookies" ]]; then
+              curl --silent --show-error --max-time 30 \
+                --request DELETE \
+                --cookie "$cookies" \
+                --header "Origin: $BASE_URL" \
+                --header 'Content-Type: application/json' \
+                --data "{\"password\":\"$password\",\"confirmation\":\"DELETE\"}" \
+                "$BASE_URL/api/account" >/dev/null || true
+            fi
+          }
+          trap cleanup EXIT
+
+          register_metrics=$(curl --silent --show-error --max-time 30 \
+            --cookie-jar "$cookies" \
+            --output /tmp/register.json \
+            --write-out '%{http_code} %{time_total}' \
+            --request POST \
+            --header "Origin: $BASE_URL" \
+            --header 'Content-Type: application/json' \
+            --data "{\"action\":\"register\",\"email\":\"$email\",\"password\":\"$password\",\"name\":\"DealForge Smoke\"}" \
+            "$BASE_URL/api/auth" || true)
+          register_code=${register_metrics%% *}
+          echo "live registration -> $register_metrics seconds"
+          if [[ "$register_code" != "200" ]]; then
+            cat /tmp/register.json || true
+            exit 1
+          fi
+          registered=1
+
+          logout_code=$(curl --silent --show-error --max-time 30 \
+            --cookie "$cookies" \
+            --cookie-jar "$cookies" \
+            --output /tmp/logout.json \
+            --write-out '%{http_code}' \
+            --request POST \
+            --header "Origin: $BASE_URL" \
+            --header 'Content-Type: application/json' \
+            --data '{"action":"logout"}' \
+            "$BASE_URL/api/auth" || true)
+          echo "live logout -> $logout_code"
+          [[ "$logout_code" == "200" ]]
+
+          login_metrics=$(curl --silent --show-error --max-time 30 \
+            --cookie-jar "$cookies" \
+            --output /tmp/login.json \
+            --write-out '%{http_code} %{time_total}' \
+            --request POST \
+            --header "Origin: $BASE_URL" \
+            --header 'Content-Type: application/json' \
+            --data "{\"action\":\"login\",\"email\":\"$email\",\"password\":\"$password\"}" \
+            "$BASE_URL/api/auth" || true)
+          login_code=${login_metrics%% *}
+          echo "live login -> $login_metrics seconds"
+          if [[ "$login_code" != "200" ]]; then
+            cat /tmp/login.json || true
+            exit 1
+          fi
+
+          delete_metrics=$(curl --silent --show-error --max-time 30 \
+            --cookie "$cookies" \
+            --cookie-jar "$cookies" \
+            --output /tmp/delete.json \
+            --write-out '%{http_code} %{time_total}' \
+            --request DELETE \
+            --header "Origin: $BASE_URL" \
+            --header 'Content-Type: application/json' \
+            --data "{\"password\":\"$password\",\"confirmation\":\"DELETE\"}" \
+            "$BASE_URL/api/account" || true)
+          delete_code=${delete_metrics%% *}
+          echo "live account deletion -> $delete_metrics seconds"
+          if [[ "$delete_code" != "200" ]]; then
+            cat /tmp/delete.json || true
+            exit 1
+          fi
+          registered=0
+
+          deleted_login_code=$(curl --silent --show-error --max-time 30 \
+            --output /tmp/deleted-login.json \
+            --write-out '%{http_code}' \
+            --request POST \
+            --header "Origin: $BASE_URL" \
+            --header 'Content-Type: application/json' \
+            --data "{\"action\":\"login\",\"email\":\"$email\",\"password\":\"$password\"}" \
+            "$BASE_URL/api/auth" || true)
+          echo "login after deletion -> $deleted_login_code"
+          [[ "$deleted_login_code" == "401" ]]
