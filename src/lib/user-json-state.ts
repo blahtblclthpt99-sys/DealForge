@@ -10,7 +10,7 @@ export type MutableUserJsonField =
   | "settings";
 
 export type UserJsonMutationResult<T> =
-  | { status: "ok"; value: T }
+  | { status: "ok"; value: T; previous: T }
   | { status: "not-found" }
   | { status: "conflict" };
 
@@ -24,6 +24,10 @@ const MAX_RETRIES = 4;
  * JSON strings. Using updatedAt as a compare-and-swap token gives us safe
  * concurrent behavior on both SQLite CI and production PostgreSQL without a
  * schema migration.
+ *
+ * On success, `previous` is the exact state used by the successful compare-and-
+ * swap attempt. Callers can safely derive transition-only side effects after
+ * the write without duplicating them across retry attempts.
  */
 export async function mutateUserJsonState<T>(
   userId: string,
@@ -62,7 +66,7 @@ export async function mutateUserJsonState<T>(
     });
 
     if (updated.count === 1) {
-      return { status: "ok", value: next };
+      return { status: "ok", value: next, previous: current };
     }
   }
 
