@@ -73,7 +73,7 @@ export async function DELETE(req: Request) {
 
   const user = await prisma.user.findUnique({
     where: { id: session.id },
-    select: { id: true, passwordHash: true },
+    select: { id: true, passwordHash: true, role: true },
   });
   if (!user) {
     await clearSessionCookie();
@@ -82,6 +82,16 @@ export async function DELETE(req: Request) {
 
   if (!(await verifyPassword(parsed.data.password, user.passwordHash))) {
     return NextResponse.json({ error: "Password verification failed" }, { status: 403 });
+  }
+
+  if (user.role === "admin") {
+    const adminCount = await prisma.user.count({ where: { role: "admin" } });
+    if (adminCount <= 1) {
+      return NextResponse.json(
+        { error: "Create another administrator before deleting the final admin account" },
+        { status: 409 },
+      );
+    }
   }
 
   // ClickEvent.user uses onDelete:SetNull, so deleting the user removes account
