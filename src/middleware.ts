@@ -43,6 +43,29 @@ function clientIp(req: NextRequest) {
   return forwardedIp || "local";
 }
 
+function browserFacingOrigins(req: NextRequest) {
+  const origins = new Set<string>();
+  const host = req.headers.get("host")?.trim().toLowerCase();
+  if (host) {
+    const protocol = req.nextUrl.protocol === "https:" ? "https:" : "http:";
+    origins.add(`${protocol}//${host}`);
+  }
+
+  // The canonical configured app URL is a second trusted representation for
+  // reverse-proxy deployments where the framework's internal URL differs from
+  // the externally visible request URL.
+  const configured = process.env.NEXT_PUBLIC_APP_URL?.trim();
+  if (configured) {
+    try {
+      origins.add(new URL(configured).origin.toLowerCase());
+    } catch {
+      // Invalid configuration must not weaken the request-origin check.
+    }
+  }
+
+  return origins;
+}
+
 function browserOriginAllowed(req: NextRequest) {
   if (SAFE_METHODS.has(req.method.toUpperCase())) return true;
 
@@ -61,7 +84,8 @@ function browserOriginAllowed(req: NextRequest) {
   }
 
   try {
-    return new URL(origin).origin === req.nextUrl.origin;
+    const normalizedOrigin = new URL(origin).origin.toLowerCase();
+    return browserFacingOrigins(req).has(normalizedOrigin);
   } catch {
     return false;
   }
