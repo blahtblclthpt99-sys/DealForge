@@ -1,5 +1,6 @@
 /**
  * Product query layer — DB-level pagination (never loads the full catalog).
+ * Public DTOs intentionally redact stale Amazon commerce data.
  */
 import { prisma } from "./db";
 import { cacheGet, cacheSet } from "./cache";
@@ -30,6 +31,7 @@ export type ProductDTO = {
   price: number;
   originalPrice: number;
   discountPercent: number;
+  recordedPriceAvailable: boolean;
   rating: number;
   reviewCount: number;
   affiliateUrl: string;
@@ -53,15 +55,12 @@ const MAX_QUERY_LENGTH = 120;
 const MAX_FILTER_LENGTH = 100;
 const MAX_PAGE = 500;
 const MAX_LIMIT = 48;
-const MAX_PRICE = 1_000_000;
-const ALLOWED_SORTS = new Set([
-  "rank",
-  "newest",
-  "rating",
-  "popularity",
-  "savings",
-  "price_asc",
-  "price_desc",
+const AMAZON_PRICE_TTL_MS = 24 * 60 * 60 * 1000;
+const ALLOWED_SORTS = new Set(["rank", "newest", "popularity"]);
+const TRUSTED_AMAZON_PRICE_SOURCES = new Set([
+  "amazon-creators-api",
+  "amazon-pa-api",
+  "amazon-data-feed",
 ]);
 
 function boundedText(value: string | undefined, max: number) {
@@ -78,24 +77,20 @@ function boundedNumber(value: number | undefined, min: number, max: number) {
 export function normalizeProductQuery(params: ProductQuery): ProductQuery {
   const rawPage = boundedNumber(params.page, 1, MAX_PAGE) ?? 1;
   const rawLimit = boundedNumber(params.limit, 1, MAX_LIMIT) ?? 24;
-  let minPrice = boundedNumber(params.minPrice, 0, MAX_PRICE);
-  let maxPrice = boundedNumber(params.maxPrice, 0, MAX_PRICE);
-
-  if (minPrice != null && maxPrice != null && minPrice > maxPrice) {
-    [minPrice, maxPrice] = [maxPrice, minPrice];
-  }
-
   const sort = params.sort && ALLOWED_SORTS.has(params.sort) ? params.sort : undefined;
 
+  // Until retailer-authorized price/rating data is consistently refreshed,
+  // public catalog queries must not filter or sort on legacy Amazon commerce
+  // fields. Keeping these inputs ignored also protects older saved URLs.
   return {
     q: boundedText(params.q, MAX_QUERY_LENGTH),
     category: boundedText(params.category, MAX_FILTER_LENGTH),
     subcategory: boundedText(params.subcategory, MAX_FILTER_LENGTH),
     brand: boundedText(params.brand, MAX_FILTER_LENGTH),
-    minPrice,
-    maxPrice,
-    minRating: boundedNumber(params.minRating, 0, 5),
-    minDiscount: boundedNumber(params.minDiscount, 0, 100),
+    minPrice: undefined,
+    maxPrice: undefined,
+    minRating: undefined,
+    minDiscount: undefined,
     sort,
     page: Math.floor(rawPage),
     limit: Math.floor(rawLimit),
@@ -133,17 +128,43 @@ function sanitizePricing(price: number, originalPrice: number, discountPercent: 
   return { price: p, originalPrice: o, discountPercent: d };
 }
 
+function timestamp(value: unknown) {
+  if (typeof value !== "string" || !value.trim()) return null;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function hasFreshTrustedAmazonCommerce(
+  retailer: string,
+  specs: Record<string, string>,
+  lastUpdated: Date,
+) {
+  if (retailer.trim().toLowerCase() !== "amazon") return true;
+  const source = typeof specs.priceSource === "string" ? specs.priceSource.trim().toLowerCase() : "";
+  if (!TRUSTED_AMAZON_PRICE_SOURCES.has(source)) return false;
+  const checked = timestamp(specs.priceCheckedAt) ?? lastUpdated.getTime();
+  return checked != null && Date.now() - checked <= AMAZON_PRICE_TTL_MS;
+}
+
 export function toProductDTO(
   p: ProductWithCategory | Prisma.ProductGetPayload<object>,
 ): ProductDTO {
   const withCat = p as ProductWithCategory;
   const images = cleanImages(p.images);
   const specs = parseJson<Record<string, string>>(p.specifications, {});
-  const pricing = sanitizePricing(p.price, p.originalPrice, p.discountPercent);
+  const storedPricing = sanitizePricing(p.price, p.originalPrice, p.discountPercent);
+  const freshCommerce = hasFreshTrustedAmazonCommerce(p.retailer, specs, p.lastUpdated);
+  const isAmazon = p.retailer.trim().toLowerCase() === "amazon";
+  const recordedPriceAvailable = isAmazon && storedPricing.price > 0 && !freshCommerce;
+  const publicPricing = freshCommerce
+    ? storedPricing
+    : { price: 0, originalPrice: 0, discountPercent: 0 };
+  const publicRating = freshCommerce ? p.rating : 0;
+  const publicReviewCount = freshCommerce ? p.reviewCount : 0;
   const dtoBase = {
-    discountPercent: pricing.discountPercent,
-    rating: p.rating,
-    reviewCount: p.reviewCount,
+    discountPercent: publicPricing.discountPercent,
+    rating: publicRating,
+    reviewCount: publicReviewCount,
     trendingScore: p.trendingScore,
     createdAt: p.createdAt,
     lastUpdated: p.lastUpdated,
@@ -166,11 +187,12 @@ export function toProductDTO(
       p.quantity != null && p.quantity >= 1
         ? p.quantity
         : parseQuantityFromTitle(p.title),
-    price: pricing.price,
-    originalPrice: pricing.originalPrice,
-    discountPercent: pricing.discountPercent,
-    rating: p.rating,
-    reviewCount: p.reviewCount,
+    price: publicPricing.price,
+    originalPrice: publicPricing.originalPrice,
+    discountPercent: publicPricing.discountPercent,
+    recordedPriceAvailable,
+    rating: publicRating,
+    reviewCount: publicReviewCount,
     affiliateUrl: generateAffiliateLink(p.retailer, {
       asin: p.asin,
       url: p.affiliateUrl,
@@ -182,8 +204,8 @@ export function toProductDTO(
     clickCount: p.clickCount,
     viewCount: p.viewCount,
     isFeatured: p.isFeatured,
-    isFlashDeal: p.isFlashDeal,
-    flashEndsAt: p.flashEndsAt?.toISOString() ?? null,
+    isFlashDeal: freshCommerce ? p.isFlashDeal : false,
+    flashEndsAt: freshCommerce ? p.flashEndsAt?.toISOString() ?? null : null,
     lastUpdated: p.lastUpdated.toISOString(),
     createdAt: p.createdAt.toISOString(),
     rankScore: computeRankScore(dtoBase),
@@ -229,13 +251,6 @@ function buildWhere(params: ProductQuery): Prisma.ProductWhereInput {
   if (params.category) where.category = { slug: params.category };
   if (params.subcategory) where.subcategory = params.subcategory;
   if (params.brand) where.brand = { contains: params.brand, ...ci };
-  if (params.minPrice != null || params.maxPrice != null) {
-    where.price = {};
-    if (params.minPrice != null) where.price.gte = params.minPrice;
-    if (params.maxPrice != null) where.price.lte = params.maxPrice;
-  }
-  if (params.minRating != null) where.rating = { gte: params.minRating };
-  if (params.minDiscount != null) where.discountPercent = { gte: params.minDiscount };
   if (params.featured) where.isFeatured = true;
   if (params.flash) where.isFlashDeal = true;
   return where;
@@ -251,16 +266,8 @@ function buildOrderBy(params: ProductQuery): Prisma.ProductOrderByWithRelationIn
   switch (params.sort) {
     case "newest":
       return [{ createdAt: "desc" }];
-    case "rating":
-      return [{ rating: "desc" }, { reviewCount: "desc" }];
     case "popularity":
       return [{ clickCount: "desc" }, { viewCount: "desc" }, { createdAt: "desc" }];
-    case "savings":
-      return [{ discountPercent: "desc" }, { createdAt: "desc" }];
-    case "price_asc":
-      return [{ price: "asc" }];
-    case "price_desc":
-      return [{ price: "desc" }];
     case "rank":
     default:
       return [{ clickCount: "desc" }, { viewCount: "desc" }, { createdAt: "desc" }];
@@ -271,7 +278,7 @@ export async function queryProducts(params: ProductQuery) {
   const normalized = normalizeProductQuery(params);
   const page = normalized.page ?? 1;
   const limit = normalized.limit ?? 24;
-  const cacheKey = `products:v9:${JSON.stringify(normalized)}`;
+  const cacheKey = `products:v10:${JSON.stringify(normalized)}`;
   const cached = await cacheGet<{
     items: ProductDTO[];
     total: number;
@@ -284,15 +291,11 @@ export async function queryProducts(params: ProductQuery) {
   const orderBy = buildOrderBy(normalized);
   const skip = (page - 1) * limit;
 
-  const countKey = `products:count:v7:${JSON.stringify({
+  const countKey = `products:count:v8:${JSON.stringify({
     q: normalized.q,
     category: normalized.category,
     subcategory: normalized.subcategory,
     brand: normalized.brand,
-    minPrice: normalized.minPrice,
-    maxPrice: normalized.maxPrice,
-    minRating: normalized.minRating,
-    minDiscount: normalized.minDiscount,
     featured: normalized.featured,
     flash: normalized.flash,
   })}`;
