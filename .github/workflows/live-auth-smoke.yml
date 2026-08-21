@@ -48,6 +48,29 @@ jobs:
           done
           [[ "$deployed" == "1" ]]
 
+      - name: Verify live browser security boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          curl --silent --show-error --max-time 20 --dump-header /tmp/security.headers --output /dev/null "$BASE_URL/"
+          grep -Eiq '^x-content-type-options:[[:space:]]*nosniff' /tmp/security.headers
+          grep -Eiq '^x-frame-options:[[:space:]]*DENY' /tmp/security.headers
+          grep -Eiq '^referrer-policy:[[:space:]]*strict-origin-when-cross-origin' /tmp/security.headers
+          grep -Eiq '^permissions-policy:' /tmp/security.headers
+          grep -Eiq '^strict-transport-security:' /tmp/security.headers
+
+          hostile_code=$(curl --silent --show-error --max-time 20 \
+            --output /tmp/hostile-origin.json \
+            --write-out '%{http_code}' \
+            --request POST \
+            --header 'Origin: https://attacker.example' \
+            --header 'Content-Type: application/json' \
+            --data '{"action":"login","email":"nobody@example.com","password":"password123"}' \
+            "$BASE_URL/api/auth" || true)
+          echo "hostile browser origin -> $hostile_code"
+          [[ "$hostile_code" == "403" ]]
+
       - name: Register, login, delete, and verify deletion
         shell: bash
         run: |
