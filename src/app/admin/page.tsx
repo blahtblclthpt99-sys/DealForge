@@ -4,6 +4,7 @@ import { AdminPanels } from "@/components/admin-panels";
 import { readSession } from "@/lib/auth";
 import { cacheStatus } from "@/lib/cache";
 import { listConnectors } from "@/lib/affiliate/registry";
+import { affiliateRuntimeReadiness } from "@/lib/affiliate/readiness";
 import { prisma } from "@/lib/db";
 
 export default async function AdminPage() {
@@ -63,6 +64,11 @@ export default async function AdminPage() {
 
   const views = viewSum._sum.viewCount || 0;
   const ctr = views > 0 ? Math.round((clickCount / views) * 1000) / 10 : 0;
+  const connectors = listConnectors().map((connector) => ({
+    id: connector.id,
+    displayName: connector.displayName,
+    ...affiliateRuntimeReadiness(connector.id),
+  }));
 
   return (
     <div className="dn-container py-12">
@@ -73,7 +79,7 @@ export default async function AdminPage() {
             Operations dashboard
           </h1>
           <p className="mt-2 text-forest-muted">
-            Affiliate stats, imports, cache, users, and product database controls.
+            Affiliate readiness, imports, cache, users, and product database controls.
           </p>
         </div>
         <Link href="/" className="text-sm text-forest hover:underline">
@@ -98,7 +104,7 @@ export default async function AdminPage() {
 
       <AdminPanels
         providers={providers}
-        connectors={listConnectors().map((c) => ({ id: c.id, displayName: c.displayName }))}
+        connectors={connectors}
         importJobs={importJobs.map((j) => ({
           ...j,
           createdAt: j.createdAt.toISOString(),
