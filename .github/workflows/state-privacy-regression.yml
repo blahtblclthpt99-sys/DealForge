@@ -32,6 +32,26 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Destructive seed source guard regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +e
+          DATABASE_URL='postgresql://invalid:invalid@127.0.0.1:1/neondb' \
+            ALLOW_DESTRUCTIVE_SEED='' \
+            npx tsx prisma/seed.ts >/tmp/seed-guard.out 2>&1
+          seed_code=$?
+          set -e
+
+          echo "direct non-SQLite seed without reset token -> $seed_code"
+          [ "$seed_code" -ne 0 ]
+          grep -Fq '[seed-guard] REFUSED:' /tmp/seed-guard.out
+          if grep -Eqi 'connect|ECONNREFUSED|database server' /tmp/seed-guard.out; then
+            echo 'Seed attempted database connectivity before refusing.'
+            cat /tmp/seed-guard.out
+            exit 1
+          fi
+
       - name: Create ephemeral CI database
         run: npx prisma db push --schema=prisma/schema.prisma --skip-generate
 
