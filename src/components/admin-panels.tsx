@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 
 type Provider = {
   id: string;
@@ -10,6 +10,15 @@ type Provider = {
   trackingId: string;
   enabled: boolean;
   lastSyncStatus: string | null;
+};
+
+type ConnectorReadiness = {
+  id: string;
+  displayName: string;
+  trackedLinks: boolean;
+  productDataApi: boolean;
+  status: "ready" | "partial" | "pending";
+  note: string;
 };
 
 export function AdminPanels({
@@ -23,7 +32,7 @@ export function AdminPanels({
   cache,
 }: {
   providers: Provider[];
-  connectors: { id: string; displayName: string }[];
+  connectors: ConnectorReadiness[];
   importJobs: {
     id: string;
     provider: string;
@@ -51,16 +60,32 @@ export function AdminPanels({
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState<string | null>(null);
+  const [providerError, setProviderError] = useState<string | null>(null);
+  const readinessById = useMemo(
+    () => new Map(connectors.map((connector) => [connector.id, connector])),
+    [connectors],
+  );
 
   async function toggleProvider(id: string, enabled: boolean) {
     setBusy(id);
-    await fetch("/api/admin", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ type: "provider", id, enabled }),
-    });
-    setBusy(null);
-    router.refresh();
+    setProviderError(null);
+    try {
+      const response = await fetch("/api/admin", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type: "provider", id, enabled }),
+      });
+      const body = (await response.json().catch(() => ({}))) as { error?: string };
+      if (!response.ok) {
+        setProviderError(body.error || "Provider update failed");
+        return;
+      }
+      router.refresh();
+    } catch {
+      setProviderError("Provider update failed");
+    } finally {
+      setBusy(null);
+    }
   }
 
   async function setRole(id: string, role: string) {
@@ -96,38 +121,75 @@ export function AdminPanels({
       <section>
         <h2 className="font-display text-2xl font-semibold text-forest-ink">Affiliate networks</h2>
         <p className="mt-1 text-sm text-forest-muted">
-          Modular connectors registered: {connectors.map((c) => c.displayName).join(", ")}.
+          A provider is revenue-ready only when both the database setting and the runtime tracking configuration agree.
         </p>
+        {providerError ? (
+          <p className="mt-3 rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900/70 dark:bg-red-950/20 dark:text-red-300">
+            {providerError}
+          </p>
+        ) : null}
         <div className="mt-4 overflow-x-auto rounded-2xl border border-card-border bg-card">
           <table className="min-w-full text-left text-sm">
             <thead className="border-b border-card-border text-forest-muted">
               <tr>
                 <th className="px-4 py-3">Provider</th>
-                <th className="px-4 py-3">Tracking ID</th>
-                <th className="px-4 py-3">Status</th>
+                <th className="px-4 py-3">Tracking</th>
+                <th className="px-4 py-3">Product data</th>
+                <th className="px-4 py-3">DB status</th>
+                <th className="px-4 py-3">Runtime</th>
                 <th className="px-4 py-3">Enabled</th>
               </tr>
             </thead>
             <tbody>
-              {providers.map((p) => (
-                <tr key={p.id} className="border-b border-card-border/70">
-                  <td className="px-4 py-3 font-medium text-forest-ink">{p.displayName}</td>
-                  <td className="px-4 py-3 text-forest-muted">{p.trackingId || "—"}</td>
-                  <td className="px-4 py-3 text-forest-muted">{p.lastSyncStatus || "—"}</td>
-                  <td className="px-4 py-3">
-                    <button
-                      type="button"
-                      disabled={busy === p.id}
-                      onClick={() => toggleProvider(p.id, !p.enabled)}
-                      className={`rounded-full px-3 py-1 text-xs font-semibold ${
-                        p.enabled ? "bg-forest text-white" : "bg-forest/10 text-forest"
-                      }`}
-                    >
-                      {p.enabled ? "On" : "Off"}
-                    </button>
-                  </td>
-                </tr>
-              ))}
+              {providers.map((provider) => {
+                const runtime = readinessById.get(provider.provider);
+                const canEnable = Boolean(runtime?.trackedLinks);
+                const runtimeStatus = runtime?.status ?? "pending";
+                return (
+                  <tr key={provider.id} className="border-b border-card-border/70 align-top">
+                    <td className="px-4 py-3">
+                      <p className="font-medium text-forest-ink">{provider.displayName}</p>
+                      <p className="mt-1 max-w-xs text-xs leading-relaxed text-forest-muted">
+                        {runtime?.note || "No runtime readiness information available."}
+                      </p>
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${canEnable ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300" : "bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300"}`}>
+                        {canEnable ? "Ready" : "Missing"}
+                      </span>
+                      {provider.trackingId ? (
+                        <p className="mt-2 max-w-[12rem] truncate text-[10px] text-forest-muted" title={provider.trackingId}>
+                          DB ID: {provider.trackingId}
+                        </p>
+                      ) : null}
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${runtime?.productDataApi ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300" : "bg-forest/10 text-forest-muted"}`}>
+                        {runtime?.productDataApi ? "Ready" : "Pending"}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-forest-muted">{provider.lastSyncStatus || "—"}</td>
+                    <td className="px-4 py-3">
+                      <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${runtimeStatus === "ready" ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300" : runtimeStatus === "partial" ? "bg-blue-100 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300" : "bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300"}`}>
+                        {runtimeStatus}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3">
+                      <button
+                        type="button"
+                        disabled={busy === provider.id || (!provider.enabled && !canEnable)}
+                        onClick={() => toggleProvider(provider.id, !provider.enabled)}
+                        title={!provider.enabled && !canEnable ? "Configure tracked-link credentials before enabling this provider." : undefined}
+                        className={`rounded-full px-3 py-1 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-45 ${
+                          provider.enabled ? "bg-forest text-white" : "bg-forest/10 text-forest"
+                        }`}
+                      >
+                        {provider.enabled ? "On" : "Off"}
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -163,7 +225,7 @@ export function AdminPanels({
           <h2 className="mt-6 font-display text-xl font-semibold text-forest-ink">API usage</h2>
           <div className="mt-3 space-y-2">
             {apiUsage.length === 0 && (
-              <p className="text-sm text-forest-muted">No PA-API calls yet — seed data is local.</p>
+              <p className="text-sm text-forest-muted">No retailer API usage has been recorded yet.</p>
             )}
             {apiUsage.map((a) => (
               <div key={a.id} className="dn-card p-3 text-xs text-forest-muted">
@@ -230,7 +292,7 @@ export function AdminPanels({
               <tr>
                 <th className="px-4 py-3">Title</th>
                 <th className="px-4 py-3">ASIN</th>
-                <th className="px-4 py-3">Price</th>
+                <th className="px-4 py-3">Recorded price</th>
                 <th className="px-4 py-3">Clicks</th>
                 <th className="px-4 py-3">Flags</th>
               </tr>
