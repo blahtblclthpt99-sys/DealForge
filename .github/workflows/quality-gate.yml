@@ -38,6 +38,9 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      - name: Catalog health tooling
+        run: npm run catalog:health
+
       - name: Build
         run: npm run build
 
