@@ -15,6 +15,7 @@ import {
   getSimilarProducts,
   recordProductView,
 } from "@/lib/products";
+import { mutateUserJsonState } from "@/lib/user-json-state";
 import { parseJson, formatPrice, discountLabel } from "@/lib/utils";
 import { formatQuantityLabel } from "@/lib/quantity";
 import { getCommerceDisplayState, retailerLabel } from "@/lib/commerce-display";
@@ -32,6 +33,15 @@ const INTERNAL_SPEC_KEYS = new Set([
   "storefrontblocked",
   "storefrontblockedreason",
 ]);
+
+function cleanRecentProductIds(value: unknown) {
+  if (!Array.isArray(value)) return [] as string[];
+  return value
+    .filter((id): id is string => typeof id === "string")
+    .map((id) => id.trim())
+    .filter((id) => id.length > 0 && id.length <= 100)
+    .slice(0, 40);
+}
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { slug } = await params;
@@ -58,15 +68,21 @@ export default async function ProductPage({ params }: Props) {
   const session = await readSession();
   let wishlist: string[] = [];
   if (session) {
-    const user = await prisma.user.findUnique({ where: { id: session.id } });
+    const user = await prisma.user.findUnique({
+      where: { id: session.id },
+      select: { wishlist: true },
+    });
     if (user) {
       wishlist = parseJson<string[]>(user.wishlist, []);
-      const recent = parseJson<string[]>(user.recentlyViewed, []).filter((id) => id !== product.id);
-      recent.unshift(product.id);
-      await prisma.user.update({
-        where: { id: user.id },
-        data: { recentlyViewed: JSON.stringify(recent.slice(0, 40)) },
-      });
+      await mutateUserJsonState<unknown>(
+        session.id,
+        "recentlyViewed",
+        [],
+        (current) => {
+          const recent = cleanRecentProductIds(current).filter((id) => id !== product.id);
+          return [product.id, ...recent].slice(0, 40);
+        },
+      );
     }
   }
 
