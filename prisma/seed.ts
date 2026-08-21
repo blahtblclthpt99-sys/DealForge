@@ -18,6 +18,58 @@ import { slugify } from "../src/lib/utils";
 import { inferClothingSubcategory } from "../src/lib/clothing-subcategory";
 
 const prisma = new PrismaClient();
+const databaseUrl = (process.env.DATABASE_URL || "").trim();
+const isLocalSqlite = databaseUrl.startsWith("file:");
+const destructiveConfirmation = (process.env.ALLOW_DESTRUCTIVE_SEED || "").trim();
+const explicitAdminEmail = (process.env.ADMIN_EMAIL || "").trim().toLowerCase();
+const explicitAdminPassword = process.env.ADMIN_PASSWORD || "";
+const explicitDemoPassword = process.env.DEMO_PASSWORD || "";
+const seedDemoUser = process.env.SEED_DEMO_USER === "1";
+const knownDefaultPasswords = new Set([
+  "ChangeMeAdmin123!",
+  "AdminDealForge2026!",
+  "DemoUser123!",
+]);
+
+function assertSeedTarget() {
+  if (!databaseUrl) {
+    throw new Error(
+      "[seed-guard] DATABASE_URL is required. Refusing destructive seed without an explicit target.",
+    );
+  }
+
+  if (isLocalSqlite) return;
+
+  if (destructiveConfirmation !== "RESET_DEALFORGE_DATABASE") {
+    throw new Error(
+      "[seed-guard] REFUSED: non-SQLite seed deletes users, products, categories, logs, cache, providers, and related catalog state. Set ALLOW_DESTRUCTIVE_SEED=RESET_DEALFORGE_DATABASE only for an intentional reset.",
+    );
+  }
+
+  if (!explicitAdminEmail || !explicitAdminEmail.includes("@")) {
+    throw new Error(
+      "[seed-guard] ADMIN_EMAIL must be explicitly configured for a non-SQLite reset.",
+    );
+  }
+
+  if (
+    explicitAdminPassword.length < 16 ||
+    knownDefaultPasswords.has(explicitAdminPassword)
+  ) {
+    throw new Error(
+      "[seed-guard] ADMIN_PASSWORD must be explicitly configured, at least 16 characters, and not a repository default.",
+    );
+  }
+
+  if (
+    seedDemoUser &&
+    (explicitDemoPassword.length < 16 || knownDefaultPasswords.has(explicitDemoPassword))
+  ) {
+    throw new Error(
+      "[seed-guard] DEMO_PASSWORD must be explicitly configured, at least 16 characters, and not a repository default when SEED_DEMO_USER=1 on a non-SQLite database.",
+    );
+  }
+}
 
 const CATEGORIES = [
   { name: "Electronics", slug: "electronics", icon: "cpu" },
@@ -106,6 +158,8 @@ function productImages(p: { image: string; images?: string[] }) {
 }
 
 async function main() {
+  assertSeedTarget();
+
   const amazonCatalog = [
     ...loadJson<CatalogProduct[]>("prisma/amazon-catalog.json"),
     ...loadJsonOptional<CatalogProduct[]>("prisma/amazon-discovered.json", []),
@@ -291,24 +345,35 @@ async function main() {
     created += 1;
   }
 
-  const adminPassword = process.env.ADMIN_PASSWORD || "AdminDealForge2026!";
+  const adminPassword =
+    explicitAdminPassword || (isLocalSqlite ? "AdminDealForge2026!" : "");
+  const adminEmail =
+    explicitAdminEmail || (isLocalSqlite ? "admin@dealforge.com" : "");
   await prisma.user.create({
     data: {
       name: "DealForge Admin",
-      email: (process.env.ADMIN_EMAIL || "admin@dealforge.com").toLowerCase(),
+      email: adminEmail.toLowerCase(),
       passwordHash: await bcrypt.hash(adminPassword, 12),
       role: "admin",
     },
   });
-  await prisma.user.create({
-    data: {
-      name: "Demo Shopper",
-      email: "demo@dealforge.com",
-      passwordHash: await bcrypt.hash("DemoUser123!", 12),
-      role: "user",
-    },
-  });
 
+  if (isLocalSqlite || seedDemoUser) {
+    const demoPassword = explicitDemoPassword || (isLocalSqlite ? "DemoUser123!" : "");
+    await prisma.user.create({
+      data: {
+        name: "Demo Shopper",
+        email: "demo@dealforge.com",
+        passwordHash: await bcrypt.hash(demoPassword, 12),
+        role: "user",
+      },
+    });
+  }
+
+  const amazonCreatorsReady = Boolean(
+    process.env.AMAZON_CREATORS_CREDENTIAL_ID?.trim() &&
+      process.env.AMAZON_CREATORS_CREDENTIAL_SECRET?.trim(),
+  );
   await prisma.affiliateProvider.create({
     data: {
       provider: "amazon",
@@ -316,7 +381,7 @@ async function main() {
       trackingId: AMAZON_ASSOCIATE_TAG,
       enabled: true,
       apiCredentials: JSON.stringify({ tag: AMAZON_ASSOCIATE_TAG }),
-      lastSyncStatus: "ready",
+      lastSyncStatus: amazonCreatorsReady ? "ready" : "links-active",
     },
   });
 
