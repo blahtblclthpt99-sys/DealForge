@@ -1,0 +1,89 @@
+name: DealForge State & Privacy Regression
+
+on:
+  push:
+    branches:
+      - "migration/**"
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DATABASE_URL: file:./ci-state.db
+      AUTH_SECRET: ci-only-not-for-production-00000000000000000000000000000000
+      NEXT_PUBLIC_APP_URL: http://localhost:3000
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Create ephemeral CI database
+        run: npx prisma db push --schema=prisma/schema.prisma --skip-generate
+
+      - name: Price alert transition regression
+        run: npm run test:price-alert-transitions
+
+      - name: Build
+        run: npm run build
+
+      - name: Authenticated API privacy regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run start > /tmp/dealforge-state-next.log 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true' EXIT
+
+          for attempt in {1..30}; do
+            if curl --silent --fail http://localhost:3000/ >/dev/null; then
+              break
+            fi
+            if ! kill -0 "$server_pid" 2>/dev/null; then
+              cat /tmp/dealforge-state-next.log
+              exit 1
+            fi
+            sleep 1
+          done
+
+          register_code=$(curl --silent --dump-header /tmp/register.headers --output /tmp/register.json --write-out '%{http_code}' \
+            --cookie-jar /tmp/dealforge-state.cookies \
+            --request POST \
+            --header 'Origin: http://localhost:3000' \
+            --header 'Content-Type: application/json' \
+            --data '{"action":"register","email":"ci-state-user@example.test","password":"ci-state-password-123","name":"CI State User"}' \
+            http://localhost:3000/api/auth)
+          echo "registration -> $register_code"
+          [ "$register_code" = "200" ]
+          grep -Eiq '^cache-control:[[:space:]]*private,[[:space:]]*no-store,[[:space:]]*max-age=0' /tmp/register.headers
+
+          wishlist_code=$(curl --silent --dump-header /tmp/wishlist.headers --output /tmp/wishlist.json --write-out '%{http_code}' \
+            --cookie /tmp/dealforge-state.cookies \
+            http://localhost:3000/api/wishlist)
+          echo "authenticated wishlist -> $wishlist_code"
+          [ "$wishlist_code" = "200" ]
+          grep -Eiq '^cache-control:[[:space:]]*private,[[:space:]]*no-store,[[:space:]]*max-age=0' /tmp/wishlist.headers
+
+          hostile_code=$(curl --silent --dump-header /tmp/hostile.headers --output /tmp/hostile.json --write-out '%{http_code}' \
+            --request POST \
+            --header 'Origin: https://attacker.example' \
+            --header 'Content-Type: application/json' \
+            --data '{"action":"login","email":"ci-state-user@example.test","password":"ci-state-password-123"}' \
+            http://localhost:3000/api/auth)
+          echo "hostile origin -> $hostile_code"
+          [ "$hostile_code" = "403" ]
+          grep -Eiq '^cache-control:[[:space:]]*no-store' /tmp/hostile.headers
