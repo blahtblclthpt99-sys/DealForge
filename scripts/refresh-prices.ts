@@ -1,14 +1,21 @@
 /**
- * Refresh Amazon prices for products that are stale.
+ * Refresh stale Amazon prices through Amazon Creators API only.
+ *
+ * Safety rules:
+ * - never scrape Amazon HTML for price data
+ * - never advance lastUpdated when a refresh fails
+ * - never mark suspicious or missing values fresh
+ * - only a successful Creators API response may set priceSource=amazon-creators-api
+ *
  * Usage:
  *   npx tsx scripts/refresh-prices.ts
  *   npx tsx scripts/refresh-prices.ts --limit 50
- *   npx tsx scripts/refresh-prices.ts --stale-hours 12
+ *   npx tsx scripts/refresh-prices.ts --stale-hours 24
  */
 import { PrismaClient } from "@prisma/client";
-
-const UA =
-  "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1";
+import { getAmazonCreatorItems, amazonCreatorsConfigured } from "../src/lib/affiliate/amazon-creators";
+import { buildAmazonProductUrl } from "../src/lib/affiliate/amazon-config";
+import { parseJson } from "../src/lib/utils";
 
 function argNum(flag: string, fallback: number) {
   const i = process.argv.indexOf(flag);
@@ -19,155 +26,147 @@ function argNum(flag: string, fallback: number) {
   return fallback;
 }
 
-function extractPrice(html: string) {
-  const patterns = [
-    /"priceAmount":\s*([0-9]+(?:\.[0-9]+)?)/,
-    /class="a-offscreen">\$([0-9,]+\.?[0-9]*)</,
-    /"displayPrice":"\$([0-9,]+\.?[0-9]*)"/,
-  ];
-  for (const re of patterns) {
-    const m = html.match(re);
-    if (m?.[1]) {
-      const v = parseFloat(m[1].replace(/,/g, ""));
-      if (v > 0 && v < 10000) return v;
-    }
-  }
-  return null;
+function sanePrice(current: number, next: number) {
+  if (!Number.isFinite(next) || next <= 0 || next >= 100_000) return false;
+  if (current <= 0) return true;
+  if (current > 5 && next < current * 0.2) return false;
+  if (next > current * 5 && next > 100) return false;
+  return true;
 }
-
-function extractList(html: string, price: number) {
-  const m = html.match(/List Price[^$]{0,40}\$([0-9,]+\.?[0-9]*)/i);
-  if (m?.[1]) {
-    const v = parseFloat(m[1].replace(/,/g, ""));
-    // Reject absurd list prices (scrape garbage / wrong fields)
-    if (v > price && v <= price * 2.5 && v < 5000) return v;
-  }
-  return price;
-}
-
-async function scrapePrice(asin: string) {
-  const url = `https://www.amazon.com/gp/aw/d/${asin}`;
-  const res = await fetch(url, {
-    headers: { "User-Agent": UA, "Accept-Language": "en-US,en;q=0.9" },
-    redirect: "follow",
-  });
-  if (!res.ok) return null;
-  const html = await res.text();
-  if (/captcha|robot check|automated access/i.test(html.slice(0, 4000))) return null;
-  const price = extractPrice(html);
-  if (!price) return null;
-  return { price, originalPrice: extractList(html, price) };
-}
-
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export async function refreshStalePrices(options?: {
   limit?: number;
   staleHours?: number;
   silent?: boolean;
 }) {
+  if (!amazonCreatorsConfigured()) {
+    throw new Error(
+      "Amazon Creators API credentials are not configured. Set AMAZON_CREATORS_CREDENTIAL_ID and AMAZON_CREATORS_CREDENTIAL_SECRET before refreshing prices.",
+    );
+  }
+
   const prisma = new PrismaClient();
-  const limit = options?.limit ?? argNum("--limit", 40);
-  const staleHours = options?.staleHours ?? argNum("--stale-hours", 24);
+  const limit = Math.min(500, Math.max(1, options?.limit ?? argNum("--limit", 50)));
+  const staleHours = Math.max(1, options?.staleHours ?? argNum("--stale-hours", 24));
   const cutoff = new Date(Date.now() - staleHours * 60 * 60 * 1000);
   const log = options?.silent ? () => undefined : console.log;
 
-  const rows = await prisma.product.findMany({
-    where: {
-      retailer: "amazon",
-      asin: { not: null },
-      lastUpdated: { lt: cutoff },
-    },
-    orderBy: { lastUpdated: "asc" },
-    take: limit,
-    select: { id: true, asin: true, title: true, price: true, originalPrice: true },
-  });
+  try {
+    const rows = await prisma.product.findMany({
+      where: {
+        retailer: "amazon",
+        asin: { not: null },
+        lastUpdated: { lt: cutoff },
+      },
+      orderBy: [{ clickCount: "desc" }, { viewCount: "desc" }, { lastUpdated: "asc" }],
+      take: limit,
+      select: {
+        id: true,
+        asin: true,
+        title: true,
+        price: true,
+        images: true,
+        specifications: true,
+      },
+    });
 
-  let updated = 0;
-  let failed = 0;
+    let updated = 0;
+    let missing = 0;
+    let suspicious = 0;
+    let errors = 0;
 
-  for (const row of rows) {
-    if (!row.asin) continue;
-    try {
-      const scraped = await scrapePrice(row.asin);
-      if (!scraped) {
-        failed += 1;
-        await prisma.product.update({
-          where: { id: row.id },
-          data: { lastUpdated: new Date() },
-        });
-        await sleep(1500);
-        continue;
+    for (let offset = 0; offset < rows.length; offset += 10) {
+      const batch = rows.slice(offset, offset + 10);
+      try {
+        const items = await getAmazonCreatorItems(
+          batch.flatMap((row) => (row.asin ? [row.asin] : [])),
+        );
+        const byAsin = new Map(items.map((item) => [item.asin.toUpperCase(), item]));
+        const writes = [];
+
+        for (const row of batch) {
+          if (!row.asin) continue;
+          const item = byAsin.get(row.asin.toUpperCase());
+          if (!item || !(item.price > 0)) {
+            missing += 1;
+            continue;
+          }
+          if (!sanePrice(row.price, item.price)) {
+            suspicious += 1;
+            log(`SKIP ${row.asin} suspicious price $${row.price} → $${item.price}`);
+            continue;
+          }
+
+          const originalPrice = Math.max(item.originalPrice || item.price, item.price);
+          const discountPercent =
+            originalPrice > item.price
+              ? Math.round(((originalPrice - item.price) / originalPrice) * 1000) / 10
+              : 0;
+          const checkedAt = new Date(item.checkedAt);
+          const specs = parseJson<Record<string, unknown>>(row.specifications, {});
+          const images = item.images?.length ? JSON.stringify(item.images) : row.images;
+
+          writes.push(
+            prisma.product.update({
+              where: { id: row.id },
+              data: {
+                title: item.title || row.title,
+                description: item.description || item.title || row.title,
+                brand: item.brand || undefined,
+                images,
+                price: item.price,
+                originalPrice,
+                discountPercent,
+                availability: item.availability || "unknown",
+                affiliateUrl: buildAmazonProductUrl(row.asin),
+                lastUpdated: checkedAt,
+                specifications: JSON.stringify({
+                  ...specs,
+                  priceSource: "amazon-creators-api",
+                  priceCheckedAt: checkedAt.toISOString(),
+                }),
+              },
+            }),
+          );
+          updated += 1;
+          log(`OK ${row.asin} $${row.price} → $${item.price} ${row.title.slice(0, 55)}`);
+        }
+
+        if (writes.length) await prisma.$transaction(writes);
+      } catch (error) {
+        errors += batch.length;
+        log(
+          `ERROR batch ${offset + 1}-${offset + batch.length}: ${error instanceof Error ? error.message : "unknown error"}`,
+        );
       }
-
-      // Reject wild swings — usually wrong field scraped from the page
-      if (row.price > 5 && scraped.price < row.price * 0.25) {
-        failed += 1;
-        log(`SKIP ${row.asin}  suspicious drop $${row.price} → $${scraped.price}`);
-        await prisma.product.update({
-          where: { id: row.id },
-          data: { lastUpdated: new Date() },
-        });
-        await sleep(1200);
-        continue;
-      }
-      if (row.price > 0 && scraped.price > row.price * 4 && scraped.price > 100) {
-        failed += 1;
-        log(`SKIP ${row.asin}  suspicious jump $${row.price} → $${scraped.price}`);
-        await prisma.product.update({
-          where: { id: row.id },
-          data: { lastUpdated: new Date() },
-        });
-        await sleep(1200);
-        continue;
-      }
-
-      const discountPercent =
-        scraped.originalPrice > scraped.price
-          ? Math.round(
-              ((scraped.originalPrice - scraped.price) / scraped.originalPrice) * 1000,
-            ) / 10
-          : 0;
-
-      await prisma.product.update({
-        where: { id: row.id },
-        data: {
-          price: scraped.price,
-          originalPrice: Math.max(scraped.originalPrice, scraped.price),
-          discountPercent,
-          lastUpdated: new Date(),
-        },
-      });
-      updated += 1;
-      log(`OK  ${row.asin}  $${row.price} → $${scraped.price}  ${row.title.slice(0, 50)}`);
-    } catch {
-      failed += 1;
     }
-    await sleep(2000);
+
+    if (updated > 0) {
+      await prisma.cacheEntry.deleteMany({
+        where: { key: { startsWith: "products:" } },
+      });
+    }
+
+    await prisma.systemLog.create({
+      data: {
+        level: errors || suspicious ? "warn" : "info",
+        source: "price-refresh",
+        message: `Creators API refresh: ${updated} updated, ${missing} missing, ${suspicious} suspicious, ${errors} errors, ${rows.length} checked`,
+      },
+    });
+
+    return { updated, missing, suspicious, errors, checked: rows.length };
+  } finally {
+    await prisma.$disconnect();
   }
-
-  await prisma.cacheEntry.deleteMany({
-    where: { key: { startsWith: "products:" } },
-  });
-
-  await prisma.systemLog.create({
-    data: {
-      level: "info",
-      source: "price-refresh",
-      message: `Refreshed prices: ${updated} updated, ${failed} failed, ${rows.length} checked`,
-    },
-  });
-
-  await prisma.$disconnect();
-  return { updated, failed, checked: rows.length };
 }
 
 refreshStalePrices()
-  .then((r) => {
-    console.log("\n=== Price refresh ===");
-    console.log(r);
+  .then((result) => {
+    console.log("\n=== Amazon Creators API price refresh ===");
+    console.log(result);
   })
-  .catch((e) => {
-    console.error(e);
+  .catch((error) => {
+    console.error(error instanceof Error ? error.message : error);
     process.exit(1);
   });
