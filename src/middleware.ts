@@ -16,6 +16,14 @@ const GENERAL_MAX = 120;
 const AUTH_MAX = 20;
 const MAX_TRACKED_KEYS = 5_000;
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+const PRIVATE_API_PREFIXES = [
+  "/api/auth",
+  "/api/account",
+  "/api/wishlist",
+  "/api/saved-searches",
+  "/api/price-alerts",
+  "/api/admin",
+] as const;
 let lastPruneAt = 0;
 
 function pruneExpired(now: number) {
@@ -91,6 +99,20 @@ function browserOriginAllowed(req: NextRequest) {
   }
 }
 
+function isPrivateApi(pathname: string) {
+  return PRIVATE_API_PREFIXES.some(
+    (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
+  );
+}
+
+function nextApiResponse(pathname: string) {
+  const response = NextResponse.next();
+  if (isPrivateApi(pathname)) {
+    response.headers.set("Cache-Control", "private, no-store, max-age=0");
+  }
+  return response;
+}
+
 export function middleware(req: NextRequest) {
   const pathname = req.nextUrl.pathname;
   if (!pathname.startsWith("/api/")) {
@@ -116,7 +138,7 @@ export function middleware(req: NextRequest) {
 
   if (!entry || entry.reset <= now) {
     hits.set(key, { count: 1, reset: now + WINDOW_MS });
-    return NextResponse.next();
+    return nextApiResponse(pathname);
   }
 
   entry.count += 1;
@@ -134,7 +156,7 @@ export function middleware(req: NextRequest) {
     );
   }
 
-  return NextResponse.next();
+  return nextApiResponse(pathname);
 }
 
 export const config = {
