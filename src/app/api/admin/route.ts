@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { readSession } from "@/lib/auth";
+import { affiliateRuntimeReadiness } from "@/lib/affiliate/readiness";
 import { prisma } from "@/lib/db";
 
 const idSchema = z.string().trim().min(1).max(128);
@@ -72,6 +73,7 @@ export async function GET() {
     apiUsage,
     cacheEntries,
     topProducts,
+    viewAggregate,
   ] = await Promise.all([
     prisma.product.count(),
     prisma.user.count(),
@@ -86,7 +88,10 @@ export async function GET() {
       take: 8,
       select: { id: true, title: true, clickCount: true, viewCount: true, discountPercent: true },
     }),
+    prisma.product.aggregate({ _sum: { viewCount: true } }),
   ]);
+
+  const views = viewAggregate._sum.viewCount || 0;
 
   return NextResponse.json({
     stats: {
@@ -94,21 +99,12 @@ export async function GET() {
       userCount,
       clickCount,
       cacheEntries,
-      ctr:
-        clickCount > 0
-          ? Math.round(
-              (clickCount /
-                Math.max(
-                  1,
-                  (
-                    await prisma.product.aggregate({ _sum: { viewCount: true } })
-                  )._sum.viewCount || 1,
-                )) *
-                1000,
-            ) / 10
-          : 0,
+      ctr: views > 0 ? Math.round((clickCount / views) * 1000) / 10 : 0,
     },
-    providers,
+    providers: providers.map((provider) => ({
+      ...provider,
+      runtime: affiliateRuntimeReadiness(provider.provider),
+    })),
     importJobs,
     errorLogs,
     apiUsage,
@@ -134,14 +130,34 @@ export async function PATCH(req: Request) {
   const body = parsed.data;
 
   if (body.type === "provider") {
+    const provider = await prisma.affiliateProvider.findUnique({
+      where: { id: body.id },
+      select: { id: true, provider: true },
+    });
+    if (!provider) {
+      return NextResponse.json({ error: "Affiliate provider not found" }, { status: 404 });
+    }
+
+    const runtime = affiliateRuntimeReadiness(provider.provider);
+    if (body.enabled && !runtime.trackedLinks) {
+      return NextResponse.json(
+        {
+          error: "Tracked-link credentials are not configured in this deployment",
+          runtime,
+        },
+        { status: 409 },
+      );
+    }
+
     const updated = await prisma.affiliateProvider.update({
       where: { id: body.id },
       data: {
         enabled: body.enabled,
         trackingId: body.trackingId,
+        lastSyncStatus: body.enabled ? runtime.status : "disabled",
       },
     });
-    return NextResponse.json({ ok: true, provider: updated });
+    return NextResponse.json({ ok: true, provider: updated, runtime });
   }
 
   if (body.type === "user-role") {
