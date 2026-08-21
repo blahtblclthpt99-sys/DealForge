@@ -41,10 +41,58 @@ jobs:
       - name: Catalog health tooling
         run: npm run catalog:health
 
+      - name: Seed security fixtures
+        shell: bash
+        run: |
+          node <<'NODE'
+          const { PrismaClient } = require('@prisma/client');
+          const prisma = new PrismaClient();
+          async function main() {
+            await prisma.category.create({
+              data: { id: 'ci-category', name: 'CI Category', slug: 'ci-category', icon: 'test' },
+            });
+            await prisma.product.create({
+              data: {
+                id: 'ci-public-product',
+                asin: 'B000000001',
+                slug: 'ci-public-product',
+                title: 'CI Public Product',
+                description: 'Visible CI fixture',
+                brand: 'CI',
+                categoryId: 'ci-category',
+                images: '["/images/placeholder-product.svg"]',
+                price: 10,
+                originalPrice: 10,
+                affiliateUrl: 'https://www.amazon.com/dp/B000000001?tag=titanfieldos-20',
+                retailer: 'amazon',
+                specifications: '{}',
+              },
+            });
+            await prisma.product.create({
+              data: {
+                id: 'ci-hidden-product',
+                asin: 'B000000002',
+                slug: 'ci-hidden-product',
+                title: 'Amazon listing CI hidden product',
+                description: 'Hidden CI fixture',
+                brand: 'CI',
+                categoryId: 'ci-category',
+                images: '["/images/placeholder-product.svg"]',
+                price: 10,
+                originalPrice: 10,
+                affiliateUrl: 'https://www.amazon.com/dp/B000000002?tag=titanfieldos-20',
+                retailer: 'amazon',
+                specifications: '{"needsEnrichment":true}',
+              },
+            });
+          }
+          main().finally(() => prisma.$disconnect());
+          NODE
+
       - name: Build
         run: npm run build
 
-      - name: Production route smoke tests
+      - name: Production route and security smoke tests
         shell: bash
         run: |
           set -euo pipefail
@@ -83,6 +131,83 @@ jobs:
           check_status 200 /register
           check_status 400 '/api/img?u=https%3A%2F%2Fexample.com%2Fimage.jpg'
           check_status 404 /definitely-not-a-real-route
+
+          curl --silent --dump-header /tmp/security.headers --output /dev/null http://localhost:3000/
+          grep -Eiq '^x-content-type-options:[[:space:]]*nosniff' /tmp/security.headers
+          grep -Eiq '^x-frame-options:[[:space:]]*DENY' /tmp/security.headers
+          grep -Eiq '^referrer-policy:[[:space:]]*strict-origin-when-cross-origin' /tmp/security.headers
+          grep -Eiq '^permissions-policy:' /tmp/security.headers
+          grep -Eiq '^strict-transport-security:' /tmp/security.headers
+
+          hostile_origin_code=$(curl --silent --output /tmp/hostile-origin.json --write-out '%{http_code}' \
+            --request POST \
+            --header 'Origin: https://attacker.example' \
+            --header 'Content-Type: application/json' \
+            --data '{"action":"login","email":"nobody@example.test","password":"password123"}' \
+            http://localhost:3000/api/auth)
+          echo "hostile browser origin -> $hostile_origin_code"
+          [ "$hostile_origin_code" = "403" ]
+
+          register_code=$(curl --silent --output /tmp/register.json --write-out '%{http_code}' \
+            --cookie-jar /tmp/dealforge.cookies \
+            --request POST \
+            --header 'Origin: http://localhost:3000' \
+            --header 'Content-Type: application/json' \
+            --data '{"action":"register","email":"ci-user@example.test","password":"ci-password-123","name":"CI User"}' \
+            http://localhost:3000/api/auth)
+          echo "same-origin registration -> $register_code"
+          [ "$register_code" = "200" ]
+
+          public_click_code=$(curl --silent --output /tmp/public-click.json --write-out '%{http_code}' \
+            --request POST --header 'Content-Type: application/json' \
+            --data '{"productId":"ci-public-product"}' \
+            http://localhost:3000/api/clicks)
+          hidden_click_code=$(curl --silent --output /tmp/hidden-click.json --write-out '%{http_code}' \
+            --request POST --header 'Content-Type: application/json' \
+            --data '{"productId":"ci-hidden-product"}' \
+            http://localhost:3000/api/clicks)
+          echo "public click -> $public_click_code; hidden click -> $hidden_click_code"
+          [ "$public_click_code" = "200" ]
+          [ "$hidden_click_code" = "404" ]
+
+          public_wishlist_code=$(curl --silent --output /tmp/public-wishlist.json --write-out '%{http_code}' \
+            --cookie /tmp/dealforge.cookies \
+            --request POST --header 'Origin: http://localhost:3000' --header 'Content-Type: application/json' \
+            --data '{"productId":"ci-public-product","action":"add"}' \
+            http://localhost:3000/api/wishlist)
+          hidden_wishlist_code=$(curl --silent --output /tmp/hidden-wishlist.json --write-out '%{http_code}' \
+            --cookie /tmp/dealforge.cookies \
+            --request POST --header 'Origin: http://localhost:3000' --header 'Content-Type: application/json' \
+            --data '{"productId":"ci-hidden-product","action":"add"}' \
+            http://localhost:3000/api/wishlist)
+          echo "public wishlist -> $public_wishlist_code; hidden wishlist -> $hidden_wishlist_code"
+          [ "$public_wishlist_code" = "200" ]
+          [ "$hidden_wishlist_code" = "404" ]
+
+          public_alert_code=$(curl --silent --output /tmp/public-alert.json --write-out '%{http_code}' \
+            --cookie /tmp/dealforge.cookies \
+            --request POST --header 'Origin: http://localhost:3000' --header 'Content-Type: application/json' \
+            --data '{"productId":"ci-public-product","targetPrice":9}' \
+            http://localhost:3000/api/price-alerts)
+          hidden_alert_code=$(curl --silent --output /tmp/hidden-alert.json --write-out '%{http_code}' \
+            --cookie /tmp/dealforge.cookies \
+            --request POST --header 'Origin: http://localhost:3000' --header 'Content-Type: application/json' \
+            --data '{"productId":"ci-hidden-product","targetPrice":9}' \
+            http://localhost:3000/api/price-alerts)
+          echo "public price alert -> $public_alert_code; hidden price alert -> $hidden_alert_code"
+          [ "$public_alert_code" = "200" ]
+          [ "$hidden_alert_code" = "404" ]
+
+          public_go_code=$(curl --silent --max-redirs 0 --dump-header /tmp/public-go.headers --output /dev/null --write-out '%{http_code}' http://localhost:3000/go/ci-public-product || true)
+          public_go_location=$(awk 'BEGIN{IGNORECASE=1} /^location:/{sub(/\r$/, ""); sub(/^[^:]+:[[:space:]]*/, ""); print}' /tmp/public-go.headers | tail -n 1)
+          hidden_go_code=$(curl --silent --max-redirs 0 --dump-header /tmp/hidden-go.headers --output /dev/null --write-out '%{http_code}' http://localhost:3000/go/ci-hidden-product || true)
+          hidden_go_location=$(awk 'BEGIN{IGNORECASE=1} /^location:/{sub(/\r$/, ""); sub(/^[^:]+:[[:space:]]*/, ""); print}' /tmp/hidden-go.headers | tail -n 1)
+          echo "public go -> $public_go_code $public_go_location"
+          echo "hidden go -> $hidden_go_code $hidden_go_location"
+          [ "$public_go_code" = "302" ]
+          [[ "$public_go_location" == https://amazon.com/* || "$public_go_location" == https://*.amazon.com/* ]]
+          [ "$hidden_go_code" = "302" ]
+          [[ "$hidden_go_location" == "http://localhost:3000/" ]]
 
           unsigned_code=$(curl --silent --output /tmp/maintenance-unsigned.json --write-out '%{http_code}' --request POST http://localhost:3000/api/internal/maintenance)
           echo "unsigned maintenance -> $unsigned_code"
