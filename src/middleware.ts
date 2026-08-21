@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
 /**
- * Best-effort per-isolate API throttling.
+ * Best-effort per-isolate API throttling plus browser-origin enforcement.
  *
  * This protects an individual runtime instance from obvious bursts but is not a
  * globally consistent distributed rate-limit. Cloudflare production prefers
@@ -15,6 +15,7 @@ const WINDOW_MS = 60_000;
 const GENERAL_MAX = 120;
 const AUTH_MAX = 20;
 const MAX_TRACKED_KEYS = 5_000;
+const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 let lastPruneAt = 0;
 
 function pruneExpired(now: number) {
@@ -42,10 +43,44 @@ function clientIp(req: NextRequest) {
   return forwardedIp || "local";
 }
 
+function browserOriginAllowed(req: NextRequest) {
+  if (SAFE_METHODS.has(req.method.toUpperCase())) return true;
+
+  // Fetch Metadata catches ordinary cross-site browser requests. Origin is the
+  // stronger check for same-site sibling subdomains, because SameSite cookies
+  // alone do not distinguish those origins.
+  if (req.headers.get("sec-fetch-site")?.toLowerCase() === "cross-site") {
+    return false;
+  }
+
+  const origin = req.headers.get("origin");
+  if (!origin) {
+    // Non-browser clients and the signed internal maintenance dispatch may omit
+    // Origin. Route-level authentication still applies to protected endpoints.
+    return true;
+  }
+
+  try {
+    return new URL(origin).origin === req.nextUrl.origin;
+  } catch {
+    return false;
+  }
+}
+
 export function middleware(req: NextRequest) {
   const pathname = req.nextUrl.pathname;
   if (!pathname.startsWith("/api/")) {
     return NextResponse.next();
+  }
+
+  if (!browserOriginAllowed(req)) {
+    return NextResponse.json(
+      { error: "Cross-origin request blocked" },
+      {
+        status: 403,
+        headers: { "Cache-Control": "no-store" },
+      },
+    );
   }
 
   const key = `${clientIp(req)}:${pathname}`;
