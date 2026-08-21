@@ -54,6 +54,7 @@ export const amazonConnector: AffiliateConnector = {
 };
 
 export function amazonDpLink(asin: string, _tag?: string) {
+  void _tag;
   return buildAmazonProductUrl(asin);
 }
 
