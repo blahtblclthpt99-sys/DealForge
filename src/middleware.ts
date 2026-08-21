@@ -2,9 +2,13 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
 /**
- * Lightweight single-instance rate limiting for API routes.
- * Koyeb Free runs one web instance, so this provides a useful local guard.
- * If DealForge scales horizontally later, move counters to shared storage.
+ * Best-effort per-isolate API throttling.
+ *
+ * This protects an individual runtime instance from obvious bursts but is not a
+ * globally consistent distributed rate-limit. Cloudflare production prefers
+ * CF-Connecting-IP (set by the platform) over caller-influenced forwarding
+ * headers. A shared Cloudflare Rate Limiting binding can replace this map when
+ * stronger account-wide enforcement is required.
  */
 const hits = new Map<string, { count: number; reset: number }>();
 const WINDOW_MS = 60_000;
@@ -21,13 +25,21 @@ function pruneExpired(now: number) {
     if (entry.reset <= now) hits.delete(key);
   }
 
-  // Hard bound protects the small Koyeb instance even if client IP headers are
-  // highly variable. Map iteration order is insertion order, so evict oldest.
+  // Map iteration order is insertion order, so evict the oldest keys if a
+  // single isolate sees highly variable client identifiers.
   while (hits.size >= MAX_TRACKED_KEYS) {
     const oldest = hits.keys().next().value as string | undefined;
     if (!oldest) break;
     hits.delete(oldest);
   }
+}
+
+function clientIp(req: NextRequest) {
+  const cloudflareIp = req.headers.get("cf-connecting-ip")?.trim();
+  if (cloudflareIp) return cloudflareIp;
+
+  const forwardedIp = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
+  return forwardedIp || "local";
 }
 
 export function middleware(req: NextRequest) {
@@ -36,8 +48,7 @@ export function middleware(req: NextRequest) {
     return NextResponse.next();
   }
 
-  const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "local";
-  const key = `${ip}:${pathname}`;
+  const key = `${clientIp(req)}:${pathname}`;
   const now = Date.now();
   pruneExpired(now);
 
