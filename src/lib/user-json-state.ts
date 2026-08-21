@@ -10,7 +10,7 @@ export type MutableUserJsonField =
   | "settings";
 
 export type UserJsonMutationResult<T> =
-  | { status: "ok"; value: T; previous: T }
+  | { status: "ok"; value: T; previous: T; changed: boolean }
   | { status: "not-found" }
   | { status: "conflict" };
 
@@ -27,7 +27,8 @@ const MAX_RETRIES = 4;
  *
  * On success, `previous` is the exact state used by the successful compare-and-
  * swap attempt. Callers can safely derive transition-only side effects after
- * the write without duplicating them across retry attempts.
+ * the write without duplicating them across retry attempts. No-op mutations do
+ * not update the row or its updatedAt timestamp.
  */
 export async function mutateUserJsonState<T>(
   userId: string,
@@ -53,10 +54,16 @@ export async function mutateUserJsonState<T>(
     const current = parseJson<T>(user[field], fallback);
     const next = transform(current);
     let serialized: string;
+    let currentSerialized: string;
     try {
       serialized = JSON.stringify(next);
+      currentSerialized = JSON.stringify(current);
     } catch {
       return { status: "conflict" };
+    }
+
+    if (serialized === currentSerialized) {
+      return { status: "ok", value: next, previous: current, changed: false };
     }
 
     const data = { [field]: serialized } as Prisma.UserUpdateManyMutationInput;
@@ -66,7 +73,7 @@ export async function mutateUserJsonState<T>(
     });
 
     if (updated.count === 1) {
-      return { status: "ok", value: next, previous: current };
+      return { status: "ok", value: next, previous: current, changed: true };
     }
   }
 
