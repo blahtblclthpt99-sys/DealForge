@@ -1,108 +1,143 @@
 /**
- * Spot-check enriched product prices against live Amazon.
- * Usage: npx tsx scripts/verify-prices.ts [--sample 40]
+ * Audit DealForge Amazon prices.
+ *
+ * - Structural/freshness audit always runs.
+ * - Live Amazon comparison uses Creators API only.
+ * - No HTML scraping is used.
+ *
+ * Usage:
+ *   npx tsx scripts/verify-prices.ts
+ *   npx tsx scripts/verify-prices.ts --sample 40
+ *   npx tsx scripts/verify-prices.ts --require-live
  */
 import { PrismaClient } from "@prisma/client";
+import {
+  amazonCreatorsConfigured,
+  getAmazonCreatorItems,
+} from "../src/lib/affiliate/amazon-creators";
+import { parseJson } from "../src/lib/utils";
 
 const SAMPLE = (() => {
   const i = process.argv.indexOf("--sample");
-  return i >= 0 ? Number(process.argv[i + 1]) : 40;
+  const raw = i >= 0 ? Number(process.argv[i + 1]) : 40;
+  return Number.isFinite(raw) && raw > 0 ? Math.min(200, Math.floor(raw)) : 40;
 })();
+const REQUIRE_LIVE = process.argv.includes("--require-live");
+const PRICE_TTL_MS = 24 * 60 * 60 * 1000;
 
 const prisma = new PrismaClient();
-const UA =
-  "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1";
 
-async function amazonPrice(asin: string): Promise<number | null> {
-  try {
-    const res = await fetch(`https://www.amazon.com/gp/aw/d/${asin}`, {
-      headers: { "User-Agent": UA, "Accept-Language": "en-US,en;q=0.9" },
-    });
-    if (!res.ok) return null;
-    const html = await res.text();
-    if (/captcha|robot check/i.test(html.slice(0, 4000))) return null;
-    const raw =
-      html.match(/"priceAmount":\s*([0-9.]+)/)?.[1] ||
-      html.match(/class="a-offscreen">\$([0-9.,]+)/)?.[1];
-    if (!raw) return null;
-    const n = parseFloat(raw.replace(/,/g, ""));
-    return Number.isFinite(n) ? n : null;
-  } catch {
-    return null;
-  }
+function trustedFresh(row: { lastUpdated: Date; specifications: string }) {
+  const specs = parseJson<Record<string, unknown>>(row.specifications, {});
+  const source = typeof specs.priceSource === "string" ? specs.priceSource : "";
+  const rawChecked = typeof specs.priceCheckedAt === "string" ? specs.priceCheckedAt : "";
+  const checkedMs = rawChecked ? Date.parse(rawChecked) : row.lastUpdated.getTime();
+  return (
+    source === "amazon-creators-api" &&
+    Number.isFinite(checkedMs) &&
+    Date.now() - checkedMs <= PRICE_TTL_MS
+  );
 }
 
 async function main() {
   const rows = await prisma.product.findMany({
-    where: {
-      AND: [
-        { asin: { not: null } },
-        { specifications: { contains: '"enrichedAt"' } },
-      ],
+    where: { retailer: "amazon", asin: { not: null } },
+    select: {
+      asin: true,
+      title: true,
+      price: true,
+      originalPrice: true,
+      discountPercent: true,
+      lastUpdated: true,
+      specifications: true,
+      clickCount: true,
+      viewCount: true,
     },
-    select: { asin: true, title: true, price: true },
-    orderBy: { lastUpdated: "desc" },
-    take: SAMPLE * 3,
+    orderBy: [{ clickCount: "desc" }, { viewCount: "desc" }, { lastUpdated: "asc" }],
   });
 
-  // shuffle-ish sample
-  const picked = rows.sort(() => Math.random() - 0.5).slice(0, SAMPLE);
-  let match = 0;
-  let mismatch = 0;
-  let unknown = 0;
-  const mismatches: Array<{ asin: string; ours: number; amazon: number; title: string }> = [];
+  const invalid = rows.filter(
+    (row) =>
+      !Number.isFinite(row.price) ||
+      row.price <= 0 ||
+      row.originalPrice < row.price ||
+      row.discountPercent < 0 ||
+      row.discountPercent > 100,
+  );
+  const fresh = rows.filter(trustedFresh);
+  const stale = rows.length - fresh.length;
 
-  for (const row of picked) {
-    if (!row.asin) continue;
-    await new Promise((r) => setTimeout(r, 900));
-    const live = await amazonPrice(row.asin);
-    if (live == null) {
-      unknown++;
-      continue;
-    }
-    const diff = Math.abs(live - row.price);
-    // allow $1 or 2% variance (Amazon A/B and deal flicker)
-    if (diff <= 1 || diff / live <= 0.02) {
-      match++;
-    } else {
-      mismatch++;
-      mismatches.push({
-        asin: row.asin,
-        ours: row.price,
-        amazon: live,
-        title: row.title.slice(0, 50),
-      });
-    }
+  const baseReport = {
+    amazonProducts: rows.length,
+    invalidCommerceRows: invalid.length,
+    trustedFreshPrices: fresh.length,
+    staleOrRecordedPrices: stale,
+    creatorsApiConfigured: amazonCreatorsConfigured(),
+  };
+
+  if (!amazonCreatorsConfigured()) {
+    console.log(JSON.stringify({ ...baseReport, liveComparison: "skipped-no-creators-api-credentials" }, null, 2));
+    if (invalid.length) process.exitCode = 1;
+    if (REQUIRE_LIVE) process.exitCode = 1;
+    return;
   }
 
-  const left = await prisma.product.count({
-    where: {
-      OR: [
-        { specifications: { contains: '"needsEnrichment":true' } },
-        { specifications: { contains: '"needsEnrichment": true' } },
-      ],
-    },
-  });
+  const picked = rows.slice(0, SAMPLE);
+  let match = 0;
+  let mismatch = 0;
+  let missing = 0;
+  const mismatches: Array<{ asin: string; recorded: number; amazon: number; title: string }> = [];
+
+  for (let offset = 0; offset < picked.length; offset += 10) {
+    const batch = picked.slice(offset, offset + 10);
+    const items = await getAmazonCreatorItems(batch.flatMap((row) => (row.asin ? [row.asin] : [])));
+    const byAsin = new Map(items.map((item) => [item.asin.toUpperCase(), item]));
+
+    for (const row of batch) {
+      if (!row.asin) continue;
+      const live = byAsin.get(row.asin.toUpperCase());
+      if (!live || !(live.price > 0)) {
+        missing += 1;
+        continue;
+      }
+      const diff = Math.abs(live.price - row.price);
+      if (diff <= 1 || diff / live.price <= 0.02) {
+        match += 1;
+      } else {
+        mismatch += 1;
+        mismatches.push({
+          asin: row.asin,
+          recorded: row.price,
+          amazon: live.price,
+          title: row.title.slice(0, 70),
+        });
+      }
+    }
+  }
 
   console.log(
     JSON.stringify(
       {
-        checked: match + mismatch + unknown,
-        match,
-        mismatch,
-        unknown,
-        stillNeedEnrichment: left,
-        mismatches: mismatches.slice(0, 15),
+        ...baseReport,
+        liveComparison: {
+          requested: picked.length,
+          matched: match,
+          mismatched: mismatch,
+          missing,
+          mismatches: mismatches.slice(0, 20),
+        },
       },
       null,
       2,
     ),
   );
+
+  if (invalid.length || mismatch) process.exitCode = 1;
 }
 
 main()
-  .catch((e) => {
-    console.error(e);
-    process.exit(1);
+  .catch((error) => {
+    console.error(error);
+    process.exitCode = 1;
   })
   .finally(() => prisma.$disconnect());
