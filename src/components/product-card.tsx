@@ -57,9 +57,9 @@ export function ProductCard({
           <span className="rounded-full border border-card-border/70 bg-card/90 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.12em] text-forest-ink shadow-sm backdrop-blur">
             {retailer}
           </span>
-          {commerce.priceStatus === "recorded" ? (
+          {commerce.isAmazon && commerce.priceStatus === "recorded" ? (
             <span className="rounded-full border border-card-border bg-card/90 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-forest-muted shadow-sm backdrop-blur">
-              Recorded price
+              Price refresh needed
             </span>
           ) : null}
           {save ? (
@@ -95,12 +95,7 @@ export function ProductCard({
         <div className="mt-3 min-h-[3.1rem]">
           {commerce.canDisplayPrice ? (
             <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-              <p
-                className={cn(
-                  "text-xl font-extrabold tracking-tight",
-                  commerce.priceStatus === "current" ? "text-forest" : "text-forest-ink",
-                )}
-              >
+              <p className="text-xl font-extrabold tracking-tight text-forest">
                 {formatPrice(product.price)}
               </p>
               {commerce.canDisplayDiscount ? (
