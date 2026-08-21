@@ -4,6 +4,8 @@ import { DeleteAlertButton } from "@/components/delete-alert-button";
 import { PriceAlertForm } from "@/components/price-alert-form";
 import { readSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
+import { publicProductWhere } from "@/lib/product-visibility";
+import { toProductDTO } from "@/lib/products";
 import { formatPrice, parseJson } from "@/lib/utils";
 
 type PriceAlert = {
@@ -13,18 +15,39 @@ type PriceAlert = {
   createdAt: string;
 };
 
+function cleanAlerts(value: unknown): PriceAlert[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter(
+      (alert): alert is PriceAlert =>
+        Boolean(alert) &&
+        typeof alert === "object" &&
+        typeof (alert as PriceAlert).id === "string" &&
+        typeof (alert as PriceAlert).productId === "string" &&
+        Number.isFinite((alert as PriceAlert).targetPrice) &&
+        (alert as PriceAlert).targetPrice > 0 &&
+        typeof (alert as PriceAlert).createdAt === "string",
+    )
+    .slice(0, 50);
+}
+
 export default async function AlertsPage() {
   const session = await readSession();
   if (!session) redirect("/login?next=/dashboard/alerts");
-  const user = await prisma.user.findUnique({ where: { id: session.id } });
+  const user = await prisma.user.findUnique({
+    where: { id: session.id },
+    select: { priceAlerts: true },
+  });
   if (!user) redirect("/login");
-  const alerts = parseJson<PriceAlert[]>(user.priceAlerts, []);
-  const products = alerts.length
+
+  const alerts = cleanAlerts(parseJson<unknown>(user.priceAlerts, []));
+  const productRows = alerts.length
     ? await prisma.product.findMany({
-        where: { id: { in: alerts.map((a) => a.productId) } },
-        select: { id: true, title: true, price: true, slug: true },
+        where: publicProductWhere({ id: { in: alerts.map((alert) => alert.productId) } }),
+        include: { category: true },
       })
     : [];
+  const products = new Map(productRows.map((row) => [row.id, toProductDTO(row)]));
 
   return (
     <div className="dn-container py-12">
@@ -32,8 +55,8 @@ export default async function AlertsPage() {
         ← Dashboard
       </Link>
       <h1 className="mt-3 font-display text-3xl font-semibold text-forest-ink">Price alerts</h1>
-      <p className="mt-2 text-forest-muted">
-        We log alert hits in the background worker. Wire email/push in production.
+      <p className="mt-2 max-w-2xl text-forest-muted">
+        Alerts are evaluated only against retailer-verified current prices. Recorded or stale amounts are never treated as a live price.
       </p>
 
       <div className="mt-8">
@@ -41,10 +64,10 @@ export default async function AlertsPage() {
       </div>
 
       <div className="mt-8 space-y-3">
-        {alerts.map((a) => {
-          const product = products.find((p) => p.id === a.productId);
+        {alerts.map((alert) => {
+          const product = products.get(alert.productId);
           return (
-            <div key={a.id} className="dn-card flex flex-wrap items-center justify-between gap-3 p-4">
+            <div key={alert.id} className="dn-card flex flex-wrap items-center justify-between gap-3 p-4">
               <div>
                 {product ? (
                   <Link href={`/product/${product.slug}`} className="font-semibold text-forest-ink hover:text-forest">
@@ -54,15 +77,23 @@ export default async function AlertsPage() {
                   <p className="font-semibold text-forest-ink">Product unavailable</p>
                 )}
                 <p className="text-sm text-forest-muted">
-                  Alert at {formatPrice(a.targetPrice)}
-                  {product ? ` · now ${formatPrice(product.price)}` : ""}
+                  Alert at {formatPrice(alert.targetPrice)}
+                  {product
+                    ? product.price > 0
+                      ? ` · verified current price ${formatPrice(product.price)}`
+                      : " · current retailer price needs verification"
+                    : ""}
                 </p>
               </div>
-              <DeleteAlertButton id={a.id} />
+              <DeleteAlertButton id={alert.id} />
             </div>
           );
         })}
       </div>
+
+      {alerts.length === 0 ? (
+        <p className="mt-10 text-center text-forest-muted">No price alerts yet.</p>
+      ) : null}
     </div>
   );
 }
