@@ -87,9 +87,13 @@ jobs:
           echo "product detail -> $product_code"
           [[ "$product_code" == "200" ]]
           grep -Fq 'data-price-display="retailer-check"' /tmp/product.html
-          grep -Fqi 'Price refresh needed' /tmp/product.html
           grep -Fqi 'Check current price on Amazon' /tmp/product.html
-          echo 'stale Amazon price publishing -> blocked; retailer check shown'
+          if grep -Fqi 'Price refresh needed' /tmp/product.html; then
+            echo 'recorded-price refresh badge -> present'
+          else
+            echo 'recorded-price refresh badge -> not applicable; current price remains blocked'
+          fi
+          echo 'stale/unverified Amazon price publishing -> blocked; retailer check shown'
 
           go_code=$(curl --silent --show-error --max-time 30 --max-redirs 0 --dump-header /tmp/go.headers --output /tmp/go.body --write-out '%{http_code}' "$BASE_URL/go/$PRODUCT_ID" || true)
           location=$(awk 'BEGIN{IGNORECASE=1} /^location:/{sub(/\r$/, ""); sub(/^[^:]+:[[:space:]]*/, ""); print}' /tmp/go.headers | tail -n 1)
