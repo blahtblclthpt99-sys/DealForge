@@ -6,6 +6,7 @@ import { buildEbayAffiliateUrl } from "@/lib/affiliate/ebay-config";
 import { buildAliExpressAffiliateUrl } from "@/lib/affiliate/aliexpress-config";
 import { prisma } from "@/lib/db";
 import { recordClick } from "@/lib/products";
+import { isStorefrontBlockedSpecifications } from "@/lib/product-visibility";
 
 type Props = { params: Promise<{ productId: string }> };
 
@@ -58,9 +59,12 @@ function safeFinalDestination(retailer: string, value: string) {
   return allowedHttpsUrl(value, allowed);
 }
 
+function appBase() {
+  return process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+}
+
 function storefrontFallback(productSlug: string) {
-  const base = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
-  return new URL(`/product/${encodeURIComponent(productSlug)}`, base);
+  return new URL(`/product/${encodeURIComponent(productSlug)}`, appBase());
 }
 
 /**
@@ -71,8 +75,8 @@ export async function GET(_req: Request, { params }: Props) {
   const { productId } = await params;
   const product = await prisma.product.findUnique({ where: { id: productId } });
 
-  if (!product) {
-    return NextResponse.redirect(new URL("/", process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"));
+  if (!product || isStorefrontBlockedSpecifications(product.specifications)) {
+    return NextResponse.redirect(new URL("/", appBase()), 302);
   }
 
   const session = await readSession();
