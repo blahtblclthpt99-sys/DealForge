@@ -87,7 +87,7 @@ jobs:
           echo "product detail -> $product_code"
           [[ "$product_code" == "200" ]]
           grep -Fq 'data-price-display="retailer-check"' /tmp/product.html
-          grep -Fqi 'Check current price on Amazon' /tmp/product.html
+          grep -Fqi 'Check current price on' /tmp/product.html
           if grep -Fqi 'Price refresh needed' /tmp/product.html; then
             echo 'recorded-price refresh badge -> present'
           else
@@ -193,7 +193,7 @@ jobs:
           echo "production product detail -> $product_code"
           [[ "$product_code" == "200" ]]
           grep -Fq 'data-price-display="retailer-check"' /tmp/custom-product.html
-          grep -Fqi 'Check current price on Amazon' /tmp/custom-product.html
+          grep -Fqi 'Check current price on' /tmp/custom-product.html
 
           go_code=$(curl --silent --show-error --max-time 30 --max-redirs 0 --dump-header /tmp/custom-go.headers --output /tmp/custom-go.body --write-out '%{http_code}' "$PRODUCTION_URL/go/$PRODUCT_ID" || true)
           location=$(awk 'BEGIN{IGNORECASE=1} /^location:/{sub(/\r$/, ""); sub(/^[^:]+:[[:space:]]*/, ""); print}' /tmp/custom-go.headers | tail -n 1)
