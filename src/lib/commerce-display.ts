@@ -39,9 +39,8 @@ function priceTimestamp(
   const specs = product.specifications ?? {};
   const candidates = [
     specs.priceCheckedAt,
-    specs.observedAt,
     trustedSource ? product.lastUpdated : null,
-    product.lastUpdated,
+    specs.observedAt,
   ];
   for (const candidate of candidates) {
     const parsed = parseDate(candidate);
@@ -74,8 +73,13 @@ export function getCommerceDisplayState(
     : priceIsFresh
       ? "current"
       : "recorded";
-  const canDisplayPrice = priceStatus !== "unavailable";
+
+  // Legacy Amazon amounts remain available internally for migration/audit, but
+  // are not rendered as shopper-facing prices. Amazon price content becomes
+  // displayable only after a trusted, fresh retailer/API refresh.
+  const canDisplayPrice = validPrice && (!isAmazon || priceStatus === "current");
   const canDisplayDiscount =
+    canDisplayPrice &&
     priceStatus === "current" &&
     Number.isFinite(product.originalPrice) &&
     product.originalPrice > product.price &&
@@ -85,14 +89,12 @@ export function getCommerceDisplayState(
     observedAt == null ? null : new Date(observedAt).toISOString().slice(0, 10);
 
   let priceCaption: string;
-  if (priceStatus === "current") {
+  if (canDisplayPrice && priceStatus === "current") {
     priceCaption = checkedDate
       ? `Price checked ${checkedDate} · verify final price at checkout`
-      : "Current recorded price · verify final price at checkout";
-  } else if (priceStatus === "recorded") {
-    priceCaption = checkedDate
-      ? `Recorded ${checkedDate} · check Amazon for today’s price`
-      : "Recorded catalog price · check Amazon for today’s price";
+      : "Price recently checked · verify final price at checkout";
+  } else if (isAmazon && priceStatus === "recorded") {
+    priceCaption = "Current Amazon price is not verified yet · check Amazon for today’s price";
   } else {
     priceCaption = isAmazon
       ? "Check Amazon for current price and availability"
@@ -103,7 +105,7 @@ export function getCommerceDisplayState(
     isAmazon,
     priceStatus,
     priceIsFresh,
-    priceNeedsCheck: priceStatus !== "current",
+    priceNeedsCheck: !canDisplayPrice || priceStatus !== "current",
     canDisplayPrice,
     canDisplayDiscount,
     checkedDate,
