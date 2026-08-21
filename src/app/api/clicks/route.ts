@@ -3,6 +3,7 @@ import { z } from "zod";
 import { readSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { recordClick } from "@/lib/products";
+import { publicProductWhere } from "@/lib/product-visibility";
 
 const clickSchema = z.object({ productId: z.string().min(1).max(100) });
 
@@ -21,8 +22,8 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Invalid productId" }, { status: 400 });
   }
 
-  const product = await prisma.product.findUnique({
-    where: { id: parsed.data.productId },
+  const product = await prisma.product.findFirst({
+    where: publicProductWhere({ id: parsed.data.productId }),
     select: { id: true },
   });
   if (!product) return NextResponse.json({ error: "Product not found" }, { status: 404 });
