@@ -6,7 +6,7 @@ import { buildEbayAffiliateUrl } from "@/lib/affiliate/ebay-config";
 import { buildAliExpressAffiliateUrl } from "@/lib/affiliate/aliexpress-config";
 import { prisma } from "@/lib/db";
 import { recordClick } from "@/lib/products";
-import { isStorefrontBlockedSpecifications } from "@/lib/product-visibility";
+import { publicProductWhere } from "@/lib/product-visibility";
 
 type Props = { params: Promise<{ productId: string }> };
 
@@ -28,6 +28,10 @@ const TRACKING_DESTINATION_HOSTS: Record<string, string[]> = {
   aliexpress: ["s.click.aliexpress.com"],
 };
 
+function normalizeRetailer(value: string) {
+  return value.trim().toLowerCase();
+}
+
 function hostnameMatches(hostname: string, allowed: string) {
   const host = hostname.toLowerCase();
   const suffix = allowed.toLowerCase();
@@ -41,6 +45,7 @@ function allowedHttpsUrl(value: string | null | undefined, allowedHosts: string[
     if (url.protocol !== "https:" || url.username || url.password) return null;
     if (url.port && url.port !== "443") return null;
     if (!allowedHosts.some((host) => hostnameMatches(url.hostname, host))) return null;
+    url.hash = "";
     return url.toString();
   } catch {
     return null;
@@ -48,13 +53,15 @@ function allowedHttpsUrl(value: string | null | undefined, allowedHosts: string[
 }
 
 function safeStoredRetailerUrl(retailer: string, value: string | null | undefined) {
-  return allowedHttpsUrl(value, RETAILER_DESTINATION_HOSTS[retailer] ?? []);
+  const normalized = normalizeRetailer(retailer);
+  return allowedHttpsUrl(value, RETAILER_DESTINATION_HOSTS[normalized] ?? []);
 }
 
 function safeFinalDestination(retailer: string, value: string) {
+  const normalized = normalizeRetailer(retailer);
   const allowed = [
-    ...(RETAILER_DESTINATION_HOSTS[retailer] ?? []),
-    ...(TRACKING_DESTINATION_HOSTS[retailer] ?? []),
+    ...(RETAILER_DESTINATION_HOSTS[normalized] ?? []),
+    ...(TRACKING_DESTINATION_HOSTS[normalized] ?? []),
   ];
   return allowedHttpsUrl(value, allowed);
 }
@@ -70,12 +77,16 @@ function storefrontFallback(productSlug: string) {
 /**
  * Outbound affiliate redirect.
  * Rebuilds tracked retailer links at click-time and validates every final host.
+ * Only products that pass the same public visibility policy as the storefront
+ * are eligible for an outbound redirect.
  */
 export async function GET(_req: Request, { params }: Props) {
   const { productId } = await params;
-  const product = await prisma.product.findUnique({ where: { id: productId } });
+  const product = await prisma.product.findFirst({
+    where: publicProductWhere({ id: productId }),
+  });
 
-  if (!product || isStorefrontBlockedSpecifications(product.specifications)) {
+  if (!product) {
     return NextResponse.redirect(new URL("/", appBase()), 302);
   }
 
@@ -86,29 +97,30 @@ export async function GET(_req: Request, { params }: Props) {
     // Click tracking must never block the shopper.
   }
 
+  const retailer = normalizeRetailer(product.retailer);
   let destination: string;
-  if (product.retailer === "amazon" && product.asin) {
+  if (retailer === "amazon" && product.asin) {
     destination = buildAmazonProductUrl(product.asin);
-  } else if (product.retailer === "ebay") {
+  } else if (retailer === "ebay") {
     destination = buildEbayAffiliateUrl({
       itemId: product.asin,
-      url: safeStoredRetailerUrl("ebay", product.affiliateUrl) ?? undefined,
+      url: safeStoredRetailerUrl(retailer, product.affiliateUrl) ?? undefined,
     });
-  } else if (product.retailer === "aliexpress") {
+  } else if (retailer === "aliexpress") {
     destination = buildAliExpressAffiliateUrl({
       productId: product.asin,
-      url: safeStoredRetailerUrl("aliexpress", product.affiliateUrl) ?? undefined,
+      url: safeStoredRetailerUrl(retailer, product.affiliateUrl) ?? undefined,
       query: product.title,
     });
   } else {
-    destination = generateAffiliateLink(product.retailer, {
+    destination = generateAffiliateLink(retailer, {
       asin: product.asin,
       externalId: product.asin,
-      url: safeStoredRetailerUrl(product.retailer, product.affiliateUrl),
+      url: safeStoredRetailerUrl(retailer, product.affiliateUrl),
     });
   }
 
-  const safeDestination = safeFinalDestination(product.retailer, destination);
+  const safeDestination = safeFinalDestination(retailer, destination);
   if (!safeDestination) {
     return NextResponse.redirect(storefrontFallback(product.slug), 302);
   }
