@@ -65,7 +65,6 @@ export default async function AdminPage() {
   const views = viewSum._sum.viewCount || 0;
   const ctr = views > 0 ? Math.round((clickCount / views) * 1000) / 10 : 0;
   const connectors = listConnectors().map((connector) => ({
-    id: connector.id,
     displayName: connector.displayName,
     ...affiliateRuntimeReadiness(connector.id),
   }));
