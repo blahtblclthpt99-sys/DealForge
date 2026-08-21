@@ -57,6 +57,7 @@ export function getCommerceDisplayState(
     | "price"
     | "originalPrice"
     | "discountPercent"
+    | "recordedPriceAvailable"
     | "reviewCount"
     | "specifications"
   >,
@@ -66,18 +67,15 @@ export function getCommerceDisplayState(
   const trustedSource = TRUSTED_AMAZON_PRICE_SOURCES.has(normalizedSource(product));
   const observedAt = priceTimestamp(product, trustedSource);
   const age = observedAt == null ? Number.POSITIVE_INFINITY : Math.max(0, now - observedAt);
-  const validPrice = Number.isFinite(product.price) && product.price > 0;
+  const validPublicPrice = Number.isFinite(product.price) && product.price > 0;
   const priceIsFresh = !isAmazon || (trustedSource && age <= AMAZON_PRICE_MAX_AGE_MS);
-  const priceStatus: PriceStatus = !validPrice
-    ? "unavailable"
-    : priceIsFresh
-      ? "current"
-      : "recorded";
+  const priceStatus: PriceStatus = validPublicPrice && priceIsFresh
+    ? "current"
+    : isAmazon && product.recordedPriceAvailable
+      ? "recorded"
+      : "unavailable";
 
-  // Legacy Amazon amounts remain available internally for migration/audit, but
-  // are not rendered as shopper-facing prices. Amazon price content becomes
-  // displayable only after a trusted, fresh retailer/API refresh.
-  const canDisplayPrice = validPrice && (!isAmazon || priceStatus === "current");
+  const canDisplayPrice = validPublicPrice && (!isAmazon || priceStatus === "current");
   const canDisplayDiscount =
     canDisplayPrice &&
     priceStatus === "current" &&
@@ -110,7 +108,6 @@ export function getCommerceDisplayState(
     canDisplayDiscount,
     checkedDate,
     priceCaption,
-    // Several legacy scrape paths used exactly 100 as a fallback review count.
     reviewCountIsCredible: product.reviewCount > 0 && !(isAmazon && product.reviewCount === 100),
   };
 }
