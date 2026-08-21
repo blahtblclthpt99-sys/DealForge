@@ -8,6 +8,10 @@ import { computeRankScore } from "./ranking";
 import { parseJson } from "./utils";
 import { normalizeProductImage } from "./product-image";
 import { parseQuantityFromTitle } from "./quantity";
+import {
+  publicProductVisibilityClauses,
+  publicProductWhere,
+} from "./product-visibility";
 import type { Prisma } from "@prisma/client";
 
 export type ProductDTO = {
@@ -212,12 +216,7 @@ function buildWhere(params: ProductQuery): Prisma.ProductWhereInput {
       : {};
 
   const where: Prisma.ProductWhereInput = {
-    AND: [
-      { NOT: { specifications: { contains: '"needsEnrichment":true' } } },
-      { NOT: { specifications: { contains: '"needsEnrichment": true' } } },
-      { NOT: { title: { startsWith: "Coach product " } } },
-      { NOT: { title: { startsWith: "Amazon listing " } } },
-    ],
+    AND: [...publicProductVisibilityClauses()],
   };
 
   if (params.q) {
@@ -272,7 +271,7 @@ export async function queryProducts(params: ProductQuery) {
   const normalized = normalizeProductQuery(params);
   const page = normalized.page ?? 1;
   const limit = normalized.limit ?? 24;
-  const cacheKey = `products:v8:${JSON.stringify(normalized)}`;
+  const cacheKey = `products:v9:${JSON.stringify(normalized)}`;
   const cached = await cacheGet<{
     items: ProductDTO[];
     total: number;
@@ -285,7 +284,7 @@ export async function queryProducts(params: ProductQuery) {
   const orderBy = buildOrderBy(normalized);
   const skip = (page - 1) * limit;
 
-  const countKey = `products:count:v6:${JSON.stringify({
+  const countKey = `products:count:v7:${JSON.stringify({
     q: normalized.q,
     category: normalized.category,
     subcategory: normalized.subcategory,
@@ -327,8 +326,8 @@ export async function queryProducts(params: ProductQuery) {
 }
 
 export async function getProductBySlug(slug: string) {
-  const product = await prisma.product.findUnique({
-    where: { slug },
+  const product = await prisma.product.findFirst({
+    where: publicProductWhere({ slug }),
     include: { category: true },
   });
   if (!product) return null;
@@ -336,21 +335,27 @@ export async function getProductBySlug(slug: string) {
 }
 
 export async function getCategories() {
-  const key = "categories:all:v2";
+  const key = "categories:all:v3";
   const cached = await cacheGet<
     { id: string; name: string; slug: string; icon: string; count: number }[]
   >(key);
   if (cached) return cached;
-  const cats = await prisma.category.findMany({
-    include: { _count: { select: { products: true } } },
-    orderBy: { name: "asc" },
-  });
+
+  const [cats, grouped] = await Promise.all([
+    prisma.category.findMany({ orderBy: { name: "asc" } }),
+    prisma.product.groupBy({
+      by: ["categoryId"],
+      where: publicProductWhere(),
+      _count: { categoryId: true },
+    }),
+  ]);
+  const counts = new Map(grouped.map((row) => [row.categoryId, row._count.categoryId]));
   const result = cats.map((c) => ({
     id: c.id,
     name: c.name,
     slug: c.slug,
     icon: c.icon,
-    count: c._count.products,
+    count: counts.get(c.id) ?? 0,
   }));
   await cacheSet(key, result, 300);
   return result;
@@ -360,6 +365,7 @@ export async function getTopBrands(limit = 100) {
   const safeLimit = Math.min(200, Math.max(1, Math.trunc(limit)));
   const brands = await prisma.product.groupBy({
     by: ["brand"],
+    where: publicProductWhere(),
     _count: { brand: true },
     orderBy: { _count: { brand: "desc" } },
     take: safeLimit,
@@ -370,14 +376,10 @@ export async function getTopBrands(limit = 100) {
 export async function getSimilarProducts(product: ProductDTO, limit = 4) {
   const safeLimit = Math.min(12, Math.max(1, Math.trunc(limit)));
   const rows = await prisma.product.findMany({
-    where: {
+    where: publicProductWhere({
       id: { not: product.id },
       categoryId: product.categoryId,
-      NOT: [
-        { specifications: { contains: '"needsEnrichment":true' } },
-        { specifications: { contains: '"needsEnrichment": true' } },
-      ],
-    },
+    }),
     include: { category: true },
     orderBy: [{ clickCount: "desc" }, { viewCount: "desc" }, { createdAt: "desc" }],
     take: safeLimit,
@@ -388,14 +390,10 @@ export async function getSimilarProducts(product: ProductDTO, limit = 4) {
 export async function getRelatedProducts(product: ProductDTO, limit = 4) {
   const safeLimit = Math.min(12, Math.max(1, Math.trunc(limit)));
   const rows = await prisma.product.findMany({
-    where: {
+    where: publicProductWhere({
       id: { not: product.id },
       brand: product.brand,
-      NOT: [
-        { specifications: { contains: '"needsEnrichment":true' } },
-        { specifications: { contains: '"needsEnrichment": true' } },
-      ],
-    },
+    }),
     include: { category: true },
     orderBy: [{ clickCount: "desc" }, { viewCount: "desc" }, { createdAt: "desc" }],
     take: safeLimit,
