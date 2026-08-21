@@ -18,12 +18,12 @@ const MAX_RETRIES = 4;
 
 /**
  * Optimistically mutate one JSON-backed User field without silently clobbering
- * another request that updated the same user row after our read.
+ * another request that updated the same field after our read.
  *
  * The existing schema intentionally keeps these small preference collections as
- * JSON strings. Using updatedAt as a compare-and-swap token gives us safe
- * concurrent behavior on both SQLite CI and production PostgreSQL without a
- * schema migration.
+ * JSON strings. The compare-and-swap predicate matches the exact stored field
+ * value, which is stronger than relying on timestamp precision and also lets
+ * unrelated user fields update concurrently without causing false conflicts.
  *
  * On success, `previous` is the exact state used by the successful compare-and-
  * swap attempt. Callers can safely derive transition-only side effects after
@@ -45,13 +45,13 @@ export async function mutateUserJsonState<T>(
         recentlyViewed: true,
         priceAlerts: true,
         settings: true,
-        updatedAt: true,
       },
     });
 
     if (!user) return { status: "not-found" };
 
-    const current = parseJson<T>(user[field], fallback);
+    const stored = user[field];
+    const current = parseJson<T>(stored, fallback);
     const next = transform(current);
     let serialized: string;
     let currentSerialized: string;
@@ -62,18 +62,24 @@ export async function mutateUserJsonState<T>(
       return { status: "conflict" };
     }
 
-    if (serialized === currentSerialized) {
+    if (serialized === currentSerialized && stored === currentSerialized) {
       return { status: "ok", value: next, previous: current, changed: false };
     }
 
     const data = { [field]: serialized } as Prisma.UserUpdateManyMutationInput;
+    const fieldPredicate = { [field]: stored } as Prisma.UserWhereInput;
     const updated = await prisma.user.updateMany({
-      where: { id: userId, updatedAt: user.updatedAt },
+      where: { id: userId, AND: [fieldPredicate] },
       data,
     });
 
     if (updated.count === 1) {
-      return { status: "ok", value: next, previous: current, changed: true };
+      return {
+        status: "ok",
+        value: next,
+        previous: current,
+        changed: serialized !== stored,
+      };
     }
   }
 
