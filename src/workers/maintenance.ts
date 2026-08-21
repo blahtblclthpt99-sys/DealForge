@@ -1,4 +1,6 @@
 import { prisma } from "../lib/db";
+import { publicProductWhere } from "../lib/product-visibility";
+import { mutateUserJsonState } from "../lib/user-json-state";
 import { parseJson } from "../lib/utils";
 import {
   amazonCreatorsConfigured,
@@ -10,6 +12,9 @@ type PriceAlert = {
   id: string;
   productId: string;
   targetPrice: number;
+  createdAt?: string;
+  triggered?: boolean;
+  lastTriggeredAt?: string | null;
 };
 
 type PriceRefreshStatus =
@@ -36,8 +41,60 @@ export type MaintenanceResult = {
 };
 
 const MAX_ALERTS_PER_RUN = 2_000;
+const MAX_ALERTS_PER_USER = 50;
 const AMAZON_PRICE_TTL_MS = 24 * 60 * 60 * 1000;
 const MAX_PRICE_REFRESH_PER_RUN = 50;
+
+function cleanPriceAlerts(value: unknown): PriceAlert[] {
+  if (!Array.isArray(value)) return [];
+  const cleaned: PriceAlert[] = [];
+  const seenProducts = new Set<string>();
+
+  for (const item of value) {
+    if (!item || typeof item !== "object") continue;
+    const candidate = item as Partial<PriceAlert>;
+    const id = typeof candidate.id === "string" ? candidate.id.trim().slice(0, 100) : "";
+    const productId =
+      typeof candidate.productId === "string" ? candidate.productId.trim().slice(0, 100) : "";
+    const targetPrice = Number(candidate.targetPrice);
+    if (
+      !id ||
+      !productId ||
+      seenProducts.has(productId) ||
+      !Number.isFinite(targetPrice) ||
+      targetPrice <= 0 ||
+      targetPrice > 1_000_000
+    ) {
+      continue;
+    }
+
+    seenProducts.add(productId);
+    cleaned.push({
+      id,
+      productId,
+      targetPrice: Math.round(targetPrice * 100) / 100,
+      createdAt:
+        typeof candidate.createdAt === "string"
+          ? candidate.createdAt.slice(0, 64)
+          : new Date(0).toISOString(),
+      triggered: candidate.triggered === true,
+      lastTriggeredAt:
+        typeof candidate.lastTriggeredAt === "string"
+          ? candidate.lastTriggeredAt.slice(0, 64)
+          : null,
+    });
+
+    if (cleaned.length >= MAX_ALERTS_PER_USER) break;
+  }
+
+  return cleaned;
+}
+
+function trustedPriceTimestamp(specifications: string, lastUpdated: Date) {
+  const specs = parseJson<Record<string, string>>(specifications, {});
+  const checkedAt = Date.parse(specs.priceCheckedAt || "");
+  return Number.isFinite(checkedAt) ? checkedAt : lastUpdated.getTime();
+}
 
 function isFreshTrustedAmazonPrice(product: {
   retailer: string;
@@ -48,7 +105,8 @@ function isFreshTrustedAmazonPrice(product: {
   const specs = parseJson<Record<string, string>>(product.specifications, {});
   return (
     specs.priceSource === "amazon-creators-api" &&
-    Date.now() - product.lastUpdated.getTime() <= AMAZON_PRICE_TTL_MS
+    Date.now() - trustedPriceTimestamp(product.specifications, product.lastUpdated) <=
+      AMAZON_PRICE_TTL_MS
   );
 }
 
@@ -134,28 +192,22 @@ async function cleanCache() {
 
 async function processPriceAlerts() {
   const users = await prisma.user.findMany({ select: { id: true, priceAlerts: true } });
-  const alertRows: Array<{ userId: string; alert: PriceAlert }> = [];
+  const productIds = new Set<string>();
+  let observedAlerts = 0;
 
   for (const user of users) {
-    const alerts = parseJson<PriceAlert[]>(user.priceAlerts, []);
-    for (const alert of alerts) {
-      if (
-        alertRows.length >= MAX_ALERTS_PER_RUN ||
-        !alert?.productId ||
-        !Number.isFinite(alert.targetPrice) ||
-        alert.targetPrice <= 0
-      ) {
-        continue;
-      }
-      alertRows.push({ userId: user.id, alert });
+    for (const alert of cleanPriceAlerts(parseJson<unknown>(user.priceAlerts, []))) {
+      if (observedAlerts >= MAX_ALERTS_PER_RUN) break;
+      productIds.add(alert.productId);
+      observedAlerts += 1;
     }
+    if (observedAlerts >= MAX_ALERTS_PER_RUN) break;
   }
 
-  if (!alertRows.length) return 0;
+  if (!productIds.size) return 0;
 
-  const productIds = Array.from(new Set(alertRows.map((row) => row.alert.productId)));
   const products = await prisma.product.findMany({
-    where: { id: { in: productIds } },
+    where: publicProductWhere({ id: { in: [...productIds] } }),
     select: {
       id: true,
       price: true,
@@ -165,26 +217,65 @@ async function processPriceAlerts() {
     },
   });
   const byId = new Map(products.map((product) => [product.id, product]));
-
+  const transitionTime = new Date().toISOString();
   let hits = 0;
-  for (const { userId, alert } of alertRows) {
-    const product = byId.get(alert.productId);
-    if (
-      product &&
-      isFreshTrustedAmazonPrice(product) &&
-      product.price <= alert.targetPrice
-    ) {
+
+  for (const user of users) {
+    const result = await mutateUserJsonState<unknown>(
+      user.id,
+      "priceAlerts",
+      [],
+      (current) =>
+        cleanPriceAlerts(current).map((alert) => {
+          const product = byId.get(alert.productId);
+          if (!product || !isFreshTrustedAmazonPrice(product) || !(product.price > 0)) {
+            // Unknown/stale prices cannot satisfy an alert, but they also must
+            // not reset an already-triggered edge. Reset only after a fresh,
+            // trusted price is observed above the target.
+            return alert;
+          }
+
+          const satisfied = product.price <= alert.targetPrice;
+          if (satisfied && !alert.triggered) {
+            return { ...alert, triggered: true, lastTriggeredAt: transitionTime };
+          }
+          if (!satisfied && alert.triggered) {
+            return { ...alert, triggered: false };
+          }
+          return alert;
+        }),
+    );
+
+    if (result.status !== "ok" || !result.changed) continue;
+
+    const previousById = new Map(
+      cleanPriceAlerts(result.previous).map((alert) => [alert.id, alert]),
+    );
+    for (const alert of cleanPriceAlerts(result.value)) {
+      const previous = previousById.get(alert.id);
+      if (!alert.triggered || previous?.triggered) continue;
+
+      const product = byId.get(alert.productId);
+      if (!product || !isFreshTrustedAmazonPrice(product) || !(product.price > 0)) continue;
+
       hits += 1;
       await prisma.systemLog.create({
         data: {
           level: "info",
           source: "price-alert",
           message: `Price threshold reached for product ${product.id}`,
-          meta: JSON.stringify({ userId, productId: product.id, price: product.price }),
+          meta: JSON.stringify({
+            userId: user.id,
+            productId: product.id,
+            price: product.price,
+            targetPrice: alert.targetPrice,
+            triggeredAt: alert.lastTriggeredAt,
+          }),
         },
       });
     }
   }
+
   return hits;
 }
 
