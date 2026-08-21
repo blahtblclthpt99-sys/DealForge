@@ -24,7 +24,6 @@ jobs:
       PRODUCT_ID: cmrp6aaeu06kgtk3shzktm0h9
       PRODUCT_SLUG: teling-100-pcs-rainbow-colored-pencils-multicolored-7-in-1-pencils-for-kids-blac-b0bpxv8vky
       PRODUCT_ASIN: B0BPXV8VKY
-      EXPECTED_RECORDED_PRICE: $24.99
       IMAGE_URL: https://m.media-amazon.com/images/I/71ye0K8jt7L._AC_SL1500_.jpg
     steps:
       - name: Probe live routes
@@ -60,7 +59,7 @@ jobs:
           done
           exit "$failed"
 
-      - name: Verify product price and affiliate redirect
+      - name: Verify Amazon price safety and affiliate redirect
         shell: bash
         run: |
           set -euo pipefail
@@ -68,10 +67,10 @@ jobs:
           product_code=$(curl --silent --show-error --max-time 30 --output /tmp/product.html --write-out '%{http_code}' "$BASE_URL/product/$PRODUCT_SLUG")
           echo "product detail -> $product_code"
           [[ "$product_code" == "200" ]]
-          grep -Fqi 'Recorded price' /tmp/product.html
-          grep -Fq "$EXPECTED_RECORDED_PRICE" /tmp/product.html
-          grep -Fqi 'check Amazon for today' /tmp/product.html
-          echo "recorded price rendering -> present ($EXPECTED_RECORDED_PRICE)"
+          grep -Fq 'data-price-display="retailer-check"' /tmp/product.html
+          grep -Fqi 'Price refresh needed' /tmp/product.html
+          grep -Fqi 'Check current price on Amazon' /tmp/product.html
+          echo 'stale Amazon price publishing -> blocked; retailer check shown'
 
           go_code=$(curl --silent --show-error --max-time 30 --max-redirs 0 --dump-header /tmp/go.headers --output /tmp/go.body --write-out '%{http_code}' "$BASE_URL/go/$PRODUCT_ID" || true)
           location=$(awk 'BEGIN{IGNORECASE=1} /^location:/{sub(/\r$/, ""); sub(/^[^:]+:[[:space:]]*/, ""); print}' /tmp/go.headers | tail -n 1)
@@ -170,8 +169,8 @@ jobs:
           product_code=$(curl --silent --show-error --max-time 30 --output /tmp/custom-product.html --write-out '%{http_code}' "$PRODUCTION_URL/product/$PRODUCT_SLUG")
           echo "production product detail -> $product_code"
           [[ "$product_code" == "200" ]]
-          grep -Fqi 'Recorded price' /tmp/custom-product.html
-          grep -Fq "$EXPECTED_RECORDED_PRICE" /tmp/custom-product.html
+          grep -Fq 'data-price-display="retailer-check"' /tmp/custom-product.html
+          grep -Fqi 'Check current price on Amazon' /tmp/custom-product.html
 
           go_code=$(curl --silent --show-error --max-time 30 --max-redirs 0 --dump-header /tmp/custom-go.headers --output /tmp/custom-go.body --write-out '%{http_code}' "$PRODUCTION_URL/go/$PRODUCT_ID" || true)
           location=$(awk 'BEGIN{IGNORECASE=1} /^location:/{sub(/\r$/, ""); sub(/^[^:]+:[[:space:]]*/, ""); print}' /tmp/custom-go.headers | tail -n 1)
