@@ -26,8 +26,11 @@ const INTERNAL_SPEC_KEYS = new Set([
   "source",
   "pricesource",
   "pricecheckedat",
+  "observedat",
   "needsenrichment",
   "importsource",
+  "storefrontblocked",
+  "storefrontblockedreason",
 ]);
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
@@ -126,6 +129,11 @@ export default async function ProductPage({ params }: Props) {
             <span className="rounded-full bg-forest/10 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.12em] text-forest">
               {retailer}
             </span>
+            {commerce.priceStatus === "recorded" ? (
+              <span className="rounded-full border border-card-border bg-card px-3 py-1 text-[11px] font-bold uppercase tracking-[0.12em] text-forest-muted">
+                Recorded price
+              </span>
+            ) : null}
             {product.categoryName ? (
               <Link
                 href={`/categories/${product.categorySlug}`}
@@ -170,7 +178,9 @@ export default async function ProductPage({ params }: Props) {
             {commerce.canDisplayPrice ? (
               <>
                 <div className="flex flex-wrap items-end gap-3">
-                  <p className="text-4xl font-extrabold tracking-tight text-forest">{formatPrice(product.price)}</p>
+                  <p className={`text-4xl font-extrabold tracking-tight ${commerce.priceStatus === "current" ? "text-forest" : "text-forest-ink"}`}>
+                    {formatPrice(product.price)}
+                  </p>
                   {commerce.canDisplayDiscount ? (
                     <p className="pb-1 text-lg text-forest-muted line-through">{formatPrice(product.originalPrice)}</p>
                   ) : null}
@@ -180,9 +190,17 @@ export default async function ProductPage({ params }: Props) {
                     </span>
                   ) : null}
                 </div>
-                <p className="mt-2 text-xs text-forest-muted">
-                  Price checked {commerce.checkedDate}. Price and availability may change before checkout.
+                <p className="mt-2 text-xs leading-relaxed text-forest-muted">
+                  {commerce.priceCaption}
                 </p>
+                {commerce.priceStatus === "recorded" ? (
+                  <div className="mt-4 flex items-start gap-3 rounded-xl bg-forest/5 p-3">
+                    <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-forest" />
+                    <p className="text-xs leading-relaxed text-forest-muted">
+                      This amount is a recorded catalog price, not a promise of today’s Amazon offer. Use the retailer button below for the current checkout price.
+                    </p>
+                  </div>
+                ) : null}
               </>
             ) : (
               <div className="flex items-start gap-3">
@@ -192,7 +210,7 @@ export default async function ProductPage({ params }: Props) {
                 <div>
                   <p className="font-bold text-forest-ink">Verify the current price on {retailer}</p>
                   <p className="mt-1 text-sm leading-relaxed text-forest-muted">
-                    DealForge will not present an old Amazon price as current. The retailer listing is the source of truth at checkout.
+                    DealForge does not have a usable recorded price for this listing. The retailer listing is the source of truth at checkout.
                   </p>
                 </div>
               </div>
@@ -211,7 +229,7 @@ export default async function ProductPage({ params }: Props) {
             <BuyButton
               productId={product.id}
               retailer={product.retailer}
-              priceNeedsCheck={!commerce.canDisplayPrice}
+              priceNeedsCheck={commerce.priceNeedsCheck}
             />
             <WishlistButton productId={product.id} initial={wishlist.includes(product.id)} />
           </div>
