@@ -129,9 +129,9 @@ export default async function ProductPage({ params }: Props) {
             <span className="rounded-full bg-forest/10 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.12em] text-forest">
               {retailer}
             </span>
-            {commerce.priceStatus === "recorded" ? (
+            {commerce.isAmazon && commerce.priceStatus === "recorded" ? (
               <span className="rounded-full border border-card-border bg-card px-3 py-1 text-[11px] font-bold uppercase tracking-[0.12em] text-forest-muted">
-                Recorded price
+                Price refresh needed
               </span>
             ) : null}
             {product.categoryName ? (
@@ -174,11 +174,14 @@ export default async function ProductPage({ params }: Props) {
             ) : null}
           </div>
 
-          <div className="mt-7 rounded-2xl border border-card-border bg-card p-5 shadow-sm">
+          <div
+            className="mt-7 rounded-2xl border border-card-border bg-card p-5 shadow-sm"
+            data-price-display={commerce.canDisplayPrice ? "current" : "retailer-check"}
+          >
             {commerce.canDisplayPrice ? (
               <>
                 <div className="flex flex-wrap items-end gap-3">
-                  <p className={`text-4xl font-extrabold tracking-tight ${commerce.priceStatus === "current" ? "text-forest" : "text-forest-ink"}`}>
+                  <p className="text-4xl font-extrabold tracking-tight text-forest">
                     {formatPrice(product.price)}
                   </p>
                   {commerce.canDisplayDiscount ? (
@@ -193,13 +196,10 @@ export default async function ProductPage({ params }: Props) {
                 <p className="mt-2 text-xs leading-relaxed text-forest-muted">
                   {commerce.priceCaption}
                 </p>
-                {commerce.priceStatus === "recorded" ? (
-                  <div className="mt-4 flex items-start gap-3 rounded-xl bg-forest/5 p-3">
-                    <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-forest" />
-                    <p className="text-xs leading-relaxed text-forest-muted">
-                      This amount is a recorded catalog price, not a promise of today’s Amazon offer. Use the retailer button below for the current checkout price.
-                    </p>
-                  </div>
+                {commerce.isAmazon ? (
+                  <p className="mt-3 text-[11px] leading-relaxed text-forest-muted/80">
+                    Amazon prices and availability can change; the amount shown by Amazon when you purchase is the controlling offer.
+                  </p>
                 ) : null}
               </>
             ) : (
@@ -208,9 +208,11 @@ export default async function ProductPage({ params }: Props) {
                   <ShieldCheck className="h-5 w-5" />
                 </div>
                 <div>
-                  <p className="font-bold text-forest-ink">Verify the current price on {retailer}</p>
+                  <p className="font-bold text-forest-ink">Check current price on {retailer}</p>
                   <p className="mt-1 text-sm leading-relaxed text-forest-muted">
-                    DealForge does not have a usable recorded price for this listing. The retailer listing is the source of truth at checkout.
+                    {commerce.isAmazon
+                      ? "The stored Amazon amount is not fresh enough to publish as a current price. Open Amazon to see today’s price and availability."
+                      : "The retailer listing is the source of truth for the current price and availability."}
                   </p>
                 </div>
               </div>
