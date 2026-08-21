@@ -12,6 +12,12 @@ type PriceAlert = {
   targetPrice: number;
 };
 
+type PriceRefreshStatus =
+  | "disabled"
+  | "skipped-unconfigured"
+  | "no-stale-products"
+  | "attempted";
+
 export type MaintenanceOptions = {
   priceRefreshLimit?: number;
   refreshTrending?: boolean;
@@ -22,6 +28,7 @@ export type MaintenanceOptions = {
 
 export type MaintenanceResult = {
   priceUpdates: number;
+  priceRefreshStatus: PriceRefreshStatus;
   priceAlertHits: number;
   trendingProducts: number;
   expiredFlashDeals: number;
@@ -37,7 +44,7 @@ function isFreshTrustedAmazonPrice(product: {
   lastUpdated: Date;
   specifications: string;
 }) {
-  if (product.retailer !== "amazon") return true;
+  if (product.retailer.trim().toLowerCase() !== "amazon") return true;
   const specs = parseJson<Record<string, string>>(product.specifications, {});
   return (
     specs.priceSource === "amazon-creators-api" &&
@@ -188,16 +195,13 @@ async function processPriceAlerts() {
  * Failed or unconfigured refreshes never touch lastUpdated, so stale prices do
  * not become publishable by accident.
  */
-async function refreshPrices(limit = 20) {
+async function refreshPrices(
+  limit = 20,
+): Promise<{ updated: number; status: PriceRefreshStatus }> {
   if (!amazonCreatorsConfigured()) {
-    await prisma.systemLog.create({
-      data: {
-        level: "warn",
-        source: "worker",
-        message: "Amazon price refresh skipped: Creators API credentials are not configured",
-      },
-    });
-    return 0;
+    // Readiness is surfaced through the admin/runtime status. Do not write the
+    // same warning to SystemLog every five minutes while credentials are absent.
+    return { updated: 0, status: "skipped-unconfigured" };
   }
 
   const safeLimit = Math.min(
@@ -226,6 +230,8 @@ async function refreshPrices(limit = 20) {
       specifications: true,
     },
   });
+
+  if (!rows.length) return { updated: 0, status: "no-stale-products" };
 
   let updated = 0;
   for (let offset = 0; offset < rows.length; offset += 10) {
@@ -277,17 +283,15 @@ async function refreshPrices(limit = 20) {
     if (writes.length) await prisma.$transaction(writes);
   }
 
-  if (rows.length) {
-    await prisma.cacheEntry.deleteMany({ where: { key: { startsWith: "products:" } } });
-    await prisma.systemLog.create({
-      data: {
-        level: "info",
-        source: "worker",
-        message: `Creators API price refresh: ${updated}/${rows.length} updated`,
-      },
-    });
-  }
-  return updated;
+  await prisma.cacheEntry.deleteMany({ where: { key: { startsWith: "products:" } } });
+  await prisma.systemLog.create({
+    data: {
+      level: "info",
+      source: "worker",
+      message: `Creators API price refresh: ${updated}/${rows.length} updated`,
+    },
+  });
+  return { updated, status: "attempted" };
 }
 
 export async function runMaintenanceOnce(
@@ -301,15 +305,18 @@ export async function runMaintenanceOnce(
     processPriceAlerts: shouldProcessPriceAlerts = true,
   } = options;
 
-  const priceUpdates =
-    priceRefreshLimit > 0 ? await refreshPrices(priceRefreshLimit) : 0;
+  const priceRefresh =
+    priceRefreshLimit > 0
+      ? await refreshPrices(priceRefreshLimit)
+      : { updated: 0, status: "disabled" as const };
   const trendingProducts = shouldRefreshTrending ? await refreshTrending() : 0;
   const expiredFlashDeals = shouldExpireFlashDeals ? await expireFlashDeals() : 0;
   const purgedCacheEntries = shouldCleanCache ? await cleanCache() : 0;
   const priceAlertHits = shouldProcessPriceAlerts ? await processPriceAlerts() : 0;
 
   return {
-    priceUpdates,
+    priceUpdates: priceRefresh.updated,
+    priceRefreshStatus: priceRefresh.status,
     priceAlertHits,
     trendingProducts,
     expiredFlashDeals,
