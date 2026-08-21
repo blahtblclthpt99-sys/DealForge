@@ -26,6 +26,25 @@ jobs:
       PRODUCT_ASIN: B0BPXV8VKY
       IMAGE_URL: https://m.media-amazon.com/images/I/71ye0K8jt7L._AC_SL1500_.jpg
     steps:
+      - name: Wait for current Worker deployment
+        shell: bash
+        run: |
+          set -euo pipefail
+          deployed=0
+          for attempt in $(seq 1 30); do
+            code=$(curl --silent --show-error --max-time 30 --output /tmp/deployment-marker.html --write-out '%{http_code}' "$BASE_URL/product/$PRODUCT_SLUG" || echo 000)
+            echo "deployment marker attempt $attempt -> $code"
+            if [[ "$code" == "200" ]] && grep -Fq 'data-price-display="retailer-check"' /tmp/deployment-marker.html; then
+              deployed=1
+              break
+            fi
+            sleep 10
+          done
+          if [[ "$deployed" != "1" ]]; then
+            echo '::error::Cloudflare did not expose the current DealForge deployment marker within the wait window.'
+            exit 1
+          fi
+
       - name: Probe live routes
         shell: bash
         run: |
