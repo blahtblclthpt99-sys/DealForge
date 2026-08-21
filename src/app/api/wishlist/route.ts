@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { readSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
+import { publicProductWhere } from "@/lib/product-visibility";
 import { parseJson } from "@/lib/utils";
 
 const wishlistSchema = z.object({
@@ -28,7 +29,10 @@ export async function POST(req: Request) {
 
   const [user, product] = await Promise.all([
     prisma.user.findUnique({ where: { id: session.id } }),
-    prisma.product.findUnique({ where: { id: parsed.data.productId }, select: { id: true } }),
+    prisma.product.findFirst({
+      where: publicProductWhere({ id: parsed.data.productId }),
+      select: { id: true },
+    }),
   ]);
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   if (!product) return NextResponse.json({ error: "Product not found" }, { status: 404 });
