@@ -3,6 +3,7 @@ import { z } from "zod";
 import { readSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { publicProductWhere } from "@/lib/product-visibility";
+import { mutateUserJsonState } from "@/lib/user-json-state";
 import { parseJson } from "@/lib/utils";
 
 type PriceAlert = {
@@ -12,19 +13,60 @@ type PriceAlert = {
   createdAt: string;
 };
 
+const moneySchema = z
+  .number()
+  .finite()
+  .positive()
+  .max(1_000_000)
+  .transform((value) => Math.round(value * 100) / 100);
 const createAlertSchema = z.object({
-  productId: z.string().min(1).max(100),
-  targetPrice: z.number().finite().positive().max(1_000_000),
+  productId: z.string().trim().min(1).max(100),
+  targetPrice: moneySchema,
 });
-const deleteAlertSchema = z.object({ id: z.string().min(1).max(100) });
+const deleteAlertSchema = z.object({ id: z.string().trim().min(1).max(100) });
+const storedAlertSchema = z.object({
+  id: z.string().trim().min(1).max(100),
+  productId: z.string().trim().min(1).max(100),
+  targetPrice: z.number().finite().positive().max(1_000_000),
+  createdAt: z.string().max(64),
+});
 const MAX_ALERTS = 50;
+
+function cleanAlerts(value: unknown): PriceAlert[] {
+  if (!Array.isArray(value)) return [];
+  const cleaned: PriceAlert[] = [];
+  const seenProducts = new Set<string>();
+  for (const item of value) {
+    const parsed = storedAlertSchema.safeParse(item);
+    if (!parsed.success || seenProducts.has(parsed.data.productId)) continue;
+    seenProducts.add(parsed.data.productId);
+    cleaned.push({
+      ...parsed.data,
+      targetPrice: Math.round(parsed.data.targetPrice * 100) / 100,
+    });
+    if (cleaned.length >= MAX_ALERTS) break;
+  }
+  return cleaned;
+}
 
 export async function GET() {
   const session = await readSession();
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  const user = await prisma.user.findUnique({ where: { id: session.id } });
+  const user = await prisma.user.findUnique({
+    where: { id: session.id },
+    select: { priceAlerts: true },
+  });
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  return NextResponse.json({ alerts: parseJson<PriceAlert[]>(user.priceAlerts || "[]", []) });
+
+  const alerts = cleanAlerts(parseJson<unknown>(user.priceAlerts || "[]", []));
+  if (!alerts.length) return NextResponse.json({ alerts: [] });
+
+  const visibleProducts = await prisma.product.findMany({
+    where: publicProductWhere({ id: { in: alerts.map((alert) => alert.productId) } }),
+    select: { id: true },
+  });
+  const visible = new Set(visibleProducts.map((product) => product.id));
+  return NextResponse.json({ alerts: alerts.filter((alert) => visible.has(alert.productId)) });
 }
 
 export async function POST(req: Request) {
@@ -43,33 +85,38 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Invalid payload" }, { status: 400 });
   }
 
-  const [user, product] = await Promise.all([
-    prisma.user.findUnique({ where: { id: session.id } }),
-    prisma.product.findFirst({
-      where: publicProductWhere({ id: parsed.data.productId }),
-      select: { id: true },
-    }),
-  ]);
-  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const product = await prisma.product.findFirst({
+    where: publicProductWhere({ id: parsed.data.productId }),
+    select: { id: true },
+  });
   if (!product) return NextResponse.json({ error: "Product not found" }, { status: 404 });
 
-  const existing = parseJson<PriceAlert[]>(user.priceAlerts, []);
-  const withoutSameProduct = existing.filter((alert) => alert.productId !== parsed.data.productId);
-  const alerts: PriceAlert[] = [
-    {
-      id: `a_${Date.now()}`,
-      productId: parsed.data.productId,
-      targetPrice: parsed.data.targetPrice,
-      createdAt: new Date().toISOString(),
-    },
-    ...withoutSameProduct,
-  ].slice(0, MAX_ALERTS);
+  const entry: PriceAlert = {
+    id: `a_${crypto.randomUUID()}`,
+    productId: parsed.data.productId,
+    targetPrice: parsed.data.targetPrice,
+    createdAt: new Date().toISOString(),
+  };
 
-  await prisma.user.update({
-    where: { id: user.id },
-    data: { priceAlerts: JSON.stringify(alerts) },
-  });
-  return NextResponse.json({ ok: true, alerts });
+  const result = await mutateUserJsonState<unknown>(
+    session.id,
+    "priceAlerts",
+    [],
+    (current) => {
+      const existing = cleanAlerts(current).filter(
+        (alert) => alert.productId !== parsed.data.productId,
+      );
+      return [entry, ...existing].slice(0, MAX_ALERTS);
+    },
+  );
+
+  if (result.status === "not-found") {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  if (result.status === "conflict") {
+    return NextResponse.json({ error: "Price alerts changed concurrently; retry" }, { status: 409 });
+  }
+  return NextResponse.json({ ok: true, alerts: cleanAlerts(result.value) });
 }
 
 export async function DELETE(req: Request) {
@@ -85,12 +132,18 @@ export async function DELETE(req: Request) {
   const parsed = deleteAlertSchema.safeParse(raw);
   if (!parsed.success) return NextResponse.json({ error: "Invalid payload" }, { status: 400 });
 
-  const user = await prisma.user.findUnique({ where: { id: session.id } });
-  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  const alerts = parseJson<PriceAlert[]>(user.priceAlerts, []).filter((a) => a.id !== parsed.data.id);
-  await prisma.user.update({
-    where: { id: user.id },
-    data: { priceAlerts: JSON.stringify(alerts) },
-  });
+  const result = await mutateUserJsonState<unknown>(
+    session.id,
+    "priceAlerts",
+    [],
+    (current) => cleanAlerts(current).filter((alert) => alert.id !== parsed.data.id),
+  );
+
+  if (result.status === "not-found") {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  if (result.status === "conflict") {
+    return NextResponse.json({ error: "Price alerts changed concurrently; retry" }, { status: 409 });
+  }
   return NextResponse.json({ ok: true });
 }
