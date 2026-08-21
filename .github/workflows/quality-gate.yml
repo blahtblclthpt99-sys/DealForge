@@ -84,5 +84,38 @@ jobs:
           check_status 400 '/api/img?u=https%3A%2F%2Fexample.com%2Fimage.jpg'
           check_status 404 /definitely-not-a-real-route
 
+          unsigned_code=$(curl --silent --output /tmp/maintenance-unsigned.json --write-out '%{http_code}' --request POST http://localhost:3000/api/internal/maintenance)
+          echo "unsigned maintenance -> $unsigned_code"
+          if [ "$unsigned_code" != "401" ]; then
+            cat /tmp/maintenance-unsigned.json
+            cat /tmp/dealforge-next.log
+            exit 1
+          fi
+
+          timestamp=$(date +%s%3N)
+          signature=$(python - "$timestamp" <<'PY'
+          import hashlib
+          import hmac
+          import os
+          import sys
+
+          timestamp = sys.argv[1]
+          secret = os.environ["AUTH_SECRET"].encode()
+          message = f"dealforge-maintenance:{timestamp}".encode()
+          print(hmac.new(secret, message, hashlib.sha256).hexdigest())
+          PY
+          )
+          signed_code=$(curl --silent --output /tmp/maintenance-signed.json --write-out '%{http_code}' --request POST \
+            --header "x-dealforge-maintenance-timestamp: $timestamp" \
+            --header "x-dealforge-maintenance-signature: $signature" \
+            http://localhost:3000/api/internal/maintenance)
+          echo "signed maintenance -> $signed_code"
+          if [ "$signed_code" != "200" ]; then
+            cat /tmp/maintenance-signed.json
+            cat /tmp/dealforge-next.log
+            exit 1
+          fi
+          grep -q '"ok":true' /tmp/maintenance-signed.json
+
       - name: Dependency audit
         run: npm audit --audit-level=high
