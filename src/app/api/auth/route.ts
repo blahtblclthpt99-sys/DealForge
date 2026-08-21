@@ -26,6 +26,15 @@ async function readJson(req: Request): Promise<Record<string, unknown> | null> {
   }
 }
 
+function isUniqueConstraintError(error: unknown) {
+  return Boolean(
+    error &&
+      typeof error === "object" &&
+      "code" in error &&
+      (error as { code?: unknown }).code === "P2002",
+  );
+}
+
 export async function POST(req: Request) {
   const body = await readJson(req);
   if (!body) {
@@ -44,14 +53,26 @@ export async function POST(req: Request) {
     if (existing) {
       return NextResponse.json({ error: "Email already registered" }, { status: 409 });
     }
-    const user = await prisma.user.create({
-      data: {
-        name: parsed.data.name,
-        email,
-        passwordHash: await hashPassword(parsed.data.password),
-        role: "user",
-      },
-    });
+
+    let user;
+    try {
+      user = await prisma.user.create({
+        data: {
+          name: parsed.data.name,
+          email,
+          passwordHash: await hashPassword(parsed.data.password),
+          role: "user",
+        },
+      });
+    } catch (error) {
+      // The pre-check improves the common response path, while the database
+      // unique constraint remains authoritative under concurrent registration.
+      if (isUniqueConstraintError(error)) {
+        return NextResponse.json({ error: "Email already registered" }, { status: 409 });
+      }
+      throw error;
+    }
+
     const token = await createSessionToken({
       id: user.id,
       email: user.email,
