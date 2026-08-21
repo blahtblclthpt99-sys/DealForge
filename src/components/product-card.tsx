@@ -53,10 +53,15 @@ export function ProductCard({
             className="h-full w-full object-contain p-4 transition duration-500 group-hover:scale-[1.04]"
           />
         </Link>
-        <div className="absolute left-3 top-3 flex max-w-[70%] flex-wrap gap-1.5">
+        <div className="absolute left-3 top-3 flex max-w-[74%] flex-wrap gap-1.5">
           <span className="rounded-full border border-card-border/70 bg-card/90 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.12em] text-forest-ink shadow-sm backdrop-blur">
             {retailer}
           </span>
+          {commerce.priceStatus === "recorded" ? (
+            <span className="rounded-full border border-card-border bg-card/90 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-forest-muted shadow-sm backdrop-blur">
+              Recorded price
+            </span>
+          ) : null}
           {save ? (
             <span className="rounded-full bg-[#F97316] px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-white shadow-sm">
               {save}
@@ -87,10 +92,17 @@ export function ProductCard({
           </h3>
         </Link>
 
-        <div className="mt-3 min-h-9">
+        <div className="mt-3 min-h-[3.1rem]">
           {commerce.canDisplayPrice ? (
             <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-              <p className="text-xl font-extrabold tracking-tight text-forest">{formatPrice(product.price)}</p>
+              <p
+                className={cn(
+                  "text-xl font-extrabold tracking-tight",
+                  commerce.priceStatus === "current" ? "text-forest" : "text-forest-ink",
+                )}
+              >
+                {formatPrice(product.price)}
+              </p>
               {commerce.canDisplayDiscount ? (
                 <p className="text-xs text-forest-muted line-through">{formatPrice(product.originalPrice)}</p>
               ) : null}
@@ -98,12 +110,8 @@ export function ProductCard({
           ) : (
             <p className="text-sm font-bold text-forest">Check current price on {retailer}</p>
           )}
-          <p className="mt-0.5 text-[10px] text-forest-muted/75">
-            {commerce.canDisplayPrice && commerce.checkedDate
-              ? `Price checked ${commerce.checkedDate}`
-              : commerce.isAmazon
-                ? "Amazon price and availability can change"
-                : "Price and availability can change"}
+          <p className="mt-0.5 line-clamp-2 text-[10px] leading-relaxed text-forest-muted/75">
+            {commerce.priceCaption}
           </p>
         </div>
 
