@@ -21,27 +21,41 @@ jobs:
       BASE_URL: https://dealforge.blahtblclthpt99.workers.dev
       PRODUCTION_URL: https://www.deal-forge.sale
       APEX_URL: https://deal-forge.sale
+      EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
       PRODUCT_ID: cmrp6aaeu06kgtk3shzktm0h9
       PRODUCT_SLUG: teling-100-pcs-rainbow-colored-pencils-multicolored-7-in-1-pencils-for-kids-blac-b0bpxv8vky
       PRODUCT_ASIN: B0BPXV8VKY
       IMAGE_URL: https://m.media-amazon.com/images/I/71ye0K8jt7L._AC_SL1500_.jpg
     steps:
-      - name: Wait for current Worker deployment
+      - name: Wait for exact Worker deployment
         shell: bash
         run: |
           set -euo pipefail
           deployed=0
           for attempt in $(seq 1 30); do
-            code=$(curl --silent --show-error --max-time 30 --output /tmp/deployment-marker.html --write-out '%{http_code}' "$BASE_URL/product/$PRODUCT_SLUG" || echo 000)
-            echo "deployment marker attempt $attempt -> $code"
-            if [[ "$code" == "200" ]] && grep -Fq 'data-price-display="retailer-check"' /tmp/deployment-marker.html; then
+            build_code=$(curl --silent --show-error --max-time 30 --output /tmp/build.json --write-out '%{http_code}' "$BASE_URL/api/build" || echo 000)
+            actual_sha=""
+            if [[ "$build_code" == "200" ]]; then
+              actual_sha=$(python - <<'PY'
+          import json
+          from pathlib import Path
+          try:
+              print(json.loads(Path('/tmp/build.json').read_text()).get('sha', ''))
+          except Exception:
+              print('')
+          PY
+              )
+            fi
+            marker_code=$(curl --silent --show-error --max-time 30 --output /tmp/deployment-marker.html --write-out '%{http_code}' "$BASE_URL/product/$PRODUCT_SLUG" || echo 000)
+            echo "deployment attempt $attempt -> build=$build_code sha=${actual_sha:-missing} marker=$marker_code expected=$EXPECTED_SHA"
+            if [[ "$build_code" == "200" && "$actual_sha" == "$EXPECTED_SHA" && "$marker_code" == "200" ]] && grep -Fq 'data-price-display="retailer-check"' /tmp/deployment-marker.html; then
               deployed=1
               break
             fi
             sleep 10
           done
           if [[ "$deployed" != "1" ]]; then
-            echo '::error::Cloudflare did not expose the current DealForge deployment marker within the wait window.'
+            echo "::error::Cloudflare did not expose exact DealForge commit $EXPECTED_SHA within the wait window."
             exit 1
           fi
 
@@ -142,6 +156,14 @@ jobs:
           check_redirect "/dashboard" "/login?next=/dashboard"
           check_redirect "/admin" "/login?next=/admin"
 
+      - name: Verify internal maintenance is not public
+        shell: bash
+        run: |
+          set -euo pipefail
+          code=$(curl --silent --show-error --max-time 30 --request POST --output /tmp/maintenance-public.json --write-out '%{http_code}' "$BASE_URL/api/internal/maintenance" || true)
+          echo "unsigned maintenance endpoint -> $code"
+          [[ "$code" == "401" ]]
+
       - name: Verify temporary diagnostics are removed
         shell: bash
         run: |
@@ -182,6 +204,17 @@ jobs:
           ! grep -qi 'Database not connected' /tmp/apex-home.html
           grep -qi 'Forge better deals' /tmp/www-home.html
           grep -qi 'Forge better deals' /tmp/apex-home.html
+
+          build_code=$(curl --silent --show-error --max-time 30 --output /tmp/production-build.json --write-out '%{http_code}' "$PRODUCTION_URL/api/build" || echo 000)
+          [[ "$build_code" == "200" ]]
+          production_sha=$(python - <<'PY'
+          import json
+          from pathlib import Path
+          print(json.loads(Path('/tmp/production-build.json').read_text()).get('sha', ''))
+          PY
+          )
+          echo "production build -> $production_sha"
+          [[ "$production_sha" == "$EXPECTED_SHA" ]]
 
           for path in /categories /deals /search /login /register; do
             code=$(curl --silent --show-error --location --max-time 30 --output /tmp/custom-route.html --write-out '%{http_code}' "$PRODUCTION_URL$path" || echo 000)
