@@ -11,6 +11,8 @@ type PriceAlert = {
   productId: string;
   targetPrice: number;
   createdAt: string;
+  triggered?: boolean;
+  lastTriggeredAt?: string | null;
 };
 
 const moneySchema = z
@@ -29,6 +31,8 @@ const storedAlertSchema = z.object({
   productId: z.string().trim().min(1).max(100),
   targetPrice: z.number().finite().positive().max(1_000_000),
   createdAt: z.string().max(64),
+  triggered: z.boolean().optional().default(false),
+  lastTriggeredAt: z.string().max(64).nullable().optional().default(null),
 });
 const MAX_ALERTS = 50;
 
@@ -96,6 +100,8 @@ export async function POST(req: Request) {
     productId: parsed.data.productId,
     targetPrice: parsed.data.targetPrice,
     createdAt: new Date().toISOString(),
+    triggered: false,
+    lastTriggeredAt: null,
   };
 
   const result = await mutateUserJsonState<unknown>(
