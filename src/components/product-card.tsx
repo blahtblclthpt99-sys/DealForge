@@ -11,7 +11,7 @@ import { formatQuantityLabel } from "@/lib/quantity";
 export function ProductCard({ product, wishlisted = false, onToggleWishlist }: { product: ProductDTO; wishlisted?: boolean; onToggleWishlist?: (id: string) => void }) {
   const [liked, setLiked] = useState(wishlisted);
   const image = product.images[0];
-  const amazonUnverified = product.retailer === "amazon";
+  const amazonUnverified = product.retailer === "amazon" && !product.priceVerified;
   const save = amazonUnverified ? null : discountLabel(product.discountPercent);
   const qnty = formatQuantityLabel(product.quantity);
 
@@ -55,7 +55,7 @@ export function ProductCard({ product, wishlisted = false, onToggleWishlist }: {
               </>
             )}
           </div>
-          {!amazonUnverified && product.rating > 0 ? (
+          {product.metadataVerified && product.rating > 0 ? (
             <div className="flex items-center gap-1 text-xs text-forest-muted">
               <Star className="h-3.5 w-3.5 fill-amber-400 text-amber-400" />
               <span>{product.rating.toFixed(1)}</span>
