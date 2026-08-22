@@ -1,0 +1,39 @@
+name: Live Transaction Certification Checkout
+
+on:
+  pull_request:
+    branches:
+      - migration/cloudflare-workers
+
+permissions:
+  contents: read
+
+jobs:
+  create-checkout:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Generate controlled DealForge live Checkout Session
+        shell: bash
+        run: |
+          set -euo pipefail
+          code=$(curl --silent --show-error --max-time 30 \
+            --request POST \
+            --header 'content-type: application/json' \
+            --data '{"checkoutKey":"phase25-live-cert-20260822-1730","email":"certification@example.com","items":[{"productId":"cert_live_20260822","quantity":1}]}' \
+            --output /tmp/checkout.json \
+            --write-out '%{http_code}' \
+            'https://www.deal-forge.sale/api/checkout')
+          body=$(cat /tmp/checkout.json)
+          echo "checkout_http=$code"
+          echo "$body"
+          [[ "$code" == "200" ]]
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          data=json.loads(Path('/tmp/checkout.json').read_text())
+          assert data.get('url','').startswith('https://checkout.stripe.com/')
+          print('checkout_url=' + data['url'])
+          print('order_id=' + str(data.get('orderId','')))
+          print('order_number=' + str(data.get('orderNumber','')))
+          PY
