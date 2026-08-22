@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 12
     env:
-      EXPECTED_SHA: cbc821aee4ff3f9a20b4be836f566f376bd6bfda
+      EXPECTED_SHA: 3e5a8282fd4acadd20595718e9217549bf2048fa
       WORKER_URL: https://dealforge.blahtblclthpt99.workers.dev
       WWW_URL: https://www.deal-forge.sale
       APEX_URL: https://deal-forge.sale
@@ -85,9 +85,6 @@ jobs:
             if grep -qi '^cf-mitigated: challenge' "/tmp/${host}.raw.headers"; then echo 'raw request challenged by Cloudflare'; fi
             if grep -qi '^cf-mitigated: challenge' "/tmp/${host}.browser.headers"; then echo 'browser-like request challenged by Cloudflare'; fi
             if [[ "$browser" != "200" ]] || ! grep -qi 'Forge better deals' "/tmp/${host}.browser.body"; then
-              sed -n '1,25p' "/tmp/${host}.browser.headers" || true
-              head -c 300 "/tmp/${host}.browser.body" || true
-              echo
               failed=1
               continue
             fi
