@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 12
     env:
-      EXPECTED_SHA: 3e5a8282fd4acadd20595718e9217549bf2048fa
+      EXPECTED_SHA: 83f08a565c2df7dedbc7978552542e45fac6f7b2
       WORKER_URL: https://dealforge.blahtblclthpt99.workers.dev
       WWW_URL: https://www.deal-forge.sale
       APEX_URL: https://deal-forge.sale
@@ -84,10 +84,7 @@ jobs:
             echo "$base raw=$raw browser=$browser"
             if grep -qi '^cf-mitigated: challenge' "/tmp/${host}.raw.headers"; then echo 'raw request challenged by Cloudflare'; fi
             if grep -qi '^cf-mitigated: challenge' "/tmp/${host}.browser.headers"; then echo 'browser-like request challenged by Cloudflare'; fi
-            if [[ "$browser" != "200" ]] || ! grep -qi 'Forge better deals' "/tmp/${host}.browser.body"; then
-              failed=1
-              continue
-            fi
+            if [[ "$browser" != "200" ]] || ! grep -qi 'Forge better deals' "/tmp/${host}.browser.body"; then failed=1; continue; fi
             build=$(curl -sS --max-time 30 -A "$BROWSER_UA" "$base/api/build" || true)
             sha=$(printf '%s' "$build" | python -c 'import json,sys\ntry: print(json.load(sys.stdin).get("sha",""))\nexcept Exception: print("")')
             echo "$base sha=$sha"
