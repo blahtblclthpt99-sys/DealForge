@@ -1,5 +1,6 @@
 Cloudflare candidate deployment trigger.
 Branch: migration/cloudflare-workers
 Purpose: force a fresh Git-connected production build after installing the production Stripe API secret and Stripe webhook signing secret.
-Release marker: 2026-08-22 live payment secret binding redeploy.
-Expected production payment hardening base: 91ead7011f0bf04aaa7743b220d0f5dbe8a81e74
+Release marker: 2026-08-22 live payment secret binding redeploy after native Cloudflare runtime fallback.
+Expected production payment hardening base: 936fa4fc59258b85b3927bf045956efb8cd92b89
+Webhook verification target: https://www.deal-forge.sale/api/stripe/webhook
