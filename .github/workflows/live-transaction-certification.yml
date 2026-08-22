@@ -9,34 +9,49 @@ permissions:
   contents: read
 
 jobs:
-  wait-production:
+  certify-checkout:
     runs-on: ubuntu-latest
     timeout-minutes: 8
     env:
       EXPECTED_SHA: 61551276a2df6dfde214cae7120c6b2253168126
       PRODUCTION_URL: https://www.deal-forge.sale
     steps:
-      - name: Wait for exact production SHA
+      - name: Verify exact production SHA
         shell: bash
         run: |
           set -euo pipefail
-          ready=0
-          for attempt in $(seq 1 42); do
-            code=$(curl --silent --show-error --max-time 20 --output /tmp/build.json --write-out '%{http_code}' "$PRODUCTION_URL/api/build" || echo 000)
-            sha=$(python - <<'PY'
+          code=$(curl --silent --show-error --max-time 20 --output /tmp/build.json --write-out '%{http_code}' "$PRODUCTION_URL/api/build")
+          sha=$(python - <<'PY'
           import json
           from pathlib import Path
-          try:
-              print(json.loads(Path('/tmp/build.json').read_text()).get('sha',''))
-          except Exception:
-              print('')
+          print(json.loads(Path('/tmp/build.json').read_text()).get('sha',''))
           PY
-            )
-            echo "attempt=$attempt http=$code sha=$sha expected=$EXPECTED_SHA"
-            if [[ "$code" == "200" && "$sha" == "$EXPECTED_SHA" ]]; then
-              ready=1
-              break
-            fi
-            sleep 10
-          done
-          [[ "$ready" == "1" ]]
+          )
+          echo "production=$code:$sha expected=$EXPECTED_SHA"
+          [[ "$code" == "200" ]]
+          [[ "$sha" == "$EXPECTED_SHA" ]]
+
+      - name: Generate controlled DealForge live Checkout Session
+        shell: bash
+        run: |
+          set -euo pipefail
+          code=$(curl --silent --show-error --max-time 30 \
+            --request POST \
+            --header 'content-type: application/json' \
+            --data '{"checkoutKey":"phase25-live-cert-20260822-keyguard1","email":"certification@example.com","items":[{"productId":"cert_live_20260822","quantity":1}]}' \
+            --output /tmp/checkout.json \
+            --write-out '%{http_code}' \
+            "$PRODUCTION_URL/api/checkout")
+          body=$(cat /tmp/checkout.json)
+          echo "checkout_http=$code"
+          echo "$body"
+          [[ "$code" == "201" ]]
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          data=json.loads(Path('/tmp/checkout.json').read_text())
+          url=data.get('checkoutUrl','')
+          assert url.startswith('https://checkout.stripe.com/')
+          print('checkout_url=' + url)
+          print('order_number=' + str(data.get('orderNumber','')))
+          PY
