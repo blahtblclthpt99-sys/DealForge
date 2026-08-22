@@ -1,3 +1,4 @@
 Cloudflare candidate deployment trigger.
 Branch: migration/cloudflare-workers
-Purpose: force a fresh Git-connected build from the certified Cloudflare branch after build settings were corrected.
+Purpose: force a fresh Git-connected build from the certified Cloudflare branch after storefront pricing, owner-only ASIN intake, one-tap Paste & Add, and custom-domain route hardening.
+Release marker: 2026-08-22 final storefront owner-tools deployment.
