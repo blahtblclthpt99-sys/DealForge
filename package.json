@@ -5,7 +5,7 @@
   "description": "DealForge — affiliate product discovery platform",
   "scripts": {
     "dev": "next dev",
-    "build": "node scripts/prisma-generate.js && next build",
+    "build": "node scripts/prisma-generate.mjs && next build",
     "build:vercel": "prisma generate --schema=prisma/schema.postgres.prisma && next build",
     "typecheck": "tsc --noEmit",
     "test": "tsx --test tests/**/*.test.ts",
@@ -34,7 +34,7 @@
     "worker": "tsx src/workers/index.ts",
     "website:package": "powershell -ExecutionPolicy Bypass -File scripts/package-website.ps1",
     "deploy:vercel": "vercel --prod",
-    "postinstall": "node scripts/prisma-generate.js"
+    "postinstall": "node scripts/prisma-generate.mjs"
   },
   "dependencies": {
     "@prisma/client": "^6.9.0",
