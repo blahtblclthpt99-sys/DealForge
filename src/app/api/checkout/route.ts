@@ -51,6 +51,7 @@ function stripeProviderMetadata(message: string) {
 
 function classifyStripeCheckoutError(message: string) {
   if (message === "STRIPE_SECRET_KEY_MISSING") return "STRIPE_SECRET_KEY_MISSING";
+  if (message === "STRIPE_SECRET_KEY_WRONG_TYPE") return "STRIPE_SECRET_KEY_WRONG_TYPE";
   if (message === "STRIPE_CHECKOUT_SESSION_INVALID") return "STRIPE_CHECKOUT_SESSION_INVALID";
   if (message === "STRIPE_SESSION_MISMATCH") return "STRIPE_SESSION_MISMATCH";
   if (/fetch failed|network|socket|tls|connect|timeout/i.test(message)) return "STRIPE_NETWORK_FAILED";
@@ -58,9 +59,16 @@ function classifyStripeCheckoutError(message: string) {
   if (/cloudflare.*context|request context/i.test(message)) return "STRIPE_RUNTIME_CONTEXT_FAILED";
   if (!message.startsWith("STRIPE_API_ERROR:")) return null;
   const detail = message.slice("STRIPE_API_ERROR:".length);
+  if (/publishable api key|use a secret api key|pk_(live|test)_/i.test(detail)) return "STRIPE_SECRET_KEY_WRONG_TYPE";
   if (/invalid api key|no api key/i.test(detail)) return "STRIPE_API_AUTH_FAILED";
   if (/permission|not have access|restricted/i.test(detail)) return "STRIPE_API_PERMISSION_DENIED";
   if (/minimum|min_amount|amount.*small|at least/i.test(detail)) return "STRIPE_AMOUNT_BELOW_MINIMUM";
+  if (/unknown parameter|unrecognized parameter|received unknown/i.test(detail)) return "STRIPE_UNKNOWN_PARAMETER";
+  if (/missing required|required parameter/i.test(detail)) return "STRIPE_MISSING_PARAMETER";
+  if (/invalid url|not a valid url/i.test(detail)) return "STRIPE_INVALID_URL";
+  if (/customer_email|invalid email/i.test(detail)) return "STRIPE_INVALID_EMAIL";
+  if (/line_items|price_data|product_data|unit_amount/i.test(detail)) return "STRIPE_INVALID_LINE_ITEM";
+  if (/payment_intent_data/i.test(detail)) return "STRIPE_INVALID_PAYMENT_INTENT_DATA";
   if (/live charges|activate|account.*not.*active|charges.*disabled/i.test(detail)) return "STRIPE_LIVE_CHARGES_DISABLED";
   return "STRIPE_API_REJECTED";
 }
