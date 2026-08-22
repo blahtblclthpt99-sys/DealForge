@@ -13,6 +13,8 @@ type CandidateRow = {
   rejectionReason: string | null;
 };
 
+type SourceType = "owner_asin" | "owner_special_link" | "public_reference";
+
 async function engineAction(body: Record<string, unknown>) {
   const res = await fetch("/api/admin/product-engine", {
     method: "POST",
@@ -33,6 +35,8 @@ export function ProductEngineControls({ paused, candidates }: { paused: boolean;
   const [brand, setBrand] = useState("");
   const [category, setCategory] = useState("");
   const [specialLink, setSpecialLink] = useState("");
+  const [sourceUrl, setSourceUrl] = useState("");
+  const [sourceType, setSourceType] = useState<SourceType>("owner_asin");
   const [scout, setScout] = useState<"scout-a" | "scout-b">("scout-a");
 
   async function act(body: Record<string, unknown>, success: string) {
@@ -57,8 +61,9 @@ export function ProductEngineControls({ paused, candidates }: { paused: boolean;
       title: title || undefined,
       brand: brand || undefined,
       category: category || undefined,
-      ownerSpecialLink: specialLink || undefined,
-      sourceType: specialLink ? "owner_special_link" : "owner_asin",
+      ownerSpecialLink: sourceType === "owner_special_link" ? specialLink || undefined : undefined,
+      sourceUrl: sourceType === "public_reference" ? sourceUrl || undefined : undefined,
+      sourceType,
       scout,
     }, "Candidate accepted into the queue.");
     setAsin("");
@@ -66,6 +71,7 @@ export function ProductEngineControls({ paused, candidates }: { paused: boolean;
     setBrand("");
     setCategory("");
     setSpecialLink("");
+    setSourceUrl("");
   }
 
   return (
@@ -79,19 +85,26 @@ export function ProductEngineControls({ paused, candidates }: { paused: boolean;
             <button disabled={busy} onClick={() => act({ action: "pause" }, "Product Engine paused.")} className="rounded-xl border border-card-border px-4 py-2 text-sm font-semibold text-forest-ink disabled:opacity-50">Pause</button>
           )}
         </div>
+        <p className="mt-3 text-xs text-forest-muted">Discovery means processing candidates supplied by the owner or recorded from permissible public references. It does not crawl or scrape Amazon.</p>
         {message ? <p role="status" className="mt-3 break-words text-sm text-forest-muted">{message}</p> : null}
       </section>
 
       <section className="dn-card mt-6 min-w-0 overflow-hidden p-5">
-        <h2 className="font-display text-xl font-semibold text-forest-ink">Owner intake</h2>
-        <p className="mt-1 text-sm text-forest-muted">Add an ASIN or your existing Amazon Special Link. DealForge does not fetch Amazon HTML from this form.</p>
+        <h2 className="font-display text-xl font-semibold text-forest-ink">Candidate intake</h2>
+        <p className="mt-1 text-sm text-forest-muted">Add an ASIN, an existing Amazon Special Link, or a permissible public reference. DealForge never fetches Amazon HTML from this form.</p>
         <form onSubmit={intake} className="mt-4 grid min-w-0 gap-3 sm:grid-cols-2">
-          <input required value={asin} onChange={(e) => setAsin(e.target.value)} placeholder="ASIN (10 characters)" maxLength={20} className="min-w-0 rounded-xl border border-card-border bg-card px-3 py-2 text-sm" />
+          <select value={sourceType} onChange={(e) => setSourceType(e.target.value as SourceType)} className="min-w-0 rounded-xl border border-card-border bg-card px-3 py-2 text-sm">
+            <option value="owner_asin">Owner-supplied ASIN</option>
+            <option value="owner_special_link">Owner Amazon Special Link</option>
+            <option value="public_reference">Permissible public reference</option>
+          </select>
           <select value={scout} onChange={(e) => setScout(e.target.value as "scout-a" | "scout-b")} className="min-w-0 rounded-xl border border-card-border bg-card px-3 py-2 text-sm"><option value="scout-a">Scout A</option><option value="scout-b">Scout B</option></select>
+          <input required value={asin} onChange={(e) => setAsin(e.target.value)} placeholder="ASIN (10 characters)" maxLength={20} className="min-w-0 rounded-xl border border-card-border bg-card px-3 py-2 text-sm" />
           <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Product title" maxLength={500} className="min-w-0 rounded-xl border border-card-border bg-card px-3 py-2 text-sm" />
           <input value={brand} onChange={(e) => setBrand(e.target.value)} placeholder="Brand" maxLength={160} className="min-w-0 rounded-xl border border-card-border bg-card px-3 py-2 text-sm" />
           <input value={category} onChange={(e) => setCategory(e.target.value)} placeholder="Category" maxLength={100} className="min-w-0 rounded-xl border border-card-border bg-card px-3 py-2 text-sm" />
-          <input value={specialLink} onChange={(e) => setSpecialLink(e.target.value)} placeholder="Amazon Special Link (optional)" className="min-w-0 rounded-xl border border-card-border bg-card px-3 py-2 text-sm" />
+          {sourceType === "owner_special_link" ? <input required value={specialLink} onChange={(e) => setSpecialLink(e.target.value)} placeholder="Amazon Special Link" maxLength={2000} className="min-w-0 rounded-xl border border-card-border bg-card px-3 py-2 text-sm sm:col-span-2" /> : null}
+          {sourceType === "public_reference" ? <input required value={sourceUrl} onChange={(e) => setSourceUrl(e.target.value)} placeholder="Public source URL" maxLength={2000} className="min-w-0 rounded-xl border border-card-border bg-card px-3 py-2 text-sm sm:col-span-2" /> : null}
           <button disabled={busy} type="submit" className="rounded-xl bg-forest px-4 py-2 text-sm font-semibold text-white disabled:opacity-50 sm:col-span-2">Add candidate</button>
         </form>
       </section>
