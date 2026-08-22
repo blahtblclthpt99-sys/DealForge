@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 8
     env:
-      EXPECTED_SHA: 4dcd546d5f5a9ed9a2be218b20f778684af82548
+      EXPECTED_SHA: fa72d9deeac545154450ed0a92f2a0a7abc45cee
       PRODUCTION_URL: https://www.deal-forge.sale
     steps:
       - name: Wait for exact production SHA
