@@ -13,6 +13,13 @@ export type StripeCheckoutLine = {
   quantity: number;
 };
 
+type StripePrice = {
+  id: string;
+  active?: boolean;
+  currency?: string;
+  unit_amount?: number | null;
+};
+
 export type StripeCheckoutSession = {
   id: string;
   url: string | null;
@@ -126,7 +133,47 @@ async function stripeRequest<T>(path: string, init: { method?: "GET" | "POST"; b
   return data;
 }
 
+async function createStripeOrderPrice(input: {
+  orderId: string;
+  orderNumber: string;
+  currency: string;
+  line: StripeCheckoutLine;
+  index: number;
+}) {
+  assertPositiveCents(input.line.unitAmountCents, "unit_amount");
+  if (!Number.isSafeInteger(input.line.quantity) || input.line.quantity < 1 || input.line.quantity > 25) throw new Error("QUANTITY_INVALID");
+
+  const body = new URLSearchParams();
+  body.set("currency", input.currency.toLowerCase());
+  body.set("unit_amount", String(input.line.unitAmountCents));
+  body.set("product_data[name]", input.line.name.slice(0, 250));
+  body.set("product_data[metadata][dealforge_order_id]", input.orderId);
+  body.set("product_data[metadata][dealforge_order_number]", input.orderNumber);
+  body.set("metadata[dealforge_order_id]", input.orderId);
+  body.set("metadata[dealforge_order_number]", input.orderNumber);
+  body.set("metadata[dealforge_line_index]", String(input.index));
+
+  const price = await stripeRequest<StripePrice>("/prices", {
+    method: "POST",
+    body,
+    idempotencyKey: `dealforge-price:${input.orderId}:${input.index}:${input.currency.toLowerCase()}:${input.line.unitAmountCents}`,
+  });
+  if (!/^price_[A-Za-z0-9_]+$/.test(price.id || "")) throw new Error("STRIPE_PRICE_INVALID");
+  return price;
+}
+
 export async function createStripeCheckoutSession(input: { orderId: string; orderNumber: string; customerEmail: string; currency: string; lines: StripeCheckoutLine[]; successUrl: string; cancelUrl: string }) {
+  const stripePrices: StripePrice[] = [];
+  for (let index = 0; index < input.lines.length; index += 1) {
+    stripePrices.push(await createStripeOrderPrice({
+      orderId: input.orderId,
+      orderNumber: input.orderNumber,
+      currency: input.currency,
+      line: input.lines[index],
+      index,
+    }));
+  }
+
   const body = new URLSearchParams();
   body.set("mode", "payment");
   body.set("client_reference_id", input.orderId);
@@ -137,15 +184,11 @@ export async function createStripeCheckoutSession(input: { orderId: string; orde
   body.set("metadata[order_number]", input.orderNumber);
   body.set("payment_intent_data[metadata][order_id]", input.orderId);
   body.set("payment_intent_data[metadata][order_number]", input.orderNumber);
-  input.lines.forEach((line, index) => {
-    assertPositiveCents(line.unitAmountCents, "unit_amount");
-    if (!Number.isSafeInteger(line.quantity) || line.quantity < 1 || line.quantity > 25) throw new Error("QUANTITY_INVALID");
-    body.set(`line_items[${index}][price_data][currency]`, input.currency.toLowerCase());
-    body.set(`line_items[${index}][price_data][unit_amount]`, String(line.unitAmountCents));
-    body.set(`line_items[${index}][price_data][product_data][name]`, line.name.slice(0, 250));
-    if (line.description) body.set(`line_items[${index}][price_data][product_data][description]`, line.description.slice(0, 500));
-    body.set(`line_items[${index}][quantity]`, String(line.quantity));
+  stripePrices.forEach((price, index) => {
+    body.set(`line_items[${index}][price]`, price.id);
+    body.set(`line_items[${index}][quantity]`, String(input.lines[index].quantity));
   });
+
   return stripeRequest<StripeCheckoutSession>("/checkout/sessions", { method: "POST", body, idempotencyKey: `dealforge-checkout:${input.orderId}` });
 }
 
