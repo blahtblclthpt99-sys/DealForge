@@ -1,5 +1,3 @@
-import { prisma } from "@/lib/db";
-
 export type OwnerCandidate = {
   id: string;
   email: string;
@@ -16,20 +14,13 @@ function configuredOwnerEmail() {
 
 /**
  * Product intake is stricter than ordinary admin access.
- * Prefer an explicitly configured owner email. If production has not set one
- * yet, only the oldest administrator can use owner tools, so adding another
- * admin never grants access automatically.
+ * Access fails closed unless an explicit owner/admin email is configured and
+ * the signed-in administrator matches that email exactly. Additional admin
+ * accounts never inherit product-intake privileges.
  */
 export async function isProductOwner(user: OwnerCandidate | null | undefined) {
   if (!user || user.role !== "admin") return false;
-
   const configured = configuredOwnerEmail();
-  if (configured) return user.email.trim().toLowerCase() === configured;
-
-  const oldestAdmin = await prisma.user.findFirst({
-    where: { role: "admin" },
-    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
-    select: { id: true },
-  });
-  return oldestAdmin?.id === user.id;
+  if (!configured) return false;
+  return user.email.trim().toLowerCase() === configured;
 }
