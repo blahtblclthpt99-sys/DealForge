@@ -1,0 +1,43 @@
+name: Live Checkout Certification
+
+on:
+  pull_request:
+    branches:
+      - migration/cloudflare-workers
+    paths:
+      - .github/workflows/live-checkout-certification.yml
+
+permissions:
+  contents: read
+
+jobs:
+  create-checkout:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create controlled live checkout through DealForge
+        shell: bash
+        env:
+          PRODUCTION_URL: https://www.deal-forge.sale
+        run: |
+          set -euo pipefail
+          payload='{"checkoutKey":"cert-live-20260822-v1","email":"certification@example.com","items":[{"productId":"cert_live_20260822","quantity":1}]}'
+          code=$(curl --silent --show-error --max-time 30 \
+            --request POST \
+            --header 'content-type: application/json' \
+            --data "$payload" \
+            --output /tmp/checkout.json \
+            --write-out '%{http_code}' \
+            "$PRODUCTION_URL/api/checkout")
+          body=$(cat /tmp/checkout.json)
+          echo "checkout_http=$code"
+          echo "checkout_body=$body"
+          [[ "$code" == "201" ]]
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          data=json.loads(Path('/tmp/checkout.json').read_text())
+          assert data.get('checkoutUrl','').startswith('https://checkout.stripe.com/')
+          assert data.get('orderNumber','').startswith('DF-')
+          print('checkout_url='+data['checkoutUrl'])
+          print('order_number='+data['orderNumber'])
+          PY
