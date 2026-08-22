@@ -65,7 +65,9 @@ function readStripeRuntimeSecret(name: StripeRuntimeSecretName) {
 }
 
 function stripeSecretKey() {
-  return readStripeRuntimeSecret("STRIPE_SECRET_KEY");
+  const key = readStripeRuntimeSecret("STRIPE_SECRET_KEY");
+  if (!/^(sk|rk)_(live|test)_/i.test(key)) throw new Error("STRIPE_SECRET_KEY_WRONG_TYPE");
+  return key;
 }
 
 export function stripeWebhookSecret() {
