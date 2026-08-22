@@ -8,7 +8,7 @@
     "build": "node scripts/prisma-generate.mjs && next build",
     "build:vercel": "prisma generate --schema=prisma/schema.postgres.prisma && next build",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test tests/**/*.test.ts",
+    "test": "tsx --test tests/*.test.ts",
     "test:product-engine": "tsx --test tests/product-engine.test.ts",
     "prisma:validate": "node scripts/validate-prisma.mjs",
     "prisma:generate:all": "prisma generate --schema=prisma/schema.prisma && prisma generate --schema=prisma/schema.postgres.prisma",
