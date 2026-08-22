@@ -2,7 +2,7 @@ name: Storefront Pricing + Owner Intake CI
 
 on:
   push:
-    branches: [feature/storefront-pricing-owner-intake]
+    branches: [feature/storefront-pricing-owner-intake, migration/cloudflare-workers]
   pull_request:
     branches: [migration/cloudflare-workers]
   workflow_dispatch:
@@ -53,7 +53,8 @@ jobs:
         run: |
           set -euo pipefail
           grep -Fq 'PRODUCT_ENGINE_OWNER_EMAIL' src/lib/owner-access.ts
-          grep -Fq 'oldest administrator' src/lib/owner-access.ts
+          grep -Fq 'if (!configured) return false' src/lib/owner-access.ts
+          ! grep -Fq 'oldestAdmin' src/lib/owner-access.ts
           grep -Fq 'isProductOwner(user)' src/app/api/admin/product-intake/route.ts
           grep -Fq 'Owner only' src/components/owner-product-intake.tsx
           grep -Fq 'refreshOwnerIntakeQueue(10)' src/app/api/internal/maintenance/route.ts
