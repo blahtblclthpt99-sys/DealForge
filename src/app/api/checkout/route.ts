@@ -14,7 +14,6 @@ const CheckoutSchema = z.object({
 });
 
 type RequestedItem = z.infer<typeof CheckoutSchema>["items"][number];
-
 type CheckoutStage = "request" | "session" | "product_lookup" | "order_create" | "stripe_checkout" | "order_update";
 
 function orderNumber() {
@@ -41,6 +40,13 @@ function sameOrderItems(existing: Array<{ productId: string; quantity: number }>
 function appUrl(request: Request) {
   const configured = (process.env.NEXT_PUBLIC_APP_URL || "").trim().replace(/\/$/, "");
   return configured || new URL(request.url).origin;
+}
+
+function stripeProviderMetadata(message: string) {
+  if (!message.startsWith("STRIPE_API_ERROR:")) return null;
+  const remainder = message.slice("STRIPE_API_ERROR:".length);
+  const [type = "unknown", code = "unknown", param = "unknown"] = remainder.split(":", 4);
+  return { type, code, param };
 }
 
 function classifyStripeCheckoutError(message: string) {
@@ -127,8 +133,9 @@ export async function POST(request: Request) {
     if (message.startsWith("PRODUCT_NOT_PURCHASABLE") || message === "QUANTITY_LIMIT_EXCEEDED") return NextResponse.json({ error: message.split(":")[0] }, { status: 409 });
     const stripeError = classifyStripeCheckoutError(message);
     if (stripeError) {
-      console.error("checkout.create.stripe_failed", { error: stripeError, stage });
-      return NextResponse.json({ error: stripeError, stage }, { status: 503 });
+      const provider = stripeProviderMetadata(message);
+      console.error("checkout.create.stripe_failed", { error: stripeError, stage, provider });
+      return NextResponse.json({ error: stripeError, stage, ...(provider ? { stripe: provider } : {}) }, { status: 503 });
     }
     if (stage === "stripe_checkout") {
       console.error("checkout.create.stripe_unclassified", { stage, errorName: error instanceof Error ? error.name : "UNKNOWN" });
