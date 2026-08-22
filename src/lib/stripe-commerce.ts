@@ -1,7 +1,10 @@
 import { createHmac, createHash, timingSafeEqual } from "node:crypto";
+import { getCloudflareContext } from "@opennextjs/cloudflare";
 
 const STRIPE_API = "https://api.stripe.com/v1";
 const DEFAULT_WEBHOOK_TOLERANCE_SECONDS = 300;
+
+type StripeRuntimeSecretName = "STRIPE_SECRET_KEY" | "STRIPE_WEBHOOK_SECRET";
 
 export type StripeCheckoutLine = {
   name: string;
@@ -46,16 +49,27 @@ export type StripeEvent = {
   data: { object: Record<string, unknown> };
 };
 
+function readStripeRuntimeSecret(name: StripeRuntimeSecretName) {
+  const processValue = process.env[name];
+  if (typeof processValue === "string" && processValue.trim()) return processValue.trim();
+
+  try {
+    const cloudflareEnv = getCloudflareContext().env as Record<string, unknown>;
+    const bindingValue = cloudflareEnv[name];
+    if (typeof bindingValue === "string" && bindingValue.trim()) return bindingValue.trim();
+  } catch {
+    // Local Node/test execution does not have a Cloudflare request context.
+  }
+
+  throw new Error(`${name}_MISSING`);
+}
+
 function stripeSecretKey() {
-  const key = (process.env.STRIPE_SECRET_KEY || "").trim();
-  if (!key) throw new Error("STRIPE_SECRET_KEY_MISSING");
-  return key;
+  return readStripeRuntimeSecret("STRIPE_SECRET_KEY");
 }
 
 export function stripeWebhookSecret() {
-  const secret = (process.env.STRIPE_WEBHOOK_SECRET || "").trim();
-  if (!secret) throw new Error("STRIPE_WEBHOOK_SECRET_MISSING");
-  return secret;
+  return readStripeRuntimeSecret("STRIPE_WEBHOOK_SECRET");
 }
 
 export function assertPositiveCents(value: number, field: string) {
