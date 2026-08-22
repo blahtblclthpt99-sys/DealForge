@@ -1,4 +1,6 @@
 import type { Metadata } from "next";
+import Link from "next/link";
+import { ArrowRight, Flame, Search, ShieldCheck } from "lucide-react";
 import { InfiniteProductFeed } from "@/components/infinite-feed";
 import { queryProducts } from "@/lib/products";
 
@@ -23,23 +25,48 @@ export default async function DealsPage() {
   const query = hasCurrentDeals ? { flash: "1", sort: "popularity" } : { sort: "popularity" };
 
   return (
-    <div className="dn-container py-10 md:py-14">
-      <div className="max-w-3xl">
-        <p className="text-xs font-bold uppercase tracking-[0.16em] text-forest">
-          {hasCurrentDeals ? "Deal watch" : "Price watch"}
-        </p>
-        <h1 className="mt-2 font-display text-4xl font-semibold tracking-tight text-forest-ink md:text-5xl">
-          {hasCurrentDeals ? "Fresh offers worth checking" : "Popular products to check today"}
-        </h1>
-        <p className="mt-3 leading-7 text-forest-muted">
-          {hasCurrentDeals
-            ? "These products currently have a trusted fresh offer signal. The retailer still controls the final price and availability at checkout."
-            : "No Amazon offer currently meets DealForge’s fresh-price standard, so this page is showing popular products instead of pretending old discounts are live deals. Open the retailer listing for today’s price and availability."}
-        </p>
-      </div>
-      <div className="mt-10">
+    <div>
+      <section className="border-b border-card-border bg-[radial-gradient(circle_at_top_left,rgba(249,115,22,.12),transparent_38%)]">
+        <div className="dn-container py-10 sm:py-12 md:py-14">
+          <div className="max-w-4xl">
+            <div className="dn-eyebrow"><Flame className="h-3.5 w-3.5" /> {hasCurrentDeals ? "Deal watch" : "Price watch"}</div>
+            <h1 className="mt-4 font-display text-4xl font-semibold tracking-[-0.035em] text-forest-ink sm:text-5xl md:text-6xl">
+              {hasCurrentDeals ? "Fresh offers worth checking." : "Popular products worth checking today."}
+            </h1>
+            <p className="mt-4 max-w-3xl text-base leading-7 text-forest-muted md:text-lg">
+              {hasCurrentDeals
+                ? "These products currently have a trusted fresh offer signal. The retailer still controls the final price, availability, shipping, and checkout terms."
+                : "No Amazon offer currently meets DealForge’s fresh-price standard, so this page is showing popular products instead of presenting old discounts as live deals. Open the retailer listing for today’s terms."}
+            </p>
+
+            <div className="mt-6 flex flex-wrap gap-3">
+              <Link href="/search" className="dn-button-primary">
+                Find a product <Search className="h-4 w-4" />
+              </Link>
+              <Link href="/categories" className="dn-button-secondary">
+                Browse categories <ArrowRight className="h-4 w-4" />
+              </Link>
+            </div>
+
+            <div className="mt-6 inline-flex items-start gap-2 rounded-xl border border-card-border bg-card/70 px-3.5 py-3 text-xs leading-5 text-forest-muted shadow-sm">
+              <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-forest" />
+              <span>DealForge labels price freshness and does not treat an unverified recorded amount as a current retailer price.</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="dn-container dn-section">
+        <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <p className="text-xs font-extrabold uppercase tracking-[0.14em] text-forest">{feed.total.toLocaleString()} products</p>
+            <h2 className="mt-1 font-display text-2xl font-semibold text-forest-ink sm:text-3xl">
+              {hasCurrentDeals ? "Current Deal Watch results" : "Popular products to compare"}
+            </h2>
+          </div>
+        </div>
         <InfiniteProductFeed initial={feed} query={query} />
-      </div>
+      </section>
     </div>
   );
 }
