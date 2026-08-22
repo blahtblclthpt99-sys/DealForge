@@ -10,7 +10,7 @@
     "typecheck": "tsc --noEmit",
     "test": "tsx --test tests/**/*.test.ts",
     "test:product-engine": "tsx --test tests/product-engine.test.ts",
-    "prisma:validate": "prisma validate --schema=prisma/schema.prisma && prisma validate --schema=prisma/schema.postgres.prisma",
+    "prisma:validate": "node scripts/validate-prisma.mjs",
     "prisma:generate:all": "prisma generate --schema=prisma/schema.prisma && prisma generate --schema=prisma/schema.postgres.prisma",
     "gate:ship": "npm run lint && npm run typecheck && npm test && npm run prisma:validate && npm run build",
     "db:push:postgres": "prisma db push --schema=prisma/schema.postgres.prisma",
