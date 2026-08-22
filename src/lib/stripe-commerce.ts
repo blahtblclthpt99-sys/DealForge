@@ -87,6 +87,12 @@ function constantTimeHexEqual(a: string, b: string) {
   return left.length === right.length && timingSafeEqual(left, right);
 }
 
+function safeStripeErrorToken(value: unknown) {
+  if (typeof value !== "string") return "unknown";
+  const trimmed = value.trim();
+  return /^[A-Za-z0-9_.\[\]-]{1,120}$/.test(trimmed) ? trimmed : "unknown";
+}
+
 export function verifyStripeSignature(rawBody: string, signatureHeader: string, secret: string, options?: { nowSeconds?: number; toleranceSeconds?: number }) {
   const parts = signatureHeader.split(",").map((part) => part.trim());
   const timestampRaw = parts.find((part) => part.startsWith("t="))?.slice(2);
@@ -106,8 +112,15 @@ async function stripeRequest<T>(path: string, init: { method?: "GET" | "POST"; b
   if (init.body) headers["Content-Type"] = "application/x-www-form-urlencoded";
   if (init.idempotencyKey) headers["Idempotency-Key"] = init.idempotencyKey;
   const response = await fetch(`${STRIPE_API}${path}`, { method: init.method ?? "GET", headers, body: init.body, cache: "no-store" });
-  const data = (await response.json()) as T & { error?: { message?: string } };
-  if (!response.ok) throw new Error(`STRIPE_API_ERROR:${data.error?.message || response.status}`);
+  const data = (await response.json()) as T & { error?: { message?: string; type?: string; code?: string; param?: string } };
+  if (!response.ok) {
+    const provider = data.error;
+    const type = safeStripeErrorToken(provider?.type);
+    const code = safeStripeErrorToken(provider?.code);
+    const param = safeStripeErrorToken(provider?.param);
+    const message = typeof provider?.message === "string" ? provider.message : String(response.status);
+    throw new Error(`STRIPE_API_ERROR:${type}:${code}:${param}:${message}`);
+  }
   return data;
 }
 
