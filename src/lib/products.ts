@@ -1,6 +1,6 @@
 /**
  * Product query layer — DB-level pagination (never loads the full catalog).
- * Public DTOs intentionally redact stale Amazon commerce data.
+ * Public DTOs distinguish verified-current prices from older recorded catalog prices.
  */
 import { prisma } from "./db";
 import { cacheGet, cacheSet } from "./cache";
@@ -31,6 +31,7 @@ export type ProductDTO = {
   price: number;
   originalPrice: number;
   discountPercent: number;
+  recordedPrice: number;
   recordedPriceAvailable: boolean;
   rating: number;
   reviewCount: number;
@@ -190,6 +191,7 @@ export function toProductDTO(
     price: publicPricing.price,
     originalPrice: publicPricing.originalPrice,
     discountPercent: publicPricing.discountPercent,
+    recordedPrice: storedPricing.price,
     recordedPriceAvailable,
     rating: publicRating,
     reviewCount: publicReviewCount,
@@ -278,7 +280,7 @@ export async function queryProducts(params: ProductQuery) {
   const normalized = normalizeProductQuery(params);
   const page = normalized.page ?? 1;
   const limit = normalized.limit ?? 24;
-  const cacheKey = `products:v10:${JSON.stringify(normalized)}`;
+  const cacheKey = `products:v11:${JSON.stringify(normalized)}`;
   const cached = await cacheGet<{
     items: ProductDTO[];
     total: number;

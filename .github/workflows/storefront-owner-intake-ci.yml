@@ -1,0 +1,59 @@
+name: Storefront Pricing + Owner Intake CI
+
+on:
+  push:
+    branches: [feature/storefront-pricing-owner-intake]
+  pull_request:
+    branches: [migration/cloudflare-workers]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      CLOUDFLARE_WORKERS: "1"
+      DATABASE_URL: postgresql://dealforge:ci-only@db.invalid/dealforge?sslmode=require
+      AUTH_SECRET: ci-only-not-for-production-00000000000000000000000000000000
+      PRODUCT_ENGINE_OWNER_EMAIL: owner@example.com
+      NEXT_PUBLIC_APP_URL: https://www.deal-forge.sale
+      NEXT_PUBLIC_APP_NAME: DealForge
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci --no-fund --no-audit
+      - name: Lint
+        run: npm run lint
+      - name: Typecheck
+        run: npx tsc --noEmit
+      - name: Build for Cloudflare
+        run: npm run cf:build
+      - name: Wrangler dry-run
+        run: npm run cf:dry-run
+      - name: Production dependency audit
+        run: npm audit --omit=dev --audit-level=high
+      - name: Storefront price integrity
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -Fq 'recordedPrice: storedPricing.price' src/lib/products.ts
+          grep -Fq 'Verify current price at' src/components/product-card.tsx
+          grep -Fq 'recordedPriceAvailable' src/components/product-card.tsx
+          grep -Fq 'priceSource: "amazon-creators-api"' src/lib/owner-product-intake.ts
+          grep -Fq 'needsEnrichment: true' src/lib/owner-product-intake.ts
+      - name: Owner-only access integrity
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -Fq 'PRODUCT_ENGINE_OWNER_EMAIL' src/lib/owner-access.ts
+          grep -Fq 'oldest administrator' src/lib/owner-access.ts
+          grep -Fq 'isProductOwner(user)' src/app/api/admin/product-intake/route.ts
+          grep -Fq 'Owner only' src/components/owner-product-intake.tsx
+          grep -Fq 'refreshOwnerIntakeQueue(10)' src/app/api/internal/maintenance/route.ts

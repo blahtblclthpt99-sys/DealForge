@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { runMaintenanceOnce } from "@/workers/maintenance";
+import { refreshOwnerIntakeQueue } from "@/lib/owner-product-intake";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -55,6 +56,16 @@ export async function POST(req: Request) {
   }
 
   try {
+    let ownerQueue:
+      | Awaited<ReturnType<typeof refreshOwnerIntakeQueue>>
+      | { status: "error"; queued: number; updated: number };
+    try {
+      ownerQueue = await refreshOwnerIntakeQueue(10);
+    } catch (error) {
+      console.error("Owner ASIN queue refresh failed", error);
+      ownerQueue = { status: "error", queued: 0, updated: 0 };
+    }
+
     // Public discovery ranks directly from click/view/recency fields, so the
     // legacy full-catalog trending rewrite is not part of the Cloudflare cron.
     const result = await runMaintenanceOnce({
@@ -64,7 +75,7 @@ export async function POST(req: Request) {
       cleanCache: true,
       processPriceAlerts: true,
     });
-    return NextResponse.json({ ok: true, ...result });
+    return NextResponse.json({ ok: true, ownerQueue, ...result });
   } catch (error) {
     console.error("DealForge maintenance route failed", error);
     return NextResponse.json({ error: "Maintenance failed" }, { status: 500 });

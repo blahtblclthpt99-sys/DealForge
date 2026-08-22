@@ -1,11 +1,13 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { AdminPanels } from "@/components/admin-panels";
+import { OwnerProductIntake } from "@/components/owner-product-intake";
 import { readSession } from "@/lib/auth";
 import { cacheStatus } from "@/lib/cache";
 import { listConnectors } from "@/lib/affiliate/registry";
 import { affiliateRuntimeReadiness } from "@/lib/affiliate/readiness";
 import { prisma } from "@/lib/db";
+import { isProductOwner } from "@/lib/owner-access";
 
 export default async function AdminPage() {
   const session = await readSession();
@@ -13,10 +15,12 @@ export default async function AdminPage() {
 
   const currentUser = await prisma.user.findUnique({
     where: { id: session.id },
-    select: { role: true },
+    select: { id: true, email: true, role: true },
   });
   if (!currentUser) redirect("/login?next=/admin");
   if (currentUser.role !== "admin") redirect("/dashboard");
+
+  const ownerTools = await isProductOwner(currentUser);
 
   const [
     productCount,
@@ -100,6 +104,8 @@ export default async function AdminPage() {
           </div>
         ))}
       </div>
+
+      {ownerTools ? <OwnerProductIntake /> : null}
 
       <AdminPanels
         providers={providers}
