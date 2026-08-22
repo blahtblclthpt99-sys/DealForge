@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { ArrowLeft, Heart, Search } from "lucide-react";
 import { ProductCard } from "@/components/product-card";
 import { readSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
@@ -44,24 +45,38 @@ export default async function WishlistPage() {
     .map(toProductDTO);
 
   return (
-    <div className="dn-container py-12">
-      <Link href="/dashboard" className="text-sm text-forest hover:underline">
-        ← Dashboard
-      </Link>
-      <h1 className="mt-3 font-display text-3xl font-semibold text-forest-ink">Wishlist</h1>
-      <p className="mt-2 text-forest-muted">{ordered.length} saved products</p>
-      <div className="mt-8 grid grid-cols-2 gap-3 md:grid-cols-4">
-        {ordered.map((product) => (
-          <ProductCard key={product.id} product={product} wishlisted />
-        ))}
-      </div>
-      {ordered.length === 0 && (
-        <p className="mt-10 text-center text-forest-muted">
-          Your wishlist is empty.{" "}
-          <Link href="/search" className="text-forest hover:underline">
-            Discover products
+    <div className="dn-container py-10 sm:py-12 lg:py-14">
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <Link href="/dashboard" className="inline-flex min-h-10 items-center gap-1.5 text-sm font-bold text-forest hover:underline">
+            <ArrowLeft className="h-4 w-4" /> Dashboard
           </Link>
-        </p>
+          <p className="mt-4 text-xs font-extrabold uppercase tracking-[0.14em] text-forest">Saved products</p>
+          <h1 className="mt-1 font-display text-4xl font-semibold tracking-tight text-forest-ink sm:text-5xl">Wishlist</h1>
+          <p className="mt-2 text-sm leading-6 text-forest-muted">{ordered.length.toLocaleString()} available {ordered.length === 1 ? "product" : "products"} saved to your account.</p>
+        </div>
+        <Link href="/search" className="dn-button-primary">
+          <Search className="h-4 w-4" /> Discover products
+        </Link>
+      </div>
+
+      {ordered.length > 0 ? (
+        <div className="mt-8 grid grid-cols-2 gap-3 sm:gap-4 md:grid-cols-3 lg:grid-cols-4">
+          {ordered.map((product) => (
+            <ProductCard key={product.id} product={product} wishlisted />
+          ))}
+        </div>
+      ) : (
+        <section className="dn-card mt-8 px-5 py-12 text-center sm:py-16">
+          <span className="mx-auto inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-forest/9 text-forest">
+            <Heart className="h-5 w-5" />
+          </span>
+          <h2 className="mt-4 font-display text-2xl font-semibold text-forest-ink">Nothing saved yet</h2>
+          <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-forest-muted">Use the heart on a product card to keep interesting items here for a faster return visit.</p>
+          <Link href="/search" className="dn-button-primary mt-5">
+            <Search className="h-4 w-4" /> Find products
+          </Link>
+        </section>
       )}
     </div>
   );
