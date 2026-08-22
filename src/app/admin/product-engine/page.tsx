@@ -9,9 +9,17 @@ export const dynamic = "force-dynamic";
 export default async function ProductEnginePage() {
   const session = await readSession();
   if (!session) redirect("/login?next=/admin/product-engine");
-  const user = await prisma.user.findUnique({ where: { id: session.id }, select: { email: true, role: true } });
+
+  const user = await prisma.user.findUnique({
+    where: { id: session.id },
+    select: { email: true, role: true },
+  });
   const ownerEmail = process.env.PRODUCT_ENGINE_OWNER_EMAIL?.trim().toLowerCase();
-  if (!user || user.role !== "admin" || (ownerEmail && user.email.toLowerCase() !== ownerEmail)) redirect("/dashboard");
+
+  // Fail closed: this route is owner-only, not merely hidden from navigation.
+  if (!ownerEmail || !user || user.role !== "admin" || user.email.toLowerCase() !== ownerEmail) {
+    redirect("/dashboard");
+  }
 
   const data = await productEngineDashboard();
   const states = new Map(data.workers.map((worker) => [worker.worker, worker]));
@@ -61,23 +69,49 @@ export default async function ProductEnginePage() {
         ))}
       </section>
 
-      <ProductEngineControls paused={data.config.paused} candidates={data.candidates.map((candidate) => ({ id: candidate.id, asin: candidate.asin, title: candidate.titleCandidate, state: candidate.state, score: candidate.score, category: candidate.normalizedCategory, rejectionReason: candidate.rejectionReason }))} />
+      <ProductEngineControls
+        paused={data.config.paused}
+        candidates={data.candidates.map((candidate) => ({
+          id: candidate.id,
+          asin: candidate.asin,
+          title: candidate.titleCandidate,
+          state: candidate.state,
+          score: candidate.score,
+          category: candidate.normalizedCategory,
+          rejectionReason: candidate.rejectionReason,
+        }))}
+      />
 
       <section className="mt-8 grid min-w-0 gap-5 lg:grid-cols-2">
         <article className="dn-card min-w-0 overflow-hidden p-5">
           <h2 className="font-display text-xl font-semibold text-forest-ink">Category distribution</h2>
           <div className="mt-4 space-y-2">
-            {Object.entries(data.categories).length ? Object.entries(data.categories).map(([name, count]) => (
-              <div key={name} className="flex min-w-0 justify-between gap-3 text-sm"><span className="truncate text-forest-muted">{name}</span><strong className="text-forest-ink">{count}</strong></div>
-            )) : <p className="text-sm text-forest-muted">No classified candidates yet.</p>}
+            {Object.entries(data.categories).length ? (
+              Object.entries(data.categories).map(([name, count]) => (
+                <div key={name} className="flex min-w-0 justify-between gap-3 text-sm">
+                  <span className="truncate text-forest-muted">{name}</span>
+                  <strong className="text-forest-ink">{count}</strong>
+                </div>
+              ))
+            ) : (
+              <p className="text-sm text-forest-muted">No classified candidates yet.</p>
+            )}
           </div>
         </article>
+
         <article className="dn-card min-w-0 overflow-hidden p-5">
           <h2 className="font-display text-xl font-semibold text-forest-ink">Rejection reasons</h2>
           <div className="mt-4 space-y-2">
-            {Object.entries(data.rejectionReasons).length ? Object.entries(data.rejectionReasons).map(([name, count]) => (
-              <div key={name} className="flex min-w-0 justify-between gap-3 text-sm"><span className="break-all text-forest-muted">{name}</span><strong className="text-forest-ink">{count}</strong></div>
-            )) : <p className="text-sm text-forest-muted">No rejections recorded.</p>}
+            {Object.entries(data.rejectionReasons).length ? (
+              Object.entries(data.rejectionReasons).map(([name, count]) => (
+                <div key={name} className="flex min-w-0 justify-between gap-3 text-sm">
+                  <span className="break-all text-forest-muted">{name}</span>
+                  <strong className="text-forest-ink">{count}</strong>
+                </div>
+              ))
+            ) : (
+              <p className="text-sm text-forest-muted">No rejections recorded.</p>
+            )}
           </div>
         </article>
       </section>
