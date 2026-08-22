@@ -1,5 +1,5 @@
 name: DealForge Layout Domain Check
-# Rerun marker: 2026-08-22 live layout/domain verification
+# Rerun marker: 2026-08-22 polished Product Finder certification
 
 on:
   push:
@@ -55,6 +55,10 @@ jobs:
             echo "worker $path -> $code"
             [[ "$code" == "200" ]]
             if [[ "$path" == "/" ]]; then grep -qi 'Forge better deals' "$body"; fi
+            if [[ "$path" == "/search" ]]; then
+              grep -qi 'Tell DealForge what you need' "$body"
+              grep -qi 'Product Finder' "$body"
+            fi
           done
           for path in /dashboard /admin; do
             code=$(curl -sS --max-time 30 --max-redirs 0 -o /dev/null -w '%{http_code}' "$WORKER_URL$path" || echo 000)
