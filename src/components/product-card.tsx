@@ -24,6 +24,7 @@ export function ProductCard({
   const save = commerce.canDisplayDiscount ? discountLabel(product.discountPercent) : null;
   const qnty = formatQuantityLabel(product.quantity);
   const retailer = retailerLabel(product.retailer);
+  const canShowRecorded = !commerce.canDisplayPrice && product.recordedPriceAvailable && product.recordedPrice > 0;
 
   async function toggleWish(e: React.MouseEvent) {
     e.preventDefault();
@@ -59,7 +60,7 @@ export function ProductCard({
           </span>
           {commerce.isAmazon && commerce.priceStatus === "recorded" ? (
             <span className="rounded-full border border-card-border bg-card/90 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-forest-muted shadow-sm backdrop-blur">
-              Price refresh needed
+              Recorded price
             </span>
           ) : null}
           {save ? (
@@ -92,7 +93,7 @@ export function ProductCard({
           </h3>
         </Link>
 
-        <div className="mt-3 min-h-[3.1rem]">
+        <div className="mt-3 min-h-[3.6rem]">
           {commerce.canDisplayPrice ? (
             <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
               <p className="text-xl font-extrabold tracking-tight text-forest">
@@ -101,6 +102,16 @@ export function ProductCard({
               {commerce.canDisplayDiscount ? (
                 <p className="text-xs text-forest-muted line-through">{formatPrice(product.originalPrice)}</p>
               ) : null}
+            </div>
+          ) : canShowRecorded ? (
+            <div>
+              <div className="flex flex-wrap items-baseline gap-2">
+                <p className="text-xl font-extrabold tracking-tight text-forest">
+                  {formatPrice(product.recordedPrice)}
+                </p>
+                <span className="text-[10px] font-bold uppercase tracking-wide text-forest-muted">recorded</span>
+              </div>
+              <p className="mt-0.5 text-[10px] font-semibold text-[#F97316]">Verify current price at {retailer}</p>
             </div>
           ) : (
             <p className="text-sm font-bold text-forest">Check current price on {retailer}</p>
