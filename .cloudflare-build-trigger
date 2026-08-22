@@ -1,5 +1,5 @@
 Cloudflare candidate deployment trigger.
 Branch: migration/cloudflare-workers
-Purpose: force a fresh Git-connected production build from the certified Cloudflare branch after Phase 2.5 Stripe financial-integrity merge, storefront pricing, owner-only ASIN intake, one-tap Paste & Add, and custom-domain route hardening.
-Release marker: 2026-08-22 Phase 2.5 production redeploy retry.
-Merged production commit: 20117f073cf709eadb01f7dbaea7b6d0c99d321e
+Purpose: force a fresh Git-connected production build after installing the production Stripe API secret and Stripe webhook signing secret.
+Release marker: 2026-08-22 live payment secret binding redeploy.
+Expected production payment hardening base: 91ead7011f0bf04aaa7743b220d0f5dbe8a81e74
