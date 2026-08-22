@@ -1,0 +1,93 @@
+name: Production Live Payment Audit
+
+on:
+  pull_request:
+    branches:
+      - migration/cloudflare-workers
+    paths:
+      - .github/workflows/production-live-payment-audit.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit-production:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      WORKER_URL: https://dealforge.blahtblclthpt99.workers.dev
+      PRODUCTION_URL: https://www.deal-forge.sale
+      EXPECTED_SHA: ${{ github.event.pull_request.base.sha }}
+    steps:
+      - name: Verify exact production deployment
+        shell: bash
+        run: |
+          set -euo pipefail
+          ready=0
+          for attempt in $(seq 1 30); do
+            worker_code=$(curl --silent --show-error --max-time 20 --output /tmp/worker-build.json --write-out '%{http_code}' "$WORKER_URL/api/build" || echo 000)
+            prod_code=$(curl --silent --show-error --max-time 20 --output /tmp/prod-build.json --write-out '%{http_code}' "$PRODUCTION_URL/api/build" || echo 000)
+            worker_sha=$(python - <<'PY'
+          import json
+          from pathlib import Path
+          try:
+              print(json.loads(Path('/tmp/worker-build.json').read_text()).get('sha', ''))
+          except Exception:
+              print('')
+          PY
+            )
+            prod_sha=$(python - <<'PY'
+          import json
+          from pathlib import Path
+          try:
+              print(json.loads(Path('/tmp/prod-build.json').read_text()).get('sha', ''))
+          except Exception:
+              print('')
+          PY
+            )
+            echo "attempt=$attempt worker=$worker_code:$worker_sha production=$prod_code:$prod_sha expected=$EXPECTED_SHA"
+            if [[ "$worker_code" == "200" && "$prod_code" == "200" && "$worker_sha" == "$EXPECTED_SHA" && "$prod_sha" == "$EXPECTED_SHA" ]]; then
+              ready=1
+              break
+            fi
+            sleep 10
+          done
+          [[ "$ready" == "1" ]]
+
+      - name: Verify live Stripe webhook secret
+        shell: bash
+        run: |
+          set -euo pipefail
+          code=$(curl --silent --show-error --max-time 20 \
+            --request POST \
+            --header 'content-type: application/json' \
+            --header 'stripe-signature: t=1,v1=deadbeef' \
+            --data '{}' \
+            --output /tmp/webhook.json \
+            --write-out '%{http_code}' \
+            "$PRODUCTION_URL/api/stripe/webhook" || echo 000)
+          body=$(cat /tmp/webhook.json 2>/dev/null || true)
+          echo "webhook=$code $body"
+          if [[ "$code" == "503" && "$body" == *'WEBHOOK_NOT_CONFIGURED'* ]]; then
+            echo '::error::STRIPE_WEBHOOK_SECRET is not installed in the production Cloudflare Worker.'
+            exit 1
+          fi
+          [[ "$code" == "400" ]]
+          [[ "$body" == *'INVALID_STRIPE_SIGNATURE'* ]]
+
+      - name: Verify live checkout route
+        shell: bash
+        run: |
+          set -euo pipefail
+          code=$(curl --silent --show-error --max-time 20 \
+            --request POST \
+            --header 'content-type: application/json' \
+            --data '{"checkoutKey":"production-audit-probe","email":"certification@example.com","items":[{"productId":"does-not-exist","quantity":1}]}' \
+            --output /tmp/checkout.json \
+            --write-out '%{http_code}' \
+            "$PRODUCTION_URL/api/checkout" || echo 000)
+          body=$(cat /tmp/checkout.json 2>/dev/null || true)
+          echo "checkout=$code $body"
+          [[ "$code" == "409" ]]
+          [[ "$body" == *'PRODUCT_NOT_FOUND'* ]]
