@@ -1,0 +1,64 @@
+name: DealForge Premium UI Refresh CI
+
+on:
+  push:
+    branches: [feature/premium-ui-refresh]
+  pull_request:
+    branches: [migration/cloudflare-workers]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-ui-refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      CLOUDFLARE_WORKERS: "1"
+      DATABASE_URL: postgresql://dealforge:ci-only@db.invalid/dealforge?sslmode=require
+      AUTH_SECRET: ci-only-not-for-production-00000000000000000000000000000000
+      NEXT_PUBLIC_APP_URL: https://www.deal-forge.sale
+      NEXT_PUBLIC_APP_NAME: DealForge
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci --no-fund --no-audit
+
+      - name: Lint
+        run: npm run lint
+
+      - name: TypeScript
+        run: npx tsc --noEmit
+
+      - name: Cloudflare build
+        run: npm run cf:build
+
+      - name: Wrangler dry run
+        run: npm run cf:dry-run
+
+      - name: Production dependency audit
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: UI and trust integrity regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          ! grep -R "DemoUser123!" src/app src/components
+          ! grep -R "demo@dealforge.com" src/app/login src/components
+          grep -q 'Skip to main content' src/app/layout.tsx
+          grep -q 'Recorded' src/components/product-card.tsx
+          grep -q 'Verify current price' src/components/product-card.tsx
+          grep -q 'Final price, availability, shipping, and checkout are confirmed' src/components/buy-button.tsx
+          grep -q 'rel="noopener noreferrer sponsored nofollow"' src/components/buy-button.tsx
+          grep -q 'Permanently delete your DealForge account' src/components/settings-form.tsx
+          grep -q 'confirmation: deleteConfirmation' src/components/settings-form.tsx
+          grep -q 'ownerTools ? <OwnerProductIntake' src/app/admin/page.tsx
