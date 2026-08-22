@@ -84,6 +84,7 @@ export function ProductEngineControls({ paused, candidates }: { paused: boolean;
           ) : (
             <button disabled={busy} onClick={() => act({ action: "pause" }, "Product Engine paused.")} className="rounded-xl border border-card-border px-4 py-2 text-sm font-semibold text-forest-ink disabled:opacity-50">Pause</button>
           )}
+          <a href="#review-queue" className="rounded-xl border border-card-border px-4 py-2 text-sm font-semibold text-forest-ink">Review</a>
         </div>
         <p className="mt-3 text-xs text-forest-muted">Discovery means processing candidates supplied by the owner or recorded from permissible public references. It does not crawl or scrape Amazon.</p>
         {message ? <p role="status" className="mt-3 break-words text-sm text-forest-muted">{message}</p> : null}
@@ -109,7 +110,7 @@ export function ProductEngineControls({ paused, candidates }: { paused: boolean;
         </form>
       </section>
 
-      <section className="dn-card mt-6 min-w-0 overflow-hidden p-5">
+      <section id="review-queue" className="dn-card mt-6 min-w-0 scroll-mt-6 overflow-hidden p-5">
         <h2 className="font-display text-xl font-semibold text-forest-ink">Review queue</h2>
         <div className="mt-4 overflow-x-auto">
           <table className="w-full min-w-[720px] text-left text-xs">
