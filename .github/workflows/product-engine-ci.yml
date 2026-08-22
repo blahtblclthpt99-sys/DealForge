@@ -7,36 +7,9 @@ on:
     branches: [feature/product-engine-safe-intake]
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  remediate-production-dependencies:
-    if: github.event_name == 'push' && github.actor != 'github-actions[bot]'
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: feature/product-engine-safe-intake
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: npm
-      - name: Patch production framework and transitive advisories
-        run: |
-          npm install next@16.3.2 eslint-config-next@16.3.2 --save-exact
-          npm audit fix --omit=dev
-          npm audit --omit=dev --audit-level=high
-      - name: Commit regenerated package lock
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add package.json package-lock.json
-          if ! git diff --cached --quiet; then
-            git commit -m "fix(security): patch production dependency advisories"
-            git push origin HEAD:feature/product-engine-safe-intake
-          fi
-
   verify:
     runs-on: ubuntu-latest
     timeout-minutes: 20
