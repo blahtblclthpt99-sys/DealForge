@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { ArrowRight, Boxes, Gauge, MousePointerClick, Users } from "lucide-react";
 import { AdminPanels } from "@/components/admin-panels";
 import { OwnerProductIntake } from "@/components/owner-product-intake";
 import { readSession } from "@/lib/auth";
@@ -73,64 +74,74 @@ export default async function AdminPage() {
     ...affiliateRuntimeReadiness(connector.id),
   }));
 
-  return (
-    <div className="dn-container py-12">
-      <div className="flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <p className="text-sm font-medium uppercase tracking-wide text-forest">Admin</p>
-          <h1 className="mt-1 font-display text-4xl font-semibold text-forest-ink">
-            Operations dashboard
-          </h1>
-          <p className="mt-2 text-forest-muted">
-            Affiliate readiness, imports, cache, users, and product database controls.
-          </p>
-        </div>
-        <Link href="/" className="text-sm text-forest hover:underline">
-          View storefront
-        </Link>
-      </div>
+  const metrics = [
+    { label: "Products", value: productCount, icon: Boxes },
+    { label: "Users", value: userCount, icon: Users },
+    { label: "Clicks", value: clickCount, icon: MousePointerClick },
+    { label: "CTR", value: `${ctr}%`, icon: Gauge },
+    { label: "Cache keys", value: cache.dbKeys + cache.memoryKeys, icon: Gauge },
+  ];
 
-      <div className="mt-8 grid grid-cols-2 gap-3 md:grid-cols-5">
-        {[
-          ["Products", productCount],
-          ["Users", userCount],
-          ["Clicks", clickCount],
-          ["CTR %", ctr],
-          ["Cache keys", cache.dbKeys + cache.memoryKeys],
-        ].map(([label, value]) => (
-          <div key={label as string} className="dn-card p-4">
-            <p className="text-xs uppercase tracking-wide text-forest-muted">{label}</p>
-            <p className="mt-1 text-2xl font-bold text-forest">{value as number}</p>
+  return (
+    <div className="dn-container py-10 sm:py-12 lg:py-14">
+      <section className="dn-card overflow-hidden">
+        <div className="flex flex-col gap-5 bg-[linear-gradient(135deg,color-mix(in_srgb,var(--card)_98%,transparent),color-mix(in_srgb,var(--forest-primary)_6%,var(--card)))] p-5 sm:p-7 lg:flex-row lg:items-end lg:justify-between">
+          <div>
+            <p className="text-xs font-extrabold uppercase tracking-[0.14em] text-forest">DealForge operations</p>
+            <h1 className="mt-2 font-display text-4xl font-semibold tracking-[-0.035em] text-forest-ink sm:text-5xl">Admin dashboard</h1>
+            <p className="mt-3 max-w-2xl text-sm leading-6 text-forest-muted">
+              Monitor catalog health, affiliate readiness, imports, cache state, users, and owner-only product intake from one operational workspace.
+            </p>
           </div>
-        ))}
-      </div>
+          <Link href="/" className="dn-button-secondary shrink-0">
+            View storefront <ArrowRight className="h-4 w-4" />
+          </Link>
+        </div>
+
+        <div className="grid grid-cols-2 border-t border-card-border md:grid-cols-5">
+          {metrics.map((metric, index) => {
+            const Icon = metric.icon;
+            return (
+              <div key={metric.label} className={`p-4 sm:p-5 ${index % 2 ? "border-l border-card-border" : ""} ${index >= 2 ? "border-t border-card-border md:border-t-0" : ""} ${index > 0 ? "md:border-l md:border-card-border" : ""}`}>
+                <div className="flex items-center gap-2 text-forest-muted">
+                  <Icon className="h-3.5 w-3.5" />
+                  <p className="text-[10px] font-extrabold uppercase tracking-[0.12em]">{metric.label}</p>
+                </div>
+                <p className="mt-2 text-2xl font-extrabold tracking-tight text-forest sm:text-3xl">{metric.value}</p>
+              </div>
+            );
+          })}
+        </div>
+      </section>
 
       {ownerTools ? <OwnerProductIntake /> : null}
 
-      <AdminPanels
-        providers={providers}
-        connectors={connectors}
-        importJobs={importJobs.map((j) => ({
-          ...j,
-          createdAt: j.createdAt.toISOString(),
-          startedAt: j.startedAt?.toISOString() ?? null,
-          finishedAt: j.finishedAt?.toISOString() ?? null,
-        }))}
-        logs={errorLogs.map((l) => ({
-          ...l,
-          createdAt: l.createdAt.toISOString(),
-        }))}
-        apiUsage={apiUsage.map((a) => ({
-          ...a,
-          createdAt: a.createdAt.toISOString(),
-        }))}
-        users={users.map((u) => ({
-          ...u,
-          createdAt: u.createdAt.toISOString(),
-        }))}
-        products={products}
-        cache={cache}
-      />
+      <div className="mt-8">
+        <AdminPanels
+          providers={providers}
+          connectors={connectors}
+          importJobs={importJobs.map((j) => ({
+            ...j,
+            createdAt: j.createdAt.toISOString(),
+            startedAt: j.startedAt?.toISOString() ?? null,
+            finishedAt: j.finishedAt?.toISOString() ?? null,
+          }))}
+          logs={errorLogs.map((l) => ({
+            ...l,
+            createdAt: l.createdAt.toISOString(),
+          }))}
+          apiUsage={apiUsage.map((a) => ({
+            ...a,
+            createdAt: a.createdAt.toISOString(),
+          }))}
+          users={users.map((u) => ({
+            ...u,
+            createdAt: u.createdAt.toISOString(),
+          }))}
+          products={products}
+          cache={cache}
+        />
+      </div>
     </div>
   );
 }
