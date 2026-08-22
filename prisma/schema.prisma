@@ -13,11 +13,11 @@ model User {
   email           String   @unique
   passwordHash    String
   role            String   @default("user") // user | admin
-  wishlist        String   @default("[]") // JSON array of product ids
-  savedSearches   String   @default("[]") // JSON array of SavedSearch
-  recentlyViewed  String   @default("[]") // JSON array of product ids
-  priceAlerts     String   @default("[]") // JSON array of PriceAlert
-  settings        String   @default("{}") // JSON account settings
+  wishlist        String   @default("[]")
+  savedSearches   String   @default("[]")
+  recentlyViewed  String   @default("[]")
+  priceAlerts     String   @default("[]")
+  settings        String   @default("{}")
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
   clicks          ClickEvent[]
@@ -33,40 +33,41 @@ model Category {
 }
 
 model Product {
-  id               String   @id @default(cuid())
-  asin             String?
-  slug             String   @unique
-  title            String
-  description      String
-  brand            String
-  categoryId       String
-  category         Category @relation(fields: [categoryId], references: [id])
-  /** Clothing dept: mens | womens | children | infant | unisex | shoes | accessories */
-  subcategory      String?
-  images           String   // JSON string array
-  /** Pack / unit count when known (e.g. 132 diapers). Shown as QNTY. */
-  quantity         Int?
-  price            Float
-  originalPrice    Float
-  discountPercent  Float    @default(0)
-  rating           Float    @default(0)
-  reviewCount      Int      @default(0)
-  affiliateUrl     String
-  retailer         String   @default("amazon")
-  availability     String   @default("in_stock")
-  specifications   String   @default("{}") // JSON
-  trendingScore    Float    @default(0)
-  clickCount       Int      @default(0)
-  viewCount        Int      @default(0)
-  isFeatured       Boolean  @default(false)
-  isFlashDeal      Boolean  @default(false)
-  flashEndsAt      DateTime?
-  lastUpdated      DateTime @default(now())
-  createdAt        DateTime @default(now())
+  id                String   @id @default(cuid())
+  asin              String?
+  slug              String   @unique
+  title             String
+  description       String
+  brand             String
+  categoryId        String
+  category          Category @relation(fields: [categoryId], references: [id])
+  subcategory       String?
+  images            String
+  quantity          Int?
+  price             Float
+  originalPrice     Float
+  discountPercent   Float    @default(0)
+  rating            Float    @default(0)
+  reviewCount       Int      @default(0)
+  affiliateUrl      String
+  retailer          String   @default("amazon")
+  availability      String   @default("in_stock")
+  specifications    String   @default("{}")
+  trendingScore     Float    @default(0)
+  clickCount        Int      @default(0)
+  viewCount         Int      @default(0)
+  isFeatured        Boolean  @default(false)
+  isFlashDeal       Boolean  @default(false)
+  flashEndsAt       DateTime?
+  commerceEnabled   Boolean  @default(false)
+  sellingPriceCents Int?
+  landedCostCents   Int?
+  currency          String   @default("usd")
+  lastUpdated       DateTime @default(now())
+  createdAt         DateTime @default(now())
 
   clicks ClickEvent[]
 
-  // Keep local/test behavior aligned with production duplicate protection.
   @@unique([retailer, asin])
   @@index([categoryId])
   @@index([subcategory])
@@ -79,6 +80,7 @@ model Product {
   @@index([brand])
   @@index([isFeatured])
   @@index([isFlashDeal])
+  @@index([commerceEnabled])
 }
 
 model AffiliateProvider {
@@ -86,7 +88,7 @@ model AffiliateProvider {
   provider       String   @unique
   displayName    String
   trackingId     String   @default("")
-  apiCredentials String   @default("{}") // JSON encrypted at rest in production
+  apiCredentials String   @default("{}")
   enabled        Boolean  @default(false)
   lastSyncAt     DateTime?
   lastSyncStatus String?
@@ -110,7 +112,7 @@ model ClickEvent {
 model ImportJob {
   id           String   @id @default(cuid())
   provider     String
-  status       String   @default("pending") // pending | running | success | error
+  status       String   @default("pending")
   itemsTotal   Int      @default(0)
   itemsSuccess Int      @default(0)
   itemsFailed  Int      @default(0)
@@ -152,4 +154,102 @@ model CacheEntry {
   createdAt DateTime @default(now())
 
   @@index([expiresAt])
+}
+
+model Order {
+  id                      String      @id @default(cuid())
+  orderNumber             String      @unique
+  checkoutKey             String      @unique
+  userId                  String?
+  email                   String
+  currency                String      @default("usd")
+  status                  String      @default("pending_payment")
+  subtotalCents           Int
+  shippingCents           Int         @default(0)
+  taxCents                Int         @default(0)
+  totalCents              Int
+  stripeCheckoutSessionId String?     @unique
+  stripePaymentIntentId   String?     @unique
+  paidAt                  DateTime?
+  canceledAt              DateTime?
+  createdAt               DateTime    @default(now())
+  updatedAt               DateTime    @updatedAt
+  items                   OrderItem[]
+  payments                Payment[]
+  refunds                 Refund[]
+
+  @@index([userId, createdAt])
+  @@index([email, createdAt])
+  @@index([status, createdAt])
+}
+
+model OrderItem {
+  id              String   @id @default(cuid())
+  orderId         String
+  order           Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId       String
+  productSlug     String
+  title           String
+  quantity        Int
+  unitPriceCents  Int
+  lineTotalCents  Int
+  landedCostCents Int?
+  createdAt       DateTime @default(now())
+
+  @@index([orderId])
+  @@index([productId])
+}
+
+model Payment {
+  id                String   @id @default(cuid())
+  orderId           String
+  order             Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  provider          String   @default("stripe")
+  providerPaymentId String   @unique
+  providerSessionId String?
+  status            String
+  amountCents       Int
+  currency          String
+  meta              String   @default("{}")
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  refunds           Refund[]
+
+  @@index([orderId])
+  @@index([status, createdAt])
+}
+
+model PaymentEvent {
+  id              String    @id @default(cuid())
+  providerEventId String    @unique
+  type            String
+  payloadSha256   String
+  status          String    @default("processed")
+  orderId         String?
+  error           String?
+  receivedAt      DateTime  @default(now())
+  processedAt     DateTime?
+
+  @@index([orderId])
+  @@index([type, receivedAt])
+}
+
+model Refund {
+  id               String   @id @default(cuid())
+  orderId          String
+  order            Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  paymentId        String?
+  payment          Payment? @relation(fields: [paymentId], references: [id], onDelete: SetNull)
+  providerRefundId String   @unique
+  idempotencyKey   String   @unique
+  amountCents      Int
+  currency         String
+  status           String
+  reason           String?
+  requestedBy      String
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([orderId])
+  @@index([status, createdAt])
 }
