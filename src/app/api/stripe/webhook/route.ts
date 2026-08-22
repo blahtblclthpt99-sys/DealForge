@@ -37,6 +37,13 @@ function paymentIntentId(object: Record<string, unknown>) {
   return null;
 }
 
+function eventObjectPaymentIntentId(object: Record<string, unknown>) {
+  const relatedIntent = paymentIntentId(object);
+  if (relatedIntent) return relatedIntent;
+  const objectId = asString(object.id);
+  return objectId?.startsWith("pi_") ? objectId : null;
+}
+
 async function resolveOrderId(
   tx: Prisma.TransactionClient,
   object: Record<string, unknown>,
@@ -47,7 +54,7 @@ async function resolveOrderId(
   const clientReferenceId = asString(object.client_reference_id);
   if (clientReferenceId) return clientReferenceId;
 
-  const intentId = paymentIntentId(object) || asString(object.id)?.startsWith("pi_") ? asString(object.id) : null;
+  const intentId = eventObjectPaymentIntentId(object);
   if (intentId) {
     const order = await tx.order.findUnique({
       where: { stripePaymentIntentId: intentId },
@@ -79,10 +86,11 @@ async function markPaymentSucceeded(
   object: Record<string, unknown>,
 ) {
   const order = await assertPaymentMatchesOrder(tx, orderId, object);
-  const intentId = paymentIntentId(object) || (asString(object.id)?.startsWith("pi_") ? asString(object.id) : null);
+  const intentId = eventObjectPaymentIntentId(object);
   if (!intentId) throw new Error("WEBHOOK_PAYMENT_INTENT_MISSING");
 
-  const sessionId = asString(object.id)?.startsWith("cs_") ? asString(object.id) : null;
+  const objectId = asString(object.id);
+  const sessionId = objectId?.startsWith("cs_") ? objectId : null;
   if (
     sessionId &&
     order.stripeCheckoutSessionId &&
@@ -131,7 +139,7 @@ async function markPaymentFailed(
 ) {
   const order = await tx.order.findUnique({ where: { id: orderId } });
   if (!order || order.status === "paid" || order.status === "refunded") return;
-  const intentId = paymentIntentId(object) || (asString(object.id)?.startsWith("pi_") ? asString(object.id) : null);
+  const intentId = eventObjectPaymentIntentId(object);
 
   if (intentId) {
     await tx.payment.upsert({
