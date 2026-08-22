@@ -17,12 +17,17 @@ import {
 import { useTheme } from "./theme-provider";
 import { cn } from "@/lib/utils";
 
+const MAX_QUERY_LENGTH = 120;
 const NAV = [
   { href: "/", label: "Home" },
   { href: "/categories", label: "Categories" },
   { href: "/deals", label: "Deal Watch" },
-  { href: "/search", label: "Search" },
+  { href: "/search", label: "Product Finder" },
 ];
+
+function cleanQuery(value: string) {
+  return value.replace(/[\u0000-\u001F\u007F]/g, " ").replace(/\s+/g, " ").slice(0, MAX_QUERY_LENGTH);
+}
 
 export function Header({
   user,
@@ -36,9 +41,9 @@ export function Header({
   const [q, setQ] = useState("");
   const open = menuPath === pathname;
 
-  function onSearch(e: React.FormEvent) {
-    e.preventDefault();
-    const query = q.trim();
+  function onSearch(event: React.FormEvent) {
+    event.preventDefault();
+    const query = cleanQuery(q).trim();
     setMenuPath(null);
     router.push(query ? `/search?q=${encodeURIComponent(query)}` : "/search");
   }
@@ -68,7 +73,7 @@ export function Header({
           </span>
         </Link>
 
-        <nav className="hidden items-center gap-1 md:flex">
+        <nav className="hidden items-center gap-1 md:flex" aria-label="Primary navigation">
           {NAV.map((item) => (
             <Link
               key={item.href}
@@ -85,13 +90,17 @@ export function Header({
           ))}
         </nav>
 
-        <form onSubmit={onSearch} className="ml-auto hidden max-w-md flex-1 md:flex">
+        <form onSubmit={onSearch} className="ml-auto hidden max-w-md flex-1 md:flex" role="search">
           <div className="relative w-full">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-white/45" />
             <input
               value={q}
-              onChange={(e) => setQ(e.target.value)}
-              placeholder="Search products & brands…"
+              onChange={(event) => setQ(cleanQuery(event.target.value))}
+              maxLength={MAX_QUERY_LENGTH}
+              type="search"
+              autoComplete="off"
+              aria-label="Search DealForge products"
+              placeholder="Find a product…"
               className="w-full rounded-full border border-white/10 bg-white/[0.07] py-2.5 pl-10 pr-4 text-sm text-white outline-none placeholder:text-white/35 focus:border-[#F97316]/70 focus:ring-2 focus:ring-[#F97316]/20"
             />
           </div>
@@ -153,6 +162,7 @@ export function Header({
             className="rounded-lg p-2 text-white/70 transition hover:bg-white/10 md:hidden"
             onClick={() => setMenuPath(open ? null : pathname)}
             aria-label="Menu"
+            aria-expanded={open}
           >
             {open ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
           </button>
@@ -161,13 +171,20 @@ export function Header({
 
       {open && (
         <div className="border-t border-white/10 bg-[#0f0f10] px-4 py-4 md:hidden">
-          <form onSubmit={onSearch} className="mb-3">
-            <input
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              placeholder="Search products…"
-              className="w-full rounded-xl border border-white/10 bg-white/[0.06] px-3 py-2.5 text-sm text-white outline-none placeholder:text-white/35 focus:border-[#F97316]/60 focus:ring-2 focus:ring-[#F97316]/20"
-            />
+          <form onSubmit={onSearch} className="mb-3" role="search">
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-white/45" />
+              <input
+                value={q}
+                onChange={(event) => setQ(cleanQuery(event.target.value))}
+                maxLength={MAX_QUERY_LENGTH}
+                type="search"
+                autoComplete="off"
+                aria-label="Search DealForge products"
+                placeholder="What are you looking for?"
+                className="min-h-11 w-full rounded-xl border border-white/10 bg-white/[0.06] py-2.5 pl-10 pr-3 text-sm text-white outline-none placeholder:text-white/35 focus:border-[#F97316]/60 focus:ring-2 focus:ring-[#F97316]/20"
+              />
+            </div>
           </form>
           <div className="flex flex-col gap-1">
             {NAV.map((item) => (
@@ -182,20 +199,8 @@ export function Header({
             ))}
             {!user && (
               <>
-                <Link
-                  href="/register"
-                  onClick={() => setMenuPath(null)}
-                  className="rounded-lg px-3 py-2.5 text-sm font-semibold text-[#FB923C] hover:bg-white/8"
-                >
-                  Register
-                </Link>
-                <Link
-                  href="/login"
-                  onClick={() => setMenuPath(null)}
-                  className="rounded-lg px-3 py-2.5 text-sm font-semibold text-white/80 hover:bg-white/8"
-                >
-                  Sign in
-                </Link>
+                <Link href="/register" onClick={() => setMenuPath(null)} className="rounded-lg px-3 py-2.5 text-sm font-semibold text-[#FB923C] hover:bg-white/8">Register</Link>
+                <Link href="/login" onClick={() => setMenuPath(null)} className="rounded-lg px-3 py-2.5 text-sm font-semibold text-white/80 hover:bg-white/8">Sign in</Link>
               </>
             )}
           </div>
