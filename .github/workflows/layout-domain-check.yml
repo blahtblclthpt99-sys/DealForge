@@ -1,0 +1,81 @@
+name: DealForge Layout Domain Check
+
+on:
+  push:
+    branches: [migration/cloudflare-workers]
+    paths: [.github/workflows/layout-domain-check.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-live-layout:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      WORKER_URL: https://dealforge.blahtblclthpt99.workers.dev
+      WWW_URL: https://www.deal-forge.sale
+      APEX_URL: https://deal-forge.sale
+      EXPECTED_SHA: ${{ github.sha }}
+    steps:
+      - name: Wait for exact Cloudflare deployment
+        shell: bash
+        run: |
+          set -euo pipefail
+          ready=0
+          for attempt in $(seq 1 30); do
+            code=$(curl -sS --max-time 20 -o /tmp/build.json -w '%{http_code}' "$WORKER_URL/api/build" || echo 000)
+            sha=""
+            if [[ "$code" == "200" ]]; then
+              sha=$(python - <<'PY'
+          import json
+          from pathlib import Path
+          try:
+              print(json.loads(Path('/tmp/build.json').read_text()).get('sha',''))
+          except Exception:
+              print('')
+          PY
+              )
+            fi
+            echo "attempt=$attempt code=$code deployed=${sha:-missing} expected=$EXPECTED_SHA"
+            if [[ "$code" == "200" && "$sha" == "$EXPECTED_SHA" ]]; then ready=1; break; fi
+            sleep 10
+          done
+          [[ "$ready" == "1" ]]
+
+      - name: Verify Worker layout and routes
+        shell: bash
+        run: |
+          set -euo pipefail
+          for path in / /categories /deals /search /login /register; do
+            body="/tmp/worker-$(echo "$path" | tr '/' '_').html"
+            code=$(curl -sS -L --max-time 30 -o "$body" -w '%{http_code}' "$WORKER_URL$path" || echo 000)
+            echo "worker $path -> $code"
+            [[ "$code" == "200" ]]
+            if [[ "$path" == "/" ]]; then grep -qi 'Forge better deals' "$body"; fi
+          done
+          for path in /dashboard /admin; do
+            code=$(curl -sS --max-time 30 --max-redirs 0 -o /dev/null -w '%{http_code}' "$WORKER_URL$path" || echo 000)
+            echo "worker $path -> $code"
+            [[ "$code" =~ ^30[2378]$ ]]
+          done
+
+      - name: Verify DNS delegation and custom domains
+        shell: bash
+        run: |
+          set -euo pipefail
+          ns=$(dig +short NS deal-forge.sale | tr '\n' ' ')
+          echo "nameservers=$ns"
+          [[ "$ns" == *"ns.cloudflare.com"* ]]
+          for base in "$WWW_URL" "$APEX_URL"; do
+            body=/tmp/domain.html
+            code=$(curl -sS -L --max-time 30 -o "$body" -w '%{http_code}' "$base/" || echo 000)
+            echo "$base -> $code"
+            [[ "$code" == "200" ]]
+            grep -qi 'Forge better deals' "$body"
+            build=$(curl -sS --max-time 30 "$base/api/build")
+            sha=$(printf '%s' "$build" | python -c 'import json,sys; print(json.load(sys.stdin).get("sha",""))')
+            echo "$base sha=$sha"
+            [[ "$sha" == "$EXPECTED_SHA" ]]
+          done
