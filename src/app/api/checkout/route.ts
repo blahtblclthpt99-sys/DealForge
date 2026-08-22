@@ -41,6 +41,16 @@ function appUrl(request: Request) {
   return configured || new URL(request.url).origin;
 }
 
+function classifyStripeCheckoutError(message: string) {
+  if (message === "STRIPE_SECRET_KEY_MISSING") return "STRIPE_SECRET_KEY_MISSING";
+  if (!message.startsWith("STRIPE_API_ERROR:")) return null;
+  const detail = message.slice("STRIPE_API_ERROR:".length);
+  if (/invalid api key|no api key/i.test(detail)) return "STRIPE_API_AUTH_FAILED";
+  if (/permission|not have access|restricted/i.test(detail)) return "STRIPE_API_PERMISSION_DENIED";
+  if (/minimum|min_amount|amount.*small|at least/i.test(detail)) return "STRIPE_AMOUNT_BELOW_MINIMUM";
+  return "STRIPE_API_REJECTED";
+}
+
 export async function POST(request: Request) {
   try {
     const parsed = CheckoutSchema.safeParse(await request.json());
@@ -100,6 +110,11 @@ export async function POST(request: Request) {
   } catch (error) {
     const message = error instanceof Error ? error.message : "UNKNOWN";
     if (message.startsWith("PRODUCT_NOT_PURCHASABLE") || message === "QUANTITY_LIMIT_EXCEEDED") return NextResponse.json({ error: message.split(":")[0] }, { status: 409 });
+    const stripeError = classifyStripeCheckoutError(message);
+    if (stripeError) {
+      console.error("checkout.create.stripe_failed", { error: stripeError });
+      return NextResponse.json({ error: stripeError }, { status: 503 });
+    }
     console.error("checkout.create.failed", { error: message });
     return NextResponse.json({ error: "CHECKOUT_UNAVAILABLE" }, { status: 503 });
   }
