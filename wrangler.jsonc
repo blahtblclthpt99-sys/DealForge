@@ -19,6 +19,9 @@
   "secrets": {
     "required": ["DATABASE_URL", "AUTH_SECRET", "STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET"]
   },
+  "build": {
+    "command": "node scripts/ensure-cloudflare-build.mjs"
+  },
   "assets": {
     "directory": ".open-next/assets",
     "binding": "ASSETS"
