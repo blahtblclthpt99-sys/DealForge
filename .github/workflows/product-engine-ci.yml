@@ -22,9 +22,9 @@ jobs:
         with:
           node-version: 20
           cache: npm
-      - name: Patch Next.js security backport and transitive production advisories
+      - name: Patch production framework and transitive advisories
         run: |
-          npm install next@15.5.23 --save-exact
+          npm install next@16.3.2 eslint-config-next@16.3.2 --save-exact
           npm audit fix --omit=dev
           npm audit --omit=dev --audit-level=high
       - name: Commit regenerated package lock
