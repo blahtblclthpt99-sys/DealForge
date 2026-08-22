@@ -1,0 +1,24 @@
+name: Current Production Fingerprint
+
+on:
+  pull_request:
+    branches:
+      - migration/cloudflare-workers
+    paths:
+      - .github/workflows/current-production-fingerprint.yml
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Read current production SHA
+        shell: bash
+        run: |
+          set -euo pipefail
+          code=$(curl --silent --show-error --max-time 20 --output /tmp/build.json --write-out '%{http_code}' https://www.deal-forge.sale/api/build)
+          echo "http=$code"
+          cat /tmp/build.json
+          [[ "$code" == "200" ]]
