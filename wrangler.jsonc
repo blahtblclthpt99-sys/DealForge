@@ -17,7 +17,7 @@
     }
   ],
   "secrets": {
-    "required": ["DATABASE_URL", "AUTH_SECRET", "STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET"]
+    "required": ["DATABASE_URL", "AUTH_SECRET"]
   },
   "build": {
     "command": "node scripts/ensure-cloudflare-build.mjs"
