@@ -1,0 +1,60 @@
+name: Stripe Payment Integrity CI
+
+on:
+  pull_request:
+    branches:
+      - migration/cloudflare-workers
+  push:
+    branches:
+      - migration/cloudflare-workers
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CLOUDFLARE_WORKERS: "1"
+      DATABASE_URL: postgresql://dealforge:ci-only@db.invalid/dealforge?sslmode=require
+      AUTH_SECRET: ci-only-not-for-production-00000000000000000000000000000000
+      NEXT_PUBLIC_APP_URL: https://www.deal-forge.sale
+      NEXT_PUBLIC_APP_NAME: DealForge
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci --no-fund --no-audit
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Stripe unit tests
+        run: npx tsx --test tests/stripe-commerce.test.ts
+
+      - name: Webhook refund-state regression guard
+        run: |
+          set -euo pipefail
+          grep -Fq 'const status = refunded >= order.totalCents ? "refunded" : refunded > 0 ? "partially_refunded" : "paid"' src/app/api/stripe/webhook/route.ts
+          grep -Fq '["paid", "partially_refunded", "refunded"].includes(order.status)' src/app/api/stripe/webhook/route.ts
+
+      - name: Build for Cloudflare
+        run: npm run cf:build
+
+      - name: Wrangler dry-run
+        run: npm run cf:dry-run
+
+      - name: Production dependency audit
+        run: npm audit --omit=dev --audit-level=high

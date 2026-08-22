@@ -50,6 +50,14 @@ async function assertPaymentMatchesOrder(tx: Prisma.TransactionClient, orderId: 
   return order;
 }
 
+async function succeededRefundTotal(tx: Prisma.TransactionClient, orderId: string) {
+  const totals = await tx.refund.aggregate({
+    where: { orderId, status: "succeeded" },
+    _sum: { amountCents: true },
+  });
+  return totals._sum.amountCents || 0;
+}
+
 async function markPaymentSucceeded(tx: Prisma.TransactionClient, orderId: string, object: Record<string, unknown>) {
   const order = await assertPaymentMatchesOrder(tx, orderId, object);
   const intentId = eventObjectPaymentIntentId(object);
@@ -64,12 +72,25 @@ async function markPaymentSucceeded(tx: Prisma.TransactionClient, orderId: strin
     create: { orderId, providerPaymentId: intentId, providerSessionId: sessionId || order.stripeCheckoutSessionId, status: "succeeded", amountCents: order.totalCents, currency: order.currency, meta: JSON.stringify({ source: "stripe_webhook" }) },
     update: { status: "succeeded", providerSessionId: sessionId || order.stripeCheckoutSessionId, amountCents: order.totalCents, currency: order.currency },
   });
-  await tx.order.update({ where: { id: orderId }, data: { status: "paid", stripeCheckoutSessionId: sessionId || order.stripeCheckoutSessionId, stripePaymentIntentId: intentId, paidAt: order.paidAt || new Date() } });
+
+  const refunded = await succeededRefundTotal(tx, orderId);
+  if (refunded > order.totalCents) throw new Error("REFUND_LEDGER_OVERFLOW");
+  const status = refunded >= order.totalCents ? "refunded" : refunded > 0 ? "partially_refunded" : "paid";
+
+  await tx.order.update({
+    where: { id: orderId },
+    data: {
+      status,
+      stripeCheckoutSessionId: sessionId || order.stripeCheckoutSessionId,
+      stripePaymentIntentId: intentId,
+      paidAt: order.paidAt || new Date(),
+    },
+  });
 }
 
 async function markPaymentFailed(tx: Prisma.TransactionClient, orderId: string, object: Record<string, unknown>) {
   const order = await tx.order.findUnique({ where: { id: orderId } });
-  if (!order || ["paid", "refunded"].includes(order.status)) return;
+  if (!order || ["paid", "partially_refunded", "refunded"].includes(order.status)) return;
   const intentId = eventObjectPaymentIntentId(object);
   if (intentId) {
     await tx.payment.upsert({
@@ -98,8 +119,7 @@ async function reconcileRefund(tx: Prisma.TransactionClient, object: Record<stri
     create: { orderId: order.id, paymentId: payment?.id || null, providerRefundId: refundId, idempotencyKey: `stripe-refund:${refundId}`, amountCents, currency, status, reason: asString(object.reason), requestedBy: "stripe" },
     update: { paymentId: payment?.id || undefined, amountCents, currency, status, reason: asString(object.reason) },
   });
-  const totals = await tx.refund.aggregate({ where: { orderId: order.id, status: "succeeded" }, _sum: { amountCents: true } });
-  const refunded = totals._sum.amountCents || 0;
+  const refunded = await succeededRefundTotal(tx, order.id);
   if (refunded > order.totalCents) throw new Error("REFUND_LEDGER_OVERFLOW");
   await tx.order.update({ where: { id: order.id }, data: { status: refunded >= order.totalCents ? "refunded" : refunded > 0 ? "partially_refunded" : order.status } });
   return order.id;
