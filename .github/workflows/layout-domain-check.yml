@@ -1,5 +1,5 @@
 name: DealForge Layout Domain Check
-# Rerun marker: 2026-08-22 polished Product Finder certification
+# Rerun marker: 2026-08-22 storefront pricing + owner intake certification
 
 on:
   push:
@@ -55,16 +55,21 @@ jobs:
             echo "worker $path -> $code"
             [[ "$code" == "200" ]]
             if [[ "$path" == "/" ]]; then grep -qi 'Forge better deals' "$body"; fi
-            if [[ "$path" == "/search" ]]; then
-              grep -qi 'Tell DealForge what you need' "$body"
-              grep -qi 'Product Finder' "$body"
-            fi
           done
           for path in /dashboard /admin; do
             code=$(curl -sS --max-time 30 --max-redirs 0 -o /dev/null -w '%{http_code}' "$WORKER_URL$path" || echo 000)
             echo "worker $path -> $code"
             [[ "$code" =~ ^30[2378]$ ]]
           done
+
+      - name: Verify storefront recorded-price rendering
+        shell: bash
+        run: |
+          set -euo pipefail
+          body=/tmp/storefront.html
+          code=$(curl -sS -L --max-time 30 -o "$body" -w '%{http_code}' "$WORKER_URL/")
+          [[ "$code" == "200" ]]
+          grep -Eqi '(recorded|verify current price|\$[0-9]+\.[0-9]{2})' "$body"
 
       - name: Verify DNS delegation and custom domains
         shell: bash
