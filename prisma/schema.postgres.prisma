@@ -12,12 +12,12 @@ model User {
   name            String
   email           String   @unique
   passwordHash    String
-  role            String   @default("user") // user | admin
-  wishlist        String   @default("[]") // JSON array of product ids
-  savedSearches   String   @default("[]") // JSON array of SavedSearch
-  recentlyViewed  String   @default("[]") // JSON array of product ids
-  priceAlerts     String   @default("[]") // JSON array of PriceAlert
-  settings        String   @default("{}") // JSON account settings
+  role            String   @default("user")
+  wishlist        String   @default("[]")
+  savedSearches   String   @default("[]")
+  recentlyViewed  String   @default("[]")
+  priceAlerts     String   @default("[]")
+  settings        String   @default("{}")
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
   clicks          ClickEvent[]
@@ -41,10 +41,8 @@ model Product {
   brand            String
   categoryId       String
   category         Category @relation(fields: [categoryId], references: [id])
-  /** Clothing dept: mens | womens | children | infant | unisex | shoes | accessories */
   subcategory      String?
-  images           String   // JSON string array
-  /** Pack / unit count when known (e.g. 132 diapers). Shown as QNTY. */
+  images           String
   quantity         Int?
   price            Float
   originalPrice    Float
@@ -54,7 +52,11 @@ model Product {
   affiliateUrl     String
   retailer         String   @default("amazon")
   availability     String   @default("in_stock")
-  specifications   String   @default("{}") // JSON
+  specifications   String   @default("{}")
+  priceSource      String?
+  priceVerifiedAt  DateTime?
+  metadataSource   String?
+  metadataVerifiedAt DateTime?
   trendingScore    Float    @default(0)
   clickCount       Int      @default(0)
   viewCount        Int      @default(0)
@@ -84,7 +86,7 @@ model AffiliateProvider {
   provider       String   @unique
   displayName    String
   trackingId     String   @default("")
-  apiCredentials String   @default("{}") // JSON encrypted at rest in production
+  apiCredentials String   @default("{}")
   enabled        Boolean  @default(false)
   lastSyncAt     DateTime?
   lastSyncStatus String?
@@ -108,7 +110,7 @@ model ClickEvent {
 model ImportJob {
   id           String   @id @default(cuid())
   provider     String
-  status       String   @default("pending") // pending | running | success | error
+  status       String   @default("pending")
   itemsTotal   Int      @default(0)
   itemsSuccess Int      @default(0)
   itemsFailed  Int      @default(0)
@@ -150,4 +152,85 @@ model CacheEntry {
   createdAt DateTime @default(now())
 
   @@index([expiresAt])
+}
+
+model ProductCandidate {
+  id                 String   @id @default(cuid())
+  asin               String   @unique
+  idempotencyKey     String   @unique
+  sourceType         String
+  sourceUrl          String?
+  sourceObservedAt   DateTime @default(now())
+  scout              String
+  titleCandidate     String?
+  brandCandidate     String?
+  descriptionCandidate String?
+  imagesCandidate    String   @default("[]")
+  categoryCandidate  String?
+  normalizedCategory String?
+  ownerSpecialLink   String?
+  variationKey       String?
+  state              String   @default("discovered")
+  validationResult   String   @default("pending")
+  validationDetail   String   @default("{}")
+  classification     String?
+  score              Float    @default(0)
+  rejectionReason    String?
+  duplicateOfId      String?
+  attemptCount       Int      @default(0)
+  maxAttempts        Int      @default(4)
+  nextAttemptAt      DateTime?
+  lastError          String?
+  deadLetteredAt     DateTime?
+  publishedProductId String?
+  publishedAt        DateTime?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@index([state, nextAttemptAt])
+  @@index([normalizedCategory])
+  @@index([scout])
+  @@index([variationKey])
+  @@index([createdAt])
+}
+
+model ProductEngineWorkerState {
+  id              String   @id @default(cuid())
+  worker          String   @unique
+  status          String   @default("idle")
+  healthy         Boolean  @default(true)
+  lastHeartbeatAt DateTime?
+  lastRunAt       DateTime?
+  lastSuccessAt   DateTime?
+  processedCount  Int      @default(0)
+  errorCount      Int      @default(0)
+  lastError       String?
+  updatedAt       DateTime @updatedAt
+}
+
+model ProductEngineConfig {
+  id                  String   @id @default("default")
+  paused              Boolean  @default(false)
+  acceptanceThreshold Float    @default(70)
+  categoryQuota       Int      @default(50)
+  maxConcurrency      Int      @default(4)
+  maxVariations       Int      @default(3)
+  lastRunAt           DateTime?
+  lastPublishedAt     DateTime?
+  updatedAt           DateTime @updatedAt
+}
+
+model ProductEngineAudit {
+  id          String   @id @default(cuid())
+  candidateId String?
+  actor       String
+  action      String
+  fromState   String?
+  toState     String?
+  detail      String   @default("{}")
+  createdAt   DateTime @default(now())
+
+  @@index([candidateId])
+  @@index([action])
+  @@index([createdAt])
 }
