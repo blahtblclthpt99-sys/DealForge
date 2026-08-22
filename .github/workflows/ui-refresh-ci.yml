@@ -59,6 +59,9 @@ jobs:
           grep -q 'Verify current price' src/components/product-card.tsx
           grep -q 'Final price, availability, shipping, and checkout are confirmed' src/components/buy-button.tsx
           grep -q 'rel="noopener noreferrer sponsored nofollow"' src/components/buy-button.tsx
+          grep -q 'encodeURIComponent(pathname' src/components/wishlist-button.tsx
+          ! grep -q 'next=/product/' src/components/wishlist-button.tsx
+          grep -q 'if (!res.ok)' src/components/logout-button.tsx
           grep -q 'Permanently delete your DealForge account' src/components/settings-form.tsx
           grep -q 'confirmation: deleteConfirmation' src/components/settings-form.tsx
           grep -q 'ownerTools ? <OwnerProductIntake' src/app/admin/page.tsx
