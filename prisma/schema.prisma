@@ -63,6 +63,10 @@ model Product {
   isFeatured         Boolean  @default(false)
   isFlashDeal        Boolean  @default(false)
   flashEndsAt        DateTime?
+  commerceEnabled    Boolean  @default(false)
+  sellingPriceCents  Int?
+  landedCostCents    Int?
+  currency           String   @default("usd")
   lastUpdated        DateTime @default(now())
   createdAt          DateTime @default(now())
 
@@ -79,6 +83,7 @@ model Product {
   @@index([brand])
   @@index([isFeatured])
   @@index([isFlashDeal])
+  @@index([commerceEnabled])
 }
 
 model AffiliateProvider {
@@ -233,4 +238,102 @@ model ProductEngineAudit {
   @@index([candidateId])
   @@index([action])
   @@index([createdAt])
+}
+
+model Order {
+  id                      String      @id @default(cuid())
+  orderNumber             String      @unique
+  checkoutKey             String      @unique
+  userId                  String?
+  email                   String
+  currency                String      @default("usd")
+  status                  String      @default("pending_payment")
+  subtotalCents           Int
+  shippingCents           Int         @default(0)
+  taxCents                Int         @default(0)
+  totalCents              Int
+  stripeCheckoutSessionId String?     @unique
+  stripePaymentIntentId   String?     @unique
+  paidAt                  DateTime?
+  canceledAt              DateTime?
+  createdAt               DateTime    @default(now())
+  updatedAt               DateTime    @updatedAt
+  items                   OrderItem[]
+  payments                Payment[]
+  refunds                 Refund[]
+
+  @@index([userId, createdAt])
+  @@index([email, createdAt])
+  @@index([status, createdAt])
+}
+
+model OrderItem {
+  id              String   @id @default(cuid())
+  orderId         String
+  order           Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId       String
+  productSlug     String
+  title           String
+  quantity        Int
+  unitPriceCents  Int
+  lineTotalCents  Int
+  landedCostCents Int?
+  createdAt       DateTime @default(now())
+
+  @@index([orderId])
+  @@index([productId])
+}
+
+model Payment {
+  id                String   @id @default(cuid())
+  orderId           String
+  order             Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  provider          String   @default("stripe")
+  providerPaymentId String   @unique
+  providerSessionId String?
+  status            String
+  amountCents       Int
+  currency          String
+  meta              String   @default("{}")
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  refunds           Refund[]
+
+  @@index([orderId])
+  @@index([status, createdAt])
+}
+
+model PaymentEvent {
+  id              String    @id @default(cuid())
+  providerEventId String    @unique
+  type            String
+  payloadSha256   String
+  status          String    @default("processed")
+  orderId         String?
+  error           String?
+  receivedAt      DateTime  @default(now())
+  processedAt     DateTime?
+
+  @@index([orderId])
+  @@index([type, receivedAt])
+}
+
+model Refund {
+  id               String   @id @default(cuid())
+  orderId          String
+  order            Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  paymentId        String?
+  payment          Payment? @relation(fields: [paymentId], references: [id], onDelete: SetNull)
+  providerRefundId String   @unique
+  idempotencyKey   String   @unique
+  amountCents      Int
+  currency         String
+  status           String
+  reason           String?
+  requestedBy      String
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([orderId])
+  @@index([status, createdAt])
 }

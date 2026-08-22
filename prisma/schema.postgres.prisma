@@ -33,38 +33,42 @@ model Category {
 }
 
 model Product {
-  id               String   @id @default(cuid())
-  asin             String?
-  slug             String   @unique
-  title            String
-  description      String
-  brand            String
-  categoryId       String
-  category         Category @relation(fields: [categoryId], references: [id])
-  subcategory      String?
-  images           String
-  quantity         Int?
-  price            Float
-  originalPrice    Float
-  discountPercent  Float    @default(0)
-  rating           Float    @default(0)
-  reviewCount      Int      @default(0)
-  affiliateUrl     String
-  retailer         String   @default("amazon")
-  availability     String   @default("in_stock")
-  specifications   String   @default("{}")
-  priceSource      String?
-  priceVerifiedAt  DateTime?
-  metadataSource   String?
+  id                 String   @id @default(cuid())
+  asin               String?
+  slug               String   @unique
+  title              String
+  description        String
+  brand              String
+  categoryId         String
+  category           Category @relation(fields: [categoryId], references: [id])
+  subcategory        String?
+  images             String
+  quantity           Int?
+  price              Float
+  originalPrice      Float
+  discountPercent    Float    @default(0)
+  rating             Float    @default(0)
+  reviewCount        Int      @default(0)
+  affiliateUrl       String
+  retailer           String   @default("amazon")
+  availability       String   @default("in_stock")
+  specifications     String   @default("{}")
+  priceSource        String?
+  priceVerifiedAt    DateTime?
+  metadataSource     String?
   metadataVerifiedAt DateTime?
-  trendingScore    Float    @default(0)
-  clickCount       Int      @default(0)
-  viewCount        Int      @default(0)
-  isFeatured       Boolean  @default(false)
-  isFlashDeal      Boolean  @default(false)
-  flashEndsAt      DateTime?
-  lastUpdated      DateTime @default(now())
-  createdAt        DateTime @default(now())
+  trendingScore      Float    @default(0)
+  clickCount         Int      @default(0)
+  viewCount          Int      @default(0)
+  isFeatured         Boolean  @default(false)
+  isFlashDeal        Boolean  @default(false)
+  flashEndsAt        DateTime?
+  commerceEnabled    Boolean  @default(false)
+  sellingPriceCents  Int?
+  landedCostCents    Int?
+  currency           String   @default("usd")
+  lastUpdated        DateTime @default(now())
+  createdAt          DateTime @default(now())
 
   clicks ClickEvent[]
 
@@ -79,6 +83,7 @@ model Product {
   @@index([brand])
   @@index([isFeatured])
   @@index([isFlashDeal])
+  @@index([commerceEnabled])
 }
 
 model AffiliateProvider {
@@ -155,37 +160,37 @@ model CacheEntry {
 }
 
 model ProductCandidate {
-  id                 String   @id @default(cuid())
-  asin               String   @unique
-  idempotencyKey     String   @unique
-  sourceType         String
-  sourceUrl          String?
-  sourceObservedAt   DateTime @default(now())
-  scout              String
-  titleCandidate     String?
-  brandCandidate     String?
+  id                   String   @id @default(cuid())
+  asin                 String   @unique
+  idempotencyKey       String   @unique
+  sourceType           String
+  sourceUrl            String?
+  sourceObservedAt     DateTime @default(now())
+  scout                String
+  titleCandidate       String?
+  brandCandidate       String?
   descriptionCandidate String?
-  imagesCandidate    String   @default("[]")
-  categoryCandidate  String?
-  normalizedCategory String?
-  ownerSpecialLink   String?
-  variationKey       String?
-  state              String   @default("discovered")
-  validationResult   String   @default("pending")
-  validationDetail   String   @default("{}")
-  classification     String?
-  score              Float    @default(0)
-  rejectionReason    String?
-  duplicateOfId      String?
-  attemptCount       Int      @default(0)
-  maxAttempts        Int      @default(4)
-  nextAttemptAt      DateTime?
-  lastError          String?
-  deadLetteredAt     DateTime?
-  publishedProductId String?
-  publishedAt        DateTime?
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  imagesCandidate      String   @default("[]")
+  categoryCandidate    String?
+  normalizedCategory   String?
+  ownerSpecialLink     String?
+  variationKey         String?
+  state                String   @default("discovered")
+  validationResult     String   @default("pending")
+  validationDetail     String   @default("{}")
+  classification       String?
+  score                Float    @default(0)
+  rejectionReason      String?
+  duplicateOfId        String?
+  attemptCount         Int      @default(0)
+  maxAttempts          Int      @default(4)
+  nextAttemptAt        DateTime?
+  lastError            String?
+  deadLetteredAt       DateTime?
+  publishedProductId   String?
+  publishedAt          DateTime?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
 
   @@index([state, nextAttemptAt])
   @@index([normalizedCategory])
@@ -233,4 +238,102 @@ model ProductEngineAudit {
   @@index([candidateId])
   @@index([action])
   @@index([createdAt])
+}
+
+model Order {
+  id                      String      @id @default(cuid())
+  orderNumber             String      @unique
+  checkoutKey             String      @unique
+  userId                  String?
+  email                   String
+  currency                String      @default("usd")
+  status                  String      @default("pending_payment")
+  subtotalCents           Int
+  shippingCents           Int         @default(0)
+  taxCents                Int         @default(0)
+  totalCents              Int
+  stripeCheckoutSessionId String?     @unique
+  stripePaymentIntentId   String?     @unique
+  paidAt                  DateTime?
+  canceledAt              DateTime?
+  createdAt               DateTime    @default(now())
+  updatedAt               DateTime    @updatedAt
+  items                   OrderItem[]
+  payments                Payment[]
+  refunds                 Refund[]
+
+  @@index([userId, createdAt])
+  @@index([email, createdAt])
+  @@index([status, createdAt])
+}
+
+model OrderItem {
+  id               String   @id @default(cuid())
+  orderId          String
+  order            Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId        String
+  productSlug      String
+  title            String
+  quantity         Int
+  unitPriceCents   Int
+  lineTotalCents   Int
+  landedCostCents  Int?
+  createdAt        DateTime @default(now())
+
+  @@index([orderId])
+  @@index([productId])
+}
+
+model Payment {
+  id                String   @id @default(cuid())
+  orderId           String
+  order             Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  provider          String   @default("stripe")
+  providerPaymentId String   @unique
+  providerSessionId String?
+  status            String
+  amountCents       Int
+  currency          String
+  meta              String   @default("{}")
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  refunds           Refund[]
+
+  @@index([orderId])
+  @@index([status, createdAt])
+}
+
+model PaymentEvent {
+  id              String    @id @default(cuid())
+  providerEventId String    @unique
+  type            String
+  payloadSha256   String
+  status          String    @default("processed")
+  orderId         String?
+  error           String?
+  receivedAt      DateTime  @default(now())
+  processedAt     DateTime?
+
+  @@index([orderId])
+  @@index([type, receivedAt])
+}
+
+model Refund {
+  id               String   @id @default(cuid())
+  orderId          String
+  order            Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  paymentId        String?
+  payment          Payment? @relation(fields: [paymentId], references: [id], onDelete: SetNull)
+  providerRefundId String   @unique
+  idempotencyKey   String   @unique
+  amountCents      Int
+  currency         String
+  status           String
+  reason           String?
+  requestedBy      String
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([orderId])
+  @@index([status, createdAt])
 }
