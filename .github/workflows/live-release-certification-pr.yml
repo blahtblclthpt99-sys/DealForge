@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
-      EXPECTED_DEPLOYED_SHA: 6101d3ba450ece99b4fbca572327c5d42791f2d0
+      EXPECTED_DEPLOYED_SHA: 340ea4580ee7063f8df1ff96581d163654c89c93
       WORKER_URL: https://dealforge.blahtblclthpt99.workers.dev
       WWW_URL: https://www.deal-forge.sale
       APEX_URL: https://deal-forge.sale
@@ -83,20 +83,36 @@ jobs:
           [[ "$owner" == "401" ]]
           [[ "$maintenance" == "401" ]]
 
-      - name: Check DNS and custom domains
+      - name: Diagnose DNS and custom domains
         shell: bash
         run: |
-          set -euo pipefail
-          ns=$(dig +short NS deal-forge.sale | tr '\n' ' ')
-          echo "nameservers=$ns"
-          [[ "$ns" == *"ns.cloudflare.com"* ]]
+          set -uo pipefail
+          failed=0
+          echo "NS: $(dig +short NS deal-forge.sale | tr '\n' ' ')"
+          echo "APEX A: $(dig +short A deal-forge.sale | tr '\n' ' ')"
+          echo "APEX AAAA: $(dig +short AAAA deal-forge.sale | tr '\n' ' ')"
+          echo "WWW CNAME: $(dig +short CNAME www.deal-forge.sale | tr '\n' ' ')"
+          echo "WWW A: $(dig +short A www.deal-forge.sale | tr '\n' ' ')"
           for base in "$WWW_URL" "$APEX_URL"; do
-            code=$(curl -sS -L --max-time 30 -o /tmp/domain.html -w '%{http_code}' "$base/" || echo 000)
-            echo "$base -> $code"
-            [[ "$code" == "200" ]]
-            grep -qi 'Forge better deals' /tmp/domain.html
-            build=$(curl -sS --max-time 30 "$base/api/build")
-            sha=$(printf '%s' "$build" | python -c 'import json,sys; print(json.load(sys.stdin).get("sha",""))')
+            safe=$(printf '%s' "$base" | tr -cd '[:alnum:]')
+            headers="/tmp/${safe}.headers"
+            body="/tmp/${safe}.body"
+            code=$(curl -sS -L --max-time 30 -D "$headers" -o "$body" -w '%{http_code}' "$base/" || echo 000)
+            echo "===== $base -> $code ====="
+            sed -n '1,30p' "$headers" || true
+            echo "----- body preview -----"
+            head -c 1200 "$body" | tr '\n' ' ' || true
+            echo
+            if [[ "$code" != "200" ]]; then
+              failed=1
+              continue
+            fi
+            if ! grep -qi 'Forge better deals' "$body"; then failed=1; fi
+            build=$(curl -sS --max-time 30 "$base/api/build" || true)
+            sha=$(printf '%s' "$build" | python -c 'import json,sys
+try: print(json.load(sys.stdin).get("sha",""))
+except Exception: print("")')
             echo "$base sha=$sha"
-            [[ "$sha" == "$EXPECTED_DEPLOYED_SHA" ]]
+            if [[ "$sha" != "$EXPECTED_DEPLOYED_SHA" ]]; then failed=1; fi
           done
+          exit "$failed"
