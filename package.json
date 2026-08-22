@@ -5,8 +5,14 @@
   "description": "DealForge — affiliate product discovery platform",
   "scripts": {
     "dev": "next dev",
-    "build": "node scripts/prisma-generate.js && next build",
+    "build": "node scripts/prisma-generate.mjs && next build",
     "build:vercel": "prisma generate --schema=prisma/schema.postgres.prisma && next build",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test tests/*.test.ts",
+    "test:product-engine": "tsx --test tests/product-engine.test.ts",
+    "prisma:validate": "node scripts/validate-prisma.mjs",
+    "prisma:generate:all": "prisma generate --schema=prisma/schema.prisma && prisma generate --schema=prisma/schema.postgres.prisma",
+    "gate:ship": "npm run lint && npm run typecheck && npm test && npm run prisma:validate && npm run build",
     "db:push:postgres": "prisma db push --schema=prisma/schema.postgres.prisma",
     "db:setup:postgres": "prisma db push --schema=prisma/schema.postgres.prisma && tsx prisma/seed.ts",
     "start": "next start",
@@ -28,7 +34,7 @@
     "worker": "tsx src/workers/index.ts",
     "website:package": "powershell -ExecutionPolicy Bypass -File scripts/package-website.ps1",
     "deploy:vercel": "vercel --prod",
-    "postinstall": "node scripts/prisma-generate.js"
+    "postinstall": "node scripts/prisma-generate.mjs"
   },
   "dependencies": {
     "@prisma/client": "^6.9.0",
@@ -36,7 +42,7 @@
     "clsx": "^2.1.1",
     "jose": "^6.2.3",
     "lucide-react": "^1.24.0",
-    "next": "^15.5.20",
+    "next": "16.3.2",
     "prisma": "^6.9.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
@@ -52,7 +58,7 @@
     "@types/react-dom": "^19",
     "csv-parse": "^7.0.1",
     "eslint": "^9",
-    "eslint-config-next": "16.2.10",
+    "eslint-config-next": "16.3.2",
     "playwright": "^1.61.1",
     "tailwindcss": "^4",
     "typescript": "^5"

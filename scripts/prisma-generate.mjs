@@ -1,7 +1,4 @@
-/**
- * Pick SQLite schema locally, Postgres schema on Vercel / when DATABASE_URL is Postgres.
- */
-const { execSync } = require("child_process");
+import { execFileSync } from "node:child_process";
 
 const url = process.env.DATABASE_URL || "";
 const usePostgres =
@@ -11,4 +8,5 @@ const usePostgres =
 
 const schema = usePostgres ? "prisma/schema.postgres.prisma" : "prisma/schema.prisma";
 console.log(`[prisma-generate] schema=${schema}`);
-execSync(`npx prisma generate --schema=${schema}`, { stdio: "inherit" });
+const npx = process.platform === "win32" ? "npx.cmd" : "npx";
+execFileSync(npx, ["prisma", "generate", `--schema=${schema}`], { stdio: "inherit" });

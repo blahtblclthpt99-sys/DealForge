@@ -1,0 +1,75 @@
+name: Product Engine CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [feature/product-engine-safe-intake]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: dealforge
+          POSTGRES_PASSWORD: dealforge
+          POSTGRES_DB: dealforge_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U dealforge -d dealforge_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://dealforge:dealforge@localhost:5432/dealforge_ci?schema=public
+      PGPASSWORD: dealforge
+      AUTH_SECRET: ci-only-auth-secret-not-for-production
+      PRODUCT_ENGINE_OWNER_EMAIL: owner@example.test
+      NEXT_PUBLIC_APP_URL: http://localhost:3000
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - name: Install exactly locked dependencies
+        run: npm ci
+      - name: Production dependency security audit
+        run: npm audit --omit=dev --audit-level=high
+      - name: Lint
+        run: npm run lint
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Validate Prisma schemas
+        run: npm run prisma:validate
+      - name: Test clean PostgreSQL migration chain
+        run: npx prisma migrate deploy --schema=prisma/schema.postgres.prisma
+      - name: Reset database for existing-install upgrade test
+        run: psql -h localhost -U dealforge -d dealforge_ci -v ON_ERROR_STOP=1 -c 'DROP SCHEMA public CASCADE; CREATE SCHEMA public;'
+      - name: Recreate pre-feature DealForge database
+        run: |
+          git show origin/main:prisma/schema.postgres.prisma > prisma/schema.pre-feature.prisma
+          npx prisma db push --schema=prisma/schema.pre-feature.prisma --skip-generate
+      - name: Baseline existing database safely
+        run: npx prisma migrate resolve --applied 20260822000000_dealforge_baseline --schema=prisma/schema.postgres.prisma
+      - name: Apply Product Engine migration over existing database
+        run: npx prisma migrate deploy --schema=prisma/schema.postgres.prisma
+      - name: Verify Product Engine schema is usable after migration
+        run: npx prisma db push --schema=prisma/schema.postgres.prisma --skip-generate
+      - name: Complete test suite
+        run: npm test
+      - name: Product Engine tests explicitly
+        run: npm run test:product-engine
+      - name: Production build
+        run: npm run build
+      - name: Release gate
+        run: npm run gate:ship
