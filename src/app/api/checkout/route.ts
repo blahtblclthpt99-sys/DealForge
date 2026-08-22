@@ -15,6 +15,8 @@ const CheckoutSchema = z.object({
 
 type RequestedItem = z.infer<typeof CheckoutSchema>["items"][number];
 
+type CheckoutStage = "request" | "session" | "product_lookup" | "order_create" | "stripe_checkout" | "order_update";
+
 function orderNumber() {
   const time = Date.now().toString(36).toUpperCase();
   const entropy = randomBytes(4).toString("hex").toUpperCase();
@@ -43,19 +45,27 @@ function appUrl(request: Request) {
 
 function classifyStripeCheckoutError(message: string) {
   if (message === "STRIPE_SECRET_KEY_MISSING") return "STRIPE_SECRET_KEY_MISSING";
+  if (message === "STRIPE_CHECKOUT_SESSION_INVALID") return "STRIPE_CHECKOUT_SESSION_INVALID";
+  if (message === "STRIPE_SESSION_MISMATCH") return "STRIPE_SESSION_MISMATCH";
+  if (/fetch failed|network|socket|tls|connect|timeout/i.test(message)) return "STRIPE_NETWORK_FAILED";
+  if (/json|unexpected token|unexpected end/i.test(message)) return "STRIPE_RESPONSE_PARSE_FAILED";
+  if (/cloudflare.*context|request context/i.test(message)) return "STRIPE_RUNTIME_CONTEXT_FAILED";
   if (!message.startsWith("STRIPE_API_ERROR:")) return null;
   const detail = message.slice("STRIPE_API_ERROR:".length);
   if (/invalid api key|no api key/i.test(detail)) return "STRIPE_API_AUTH_FAILED";
   if (/permission|not have access|restricted/i.test(detail)) return "STRIPE_API_PERMISSION_DENIED";
   if (/minimum|min_amount|amount.*small|at least/i.test(detail)) return "STRIPE_AMOUNT_BELOW_MINIMUM";
+  if (/live charges|activate|account.*not.*active|charges.*disabled/i.test(detail)) return "STRIPE_LIVE_CHARGES_DISABLED";
   return "STRIPE_API_REJECTED";
 }
 
 export async function POST(request: Request) {
+  let stage: CheckoutStage = "request";
   try {
     const parsed = CheckoutSchema.safeParse(await request.json());
     if (!parsed.success) return NextResponse.json({ error: "INVALID_CHECKOUT_REQUEST", details: parsed.error.flatten() }, { status: 400 });
 
+    stage = "session";
     const sessionUser = await readSession();
     const email = (sessionUser?.email || parsed.data.email).trim().toLowerCase();
     const requestedItems = normalizeRequestedItems(parsed.data.items);
@@ -66,6 +76,7 @@ export async function POST(request: Request) {
       if (existing.status === "paid") return NextResponse.json({ error: "ORDER_ALREADY_PAID", orderNumber: existing.orderNumber }, { status: 409 });
     }
 
+    stage = "product_lookup";
     const productIds = requestedItems.map((item) => item.productId);
     const products = await prisma.product.findMany({ where: { id: { in: productIds } } });
     if (products.length !== productIds.length) return NextResponse.json({ error: "PRODUCT_NOT_FOUND" }, { status: 409 });
@@ -86,6 +97,7 @@ export async function POST(request: Request) {
     const subtotalCents = pricedItems.reduce((sum, item) => sum + item.lineTotalCents, 0);
     if (!Number.isSafeInteger(subtotalCents) || subtotalCents <= 0) return NextResponse.json({ error: "ORDER_AMOUNT_INVALID" }, { status: 409 });
 
+    stage = "order_create";
     const order = existing || await prisma.order.create({
       data: {
         orderNumber: orderNumber(), checkoutKey: parsed.data.checkoutKey, userId: sessionUser?.id || null, email, currency, status: "pending_payment", subtotalCents, totalCents: subtotalCents,
@@ -96,6 +108,7 @@ export async function POST(request: Request) {
 
     if (order.currency !== currency || order.totalCents !== subtotalCents || !sameOrderItems(order.items, requestedItems)) return NextResponse.json({ error: "ORDER_PRICE_CHANGED_RESTART_CHECKOUT" }, { status: 409 });
 
+    stage = "stripe_checkout";
     const base = appUrl(request);
     const stripeSession = await createStripeCheckoutSession({
       orderId: order.id, orderNumber: order.orderNumber, customerEmail: order.email, currency: order.currency,
@@ -105,6 +118,8 @@ export async function POST(request: Request) {
     });
     if (!stripeSession.id || !stripeSession.url) throw new Error("STRIPE_CHECKOUT_SESSION_INVALID");
     if (order.stripeCheckoutSessionId && order.stripeCheckoutSessionId !== stripeSession.id) throw new Error("STRIPE_SESSION_MISMATCH");
+
+    stage = "order_update";
     await prisma.order.update({ where: { id: order.id }, data: { stripeCheckoutSessionId: stripeSession.id } });
     return NextResponse.json({ checkoutUrl: stripeSession.url, orderNumber: order.orderNumber }, { status: 201 });
   } catch (error) {
@@ -112,10 +127,14 @@ export async function POST(request: Request) {
     if (message.startsWith("PRODUCT_NOT_PURCHASABLE") || message === "QUANTITY_LIMIT_EXCEEDED") return NextResponse.json({ error: message.split(":")[0] }, { status: 409 });
     const stripeError = classifyStripeCheckoutError(message);
     if (stripeError) {
-      console.error("checkout.create.stripe_failed", { error: stripeError });
-      return NextResponse.json({ error: stripeError }, { status: 503 });
+      console.error("checkout.create.stripe_failed", { error: stripeError, stage });
+      return NextResponse.json({ error: stripeError, stage }, { status: 503 });
     }
-    console.error("checkout.create.failed", { error: message });
-    return NextResponse.json({ error: "CHECKOUT_UNAVAILABLE" }, { status: 503 });
+    if (stage === "stripe_checkout") {
+      console.error("checkout.create.stripe_unclassified", { stage, errorName: error instanceof Error ? error.name : "UNKNOWN" });
+      return NextResponse.json({ error: "STRIPE_UNCLASSIFIED_FAILURE", stage }, { status: 503 });
+    }
+    console.error("checkout.create.failed", { error: message, stage });
+    return NextResponse.json({ error: "CHECKOUT_UNAVAILABLE", stage }, { status: 503 });
   }
 }
