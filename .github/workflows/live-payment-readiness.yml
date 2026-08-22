@@ -1,0 +1,102 @@
+name: DealForge Live Payment Readiness
+
+on:
+  push:
+    branches:
+      - migration/cloudflare-workers
+    paths:
+      - src/app/api/stripe/**
+      - src/app/api/checkout/**
+      - src/lib/stripe-commerce.ts
+      - wrangler.jsonc
+      - .github/workflows/live-payment-readiness.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  live-readiness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      WORKER_URL: https://dealforge.blahtblclthpt99.workers.dev
+      PRODUCTION_URL: https://www.deal-forge.sale
+      EXPECTED_SHA: ${{ github.sha }}
+    steps:
+      - name: Wait for exact Cloudflare deployment
+        shell: bash
+        run: |
+          set -euo pipefail
+          ready=0
+          for attempt in $(seq 1 36); do
+            worker_code=$(curl --silent --show-error --max-time 20 --output /tmp/worker-build.json --write-out '%{http_code}' "$WORKER_URL/api/build" || echo 000)
+            production_code=$(curl --silent --show-error --max-time 20 --output /tmp/production-build.json --write-out '%{http_code}' "$PRODUCTION_URL/api/build" || echo 000)
+            worker_sha=$(python - <<'PY'
+          import json
+          from pathlib import Path
+          try:
+              print(json.loads(Path('/tmp/worker-build.json').read_text()).get('sha', ''))
+          except Exception:
+              print('')
+          PY
+            )
+            production_sha=$(python - <<'PY'
+          import json
+          from pathlib import Path
+          try:
+              print(json.loads(Path('/tmp/production-build.json').read_text()).get('sha', ''))
+          except Exception:
+              print('')
+          PY
+            )
+            echo "attempt=$attempt worker=$worker_code:$worker_sha production=$production_code:$production_sha expected=$EXPECTED_SHA"
+            if [[ "$worker_code" == "200" && "$production_code" == "200" && "$worker_sha" == "$EXPECTED_SHA" && "$production_sha" == "$EXPECTED_SHA" ]]; then
+              ready=1
+              break
+            fi
+            sleep 10
+          done
+          if [[ "$ready" != "1" ]]; then
+            echo "::error::Exact DealForge commit is not live on both Cloudflare Worker and production domain."
+            exit 1
+          fi
+
+      - name: Verify Stripe webhook secret is installed
+        shell: bash
+        run: |
+          set -euo pipefail
+          code=$(curl --silent --show-error --max-time 20 \
+            --request POST \
+            --header 'content-type: application/json' \
+            --header 'stripe-signature: t=1,v1=deadbeef' \
+            --data '{}' \
+            --output /tmp/webhook-probe.json \
+            --write-out '%{http_code}' \
+            "$PRODUCTION_URL/api/stripe/webhook" || echo 000)
+          body=$(cat /tmp/webhook-probe.json 2>/dev/null || true)
+          echo "webhook readiness -> $code $body"
+          if [[ "$code" == "503" && "$body" == *'WEBHOOK_NOT_CONFIGURED'* ]]; then
+            echo "::error::STRIPE_WEBHOOK_SECRET is missing from the Cloudflare Worker."
+            exit 1
+          fi
+          if [[ "$code" != "400" || "$body" != *'INVALID_STRIPE_SIGNATURE'* ]]; then
+            echo "::error::Stripe webhook endpoint did not reject an invalid signature as expected."
+            exit 1
+          fi
+
+      - name: Verify checkout route is live
+        shell: bash
+        run: |
+          set -euo pipefail
+          code=$(curl --silent --show-error --max-time 20 \
+            --request POST \
+            --header 'content-type: application/json' \
+            --data '{"checkoutKey":"certification-probe","email":"certification@example.com","items":[{"productId":"does-not-exist","quantity":1}]}' \
+            --output /tmp/checkout-probe.json \
+            --write-out '%{http_code}' \
+            "$PRODUCTION_URL/api/checkout" || echo 000)
+          body=$(cat /tmp/checkout-probe.json 2>/dev/null || true)
+          echo "checkout readiness -> $code $body"
+          [[ "$code" == "409" ]]
+          [[ "$body" == *'PRODUCT_NOT_FOUND'* ]]
