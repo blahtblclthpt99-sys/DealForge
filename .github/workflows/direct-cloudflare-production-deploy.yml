@@ -1,0 +1,42 @@
+name: Direct Cloudflare Production Deploy
+
+on:
+  pull_request:
+    branches:
+      - migration/cloudflare-workers
+    paths:
+      - .github/workflows/direct-cloudflare-production-deploy.yml
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - name: Check deployment credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ -n "${CLOUDFLARE_API_TOKEN:-}" ]] || { echo '::error::CLOUDFLARE_API_TOKEN missing'; exit 1; }
+          [[ -n "${CLOUDFLARE_ACCOUNT_ID:-}" ]] || { echo '::error::CLOUDFLARE_ACCOUNT_ID missing'; exit 1; }
+          echo 'Cloudflare deployment credentials are present.'
+      - name: Checkout exact production base
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Deploy exact production base to Cloudflare
+        shell: bash
+        env:
+          WORKERS_CI_COMMIT_SHA: ${{ github.event.pull_request.base.sha }}
+        run: npm run cf:deploy
