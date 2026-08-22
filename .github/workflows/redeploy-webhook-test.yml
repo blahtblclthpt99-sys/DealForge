@@ -1,0 +1,72 @@
+name: Redeploy Webhook Test
+
+on:
+  pull_request:
+    branches:
+      - migration/cloudflare-workers
+    paths:
+      - .github/workflows/redeploy-webhook-test.yml
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      WORKER_URL: https://dealforge.blahtblclthpt99.workers.dev
+      PRODUCTION_URL: https://www.deal-forge.sale
+      EXPECTED_SHA: ${{ github.event.pull_request.base.sha }}
+    steps:
+      - name: Wait for exact production redeploy
+        shell: bash
+        run: |
+          set -euo pipefail
+          ready=0
+          for attempt in $(seq 1 30); do
+            worker_code=$(curl --silent --show-error --max-time 20 --output /tmp/worker-build.json --write-out '%{http_code}' "$WORKER_URL/api/build" || echo 000)
+            prod_code=$(curl --silent --show-error --max-time 20 --output /tmp/prod-build.json --write-out '%{http_code}' "$PRODUCTION_URL/api/build" || echo 000)
+            worker_sha=$(python - <<'PY'
+          import json
+          from pathlib import Path
+          try:
+              print(json.loads(Path('/tmp/worker-build.json').read_text()).get('sha', ''))
+          except Exception:
+              print('')
+          PY
+            )
+            prod_sha=$(python - <<'PY'
+          import json
+          from pathlib import Path
+          try:
+              print(json.loads(Path('/tmp/prod-build.json').read_text()).get('sha', ''))
+          except Exception:
+              print('')
+          PY
+            )
+            echo "attempt=$attempt worker=$worker_code:$worker_sha production=$prod_code:$prod_sha expected=$EXPECTED_SHA"
+            if [[ "$worker_code" == "200" && "$prod_code" == "200" && "$worker_sha" == "$EXPECTED_SHA" && "$prod_sha" == "$EXPECTED_SHA" ]]; then
+              ready=1
+              break
+            fi
+            sleep 10
+          done
+          [[ "$ready" == "1" ]]
+
+      - name: Test production Stripe webhook secret binding
+        shell: bash
+        run: |
+          set -euo pipefail
+          code=$(curl --silent --show-error --max-time 20 \
+            --request POST \
+            --header 'content-type: application/json' \
+            --header 'stripe-signature: t=1,v1=deadbeef' \
+            --data '{}' \
+            --output /tmp/webhook.json \
+            --write-out '%{http_code}' \
+            "$PRODUCTION_URL/api/stripe/webhook" || echo 000)
+          body=$(cat /tmp/webhook.json 2>/dev/null || true)
+          echo "webhook=$code $body"
+          [[ "$code" == "400" ]]
+          [[ "$body" == *'INVALID_STRIPE_SIGNATURE'* ]]
