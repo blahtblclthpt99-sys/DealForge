@@ -47,15 +47,15 @@ export function CategoryGrid({
           <Link
             key={cat.id}
             href={`/categories/${cat.slug}`}
-            className="dn-card group flex flex-col items-center gap-2 px-3 py-5 text-center transition hover:-translate-y-0.5 hover:border-forest/40"
+            className="dn-card dn-card-interactive group flex min-h-36 flex-col items-center justify-center gap-2 px-3 py-5 text-center"
           >
-            <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-forest/10 text-forest transition group-hover:bg-forest group-hover:text-white">
-              <Icon className="h-5 w-5" />
+            <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-forest/9 text-forest transition group-hover:bg-forest group-hover:text-white">
+              <Icon className="h-5 w-5" aria-hidden="true" />
             </span>
-            <span className="text-sm font-semibold text-forest-ink">{cat.name}</span>
-            {cat._count && (
-              <span className="text-xs text-forest-muted">{cat._count.products} items</span>
-            )}
+            <span className="text-sm font-extrabold text-forest-ink group-hover:text-forest">{cat.name}</span>
+            {cat._count ? (
+              <span className="text-[11px] font-medium text-forest-muted">{cat._count.products.toLocaleString()} items</span>
+            ) : null}
           </Link>
         );
       })}
