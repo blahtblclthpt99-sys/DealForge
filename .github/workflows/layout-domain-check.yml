@@ -1,9 +1,12 @@
 name: DealForge Layout Domain Check
-# Rerun marker: 2026-08-22 custom-domain routing diagnostics
+# Rerun marker: 2026-08-22 post-Cloudflare-challenge certification
 
 on:
   push:
     branches: [migration/cloudflare-workers]
+    paths: [.github/workflows/layout-domain-check.yml]
+  pull_request:
+    branches: [main]
     paths: [.github/workflows/layout-domain-check.yml]
   workflow_dispatch:
 
@@ -18,7 +21,7 @@ jobs:
       WORKER_URL: https://dealforge.blahtblclthpt99.workers.dev
       WWW_URL: https://www.deal-forge.sale
       APEX_URL: https://deal-forge.sale
-      EXPECTED_SHA: ${{ github.sha }}
+      EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
     steps:
       - name: Wait for exact Cloudflare deployment
         shell: bash
