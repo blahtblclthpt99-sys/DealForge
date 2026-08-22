@@ -3,6 +3,8 @@ name: Product Finder Polish CI
 on:
   push:
     branches: [feature/cloudflare-product-engine-polish]
+  pull_request:
+    branches: [migration/cloudflare-workers]
   workflow_dispatch:
 
 permissions:
