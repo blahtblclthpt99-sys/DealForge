@@ -34,6 +34,8 @@ jobs:
       NEXT_PUBLIC_APP_URL: http://localhost:3000
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 20
@@ -46,8 +48,14 @@ jobs:
         run: npm run typecheck
       - name: Validate Prisma schemas
         run: npm run prisma:validate
-      - name: Apply production Prisma migration to clean PostgreSQL
+      - name: Create pre-feature PostgreSQL schema
+        run: |
+          git show origin/main:prisma/schema.postgres.prisma > prisma/schema.pre-feature.prisma
+          npx prisma db push --schema=prisma/schema.pre-feature.prisma --skip-generate
+      - name: Apply Product Engine migration over pre-feature schema
         run: npx prisma migrate deploy --schema=prisma/schema.postgres.prisma
+      - name: Verify migrated database matches Product Engine schema
+        run: npx prisma db push --schema=prisma/schema.postgres.prisma --skip-generate
       - name: Complete test suite
         run: npm test
       - name: Product Engine tests explicitly
