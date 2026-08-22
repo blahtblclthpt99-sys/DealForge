@@ -1,0 +1,49 @@
+name: Product Finder Polish CI
+
+on:
+  push:
+    branches: [feature/cloudflare-product-engine-polish]
+  pull_request:
+    branches: [migration/cloudflare-workers]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      CLOUDFLARE_WORKERS: "1"
+      DATABASE_URL: postgresql://dealforge:ci-only@db.invalid/dealforge?sslmode=require
+      AUTH_SECRET: ci-only-not-for-production-00000000000000000000000000000000
+      NEXT_PUBLIC_APP_URL: https://www.deal-forge.sale
+      NEXT_PUBLIC_APP_NAME: DealForge
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci --no-fund --no-audit
+      - name: Lint
+        run: npm run lint
+      - name: Typecheck
+        run: npx tsc --noEmit
+      - name: Build for Cloudflare
+        run: npm run cf:build
+      - name: Wrangler dry-run
+        run: npm run cf:dry-run
+      - name: Production dependency audit
+        run: npm audit --omit=dev --audit-level=high
+      - name: Search integrity regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -Fq 'MAX_QUERY_LENGTH = 120' src/components/search-client.tsx
+          grep -Fq 'Price, discount, rating, and availability filters stay off' src/components/search-client.tsx
+          grep -Fq 'Check retailer' src/components/search-client.tsx
+          grep -Fq 'Product Finder' src/components/header.tsx
+          grep -Fq 'bounded(first(sp.q), 120)' src/app/search/page.tsx
