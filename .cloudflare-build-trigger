@@ -1,7 +1,7 @@
 Cloudflare candidate deployment trigger.
 Branch: migration/cloudflare-workers
-Purpose: force a fresh Git-connected production build after merging the Cloudflare native Stripe runtime-secret binding fallback.
-Release marker: 2026-08-22 17:28 CDT webhook certification redeploy.
-Expected production code includes merge: 936fa4fc59258b85b3927bf045956efb8cd92b89
+Purpose: force a fresh Git-connected production build after merging sanitized live Stripe Checkout diagnostics for Phase 2.5 certification.
+Release marker: 2026-08-22 live transaction certification redeploy.
+Expected production code includes merge: c013ee033c252c0187017752da992fae69852cbd
 Webhook verification target: https://www.deal-forge.sale/api/stripe/webhook
-Expected invalid-signature probe after successful binding: HTTP 400 with INVALID_STRIPE_SIGNATURE, not WEBHOOK_NOT_CONFIGURED.
+Checkout verification target: https://www.deal-forge.sale/api/checkout
