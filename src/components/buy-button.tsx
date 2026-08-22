@@ -1,6 +1,6 @@
 "use client";
 
-import { ExternalLink } from "lucide-react";
+import { ExternalLink, ShieldCheck } from "lucide-react";
 import { retailerLabel } from "@/lib/commerce-display";
 
 export function BuyButton({
@@ -16,16 +16,23 @@ export function BuyButton({
 }) {
   const href = `/go/${productId}`;
   const store = retailerLabel(retailer);
-  const label = priceNeedsCheck ? `Check price on ${store}` : `View on ${store}`;
+  const label = priceNeedsCheck ? `Check current price on ${store}` : `View offer on ${store}`;
 
   return (
-    <a
-      href={href}
-      target="_blank"
-      rel="noopener noreferrer sponsored nofollow"
-      className="inline-flex min-h-12 items-center gap-2 rounded-full bg-forest px-6 py-3 text-sm font-bold text-white shadow-md transition hover:-translate-y-0.5 hover:bg-forest-dark hover:shadow-lg"
-    >
-      {label} <ExternalLink className="h-4 w-4" />
-    </a>
+    <div className="flex max-w-xl flex-col gap-2">
+      <a
+        href={href}
+        target="_blank"
+        rel="noopener noreferrer sponsored nofollow"
+        className="dn-button-primary min-h-[3.25rem] px-6 text-sm sm:text-[15px]"
+        aria-label={`${label}. Opens retailer in a new tab.`}
+      >
+        {label} <ExternalLink className="h-4 w-4" aria-hidden="true" />
+      </a>
+      <span className="inline-flex items-center gap-1.5 text-[11px] font-medium leading-relaxed text-forest-muted">
+        <ShieldCheck className="h-3.5 w-3.5 shrink-0 text-forest" aria-hidden="true" />
+        Final price, availability, shipping, and checkout are confirmed by {store}.
+      </span>
+    </div>
   );
 }
