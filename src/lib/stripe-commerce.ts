@@ -26,6 +26,15 @@ export type StripePaymentIntent = {
   amount_received?: number;
   currency: string;
   metadata?: Record<string, string>;
+  latest_charge?:
+    | string
+    | null
+    | {
+        id: string;
+        amount?: number;
+        amount_refunded?: number;
+        refunded?: boolean;
+      };
 };
 
 export type StripeRefund = {
@@ -177,7 +186,9 @@ export async function createStripeCheckoutSession(input: {
 
 export async function retrieveStripePaymentIntent(paymentIntentId: string) {
   if (!/^pi_[A-Za-z0-9_]+$/.test(paymentIntentId)) throw new Error("PAYMENT_INTENT_ID_INVALID");
-  return stripeRequest<StripePaymentIntent>(`/payment_intents/${encodeURIComponent(paymentIntentId)}`);
+  return stripeRequest<StripePaymentIntent>(
+    `/payment_intents/${encodeURIComponent(paymentIntentId)}?expand%5B%5D=latest_charge`,
+  );
 }
 
 export async function createStripeRefund(input: {
