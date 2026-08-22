@@ -44,7 +44,7 @@ export default async function ProductPage({ params }: Props) {
   }
 
   const [similar, related] = await Promise.all([getSimilarProducts(product), getRelatedProducts(product)]);
-  const amazonUnverified = product.retailer === "amazon";
+  const amazonUnverified = product.retailer === "amazon" && !product.priceVerified;
   const save = amazonUnverified ? null : discountLabel(product.discountPercent);
   const qnty = formatQuantityLabel(product.quantity);
 
@@ -65,7 +65,7 @@ export default async function ProductPage({ params }: Props) {
           <h1 className="mt-2 break-words font-display text-3xl font-semibold leading-tight text-forest-ink md:text-4xl">{product.title}</h1>
 
           <div className="mt-4 flex flex-wrap items-center gap-3 text-sm">
-            {!amazonUnverified && product.rating > 0 ? (
+            {product.metadataVerified && product.rating > 0 ? (
               <span className="inline-flex items-center gap-1 rounded-full bg-forest/10 px-3 py-1 font-medium text-forest">
                 <Star className="h-3.5 w-3.5 fill-amber-400 text-amber-400" />
                 {product.rating.toFixed(1)} · {product.reviewCount.toLocaleString()} reviews
@@ -74,7 +74,7 @@ export default async function ProductPage({ params }: Props) {
             {qnty && <span className="rounded-full bg-forest px-3 py-1 text-xs font-semibold uppercase tracking-wide text-white">{qnty}</span>}
             {product.categoryName && <Link href={`/categories/${product.categorySlug}`} className="rounded-full border border-card-border px-3 py-1 text-forest-muted hover:text-forest">{product.categoryName}</Link>}
             {product.categorySlug === "clothing" && product.subcategory && <Link href={`/categories/clothing?subcategory=${product.subcategory}`} className="rounded-full border border-card-border px-3 py-1 capitalize text-forest-muted hover:text-forest">{product.subcategory}</Link>}
-            {!amazonUnverified ? <span className="rounded-full border border-card-border px-3 py-1 capitalize text-forest-muted">{product.availability.replace("_", " ")}</span> : null}
+            {product.metadataVerified ? <span className="rounded-full border border-card-border px-3 py-1 capitalize text-forest-muted">{product.availability.replace("_", " ")}</span> : null}
           </div>
 
           {amazonUnverified ? (
@@ -89,7 +89,7 @@ export default async function ProductPage({ params }: Props) {
                 {product.originalPrice > product.price && <p className="pb-1 text-lg text-forest-muted line-through">{formatPrice(product.originalPrice)}</p>}
                 {save && <span className="mb-1 rounded-full bg-forest px-2.5 py-1 text-xs font-semibold text-white">{save}</span>}
               </div>
-              <p className="mt-1 text-[11px] text-forest-muted/70">Price as of {new Date(product.lastUpdated).toLocaleDateString()}</p>
+              {product.priceVerifiedAt ? <p className="mt-1 text-[11px] text-forest-muted/70">Price verified {new Date(product.priceVerifiedAt).toLocaleDateString()}</p> : null}
             </>
           )}
 
