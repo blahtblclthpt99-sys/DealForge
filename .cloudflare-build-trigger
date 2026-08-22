@@ -1,4 +1,5 @@
 Cloudflare candidate deployment trigger.
 Branch: migration/cloudflare-workers
-Purpose: force a fresh Git-connected build from the certified Cloudflare branch after storefront pricing, owner-only ASIN intake, one-tap Paste & Add, and custom-domain route hardening.
-Release marker: 2026-08-22 final storefront owner-tools deployment.
+Purpose: force a fresh Git-connected production build from the certified Cloudflare branch after Phase 2.5 Stripe financial-integrity merge, storefront pricing, owner-only ASIN intake, one-tap Paste & Add, and custom-domain route hardening.
+Release marker: 2026-08-22 Phase 2.5 production redeploy retry.
+Merged production commit: 20117f073cf709eadb01f7dbaea7b6d0c99d321e
