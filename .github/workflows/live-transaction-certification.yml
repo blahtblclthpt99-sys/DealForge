@@ -9,30 +9,34 @@ permissions:
   contents: read
 
 jobs:
-  create-checkout:
+  wait-production:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 8
+    env:
+      EXPECTED_SHA: c013ee033c252c0187017752da992fae69852cbd
+      PRODUCTION_URL: https://www.deal-forge.sale
     steps:
-      - name: Generate controlled DealForge live Checkout Session
+      - name: Wait for exact production SHA
         shell: bash
         run: |
           set -euo pipefail
-          code=$(curl --silent --show-error --max-time 30 \
-            --request POST \
-            --header 'content-type: application/json' \
-            --data '{"checkoutKey":"phase25-live-cert-20260822-1743","email":"certification@example.com","items":[{"productId":"cert_live_20260822","quantity":1}]}' \
-            --output /tmp/checkout.json \
-            --write-out '%{http_code}' \
-            'https://www.deal-forge.sale/api/checkout')
-          body=$(cat /tmp/checkout.json)
-          echo "checkout_http=$code"
-          echo "$body"
-          [[ "$code" == "201" ]]
-          python - <<'PY'
+          ready=0
+          for attempt in $(seq 1 42); do
+            code=$(curl --silent --show-error --max-time 20 --output /tmp/build.json --write-out '%{http_code}' "$PRODUCTION_URL/api/build" || echo 000)
+            sha=$(python - <<'PY'
           import json
           from pathlib import Path
-          data=json.loads(Path('/tmp/checkout.json').read_text())
-          assert data.get('checkoutUrl','').startswith('https://checkout.stripe.com/')
-          print('checkout_url=' + data['checkoutUrl'])
-          print('order_number=' + str(data.get('orderNumber','')))
+          try:
+              print(json.loads(Path('/tmp/build.json').read_text()).get('sha',''))
+          except Exception:
+              print('')
           PY
+            )
+            echo "attempt=$attempt http=$code sha=$sha expected=$EXPECTED_SHA"
+            if [[ "$code" == "200" && "$sha" == "$EXPECTED_SHA" ]]; then
+              ready=1
+              break
+            fi
+            sleep 10
+          done
+          [[ "$ready" == "1" ]]
