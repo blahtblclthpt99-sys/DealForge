@@ -1,0 +1,51 @@
+name: Live Webhook Probe Final
+
+on:
+  pull_request:
+    branches:
+      - migration/cloudflare-workers
+    paths:
+      - .github/workflows/live-webhook-probe-final.yml
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      PRODUCTION_URL: https://www.deal-forge.sale
+    steps:
+      - name: Verify Stripe webhook runtime binding
+        shell: bash
+        run: |
+          set -euo pipefail
+          code=$(curl --silent --show-error --max-time 20 \
+            --request POST \
+            --header 'content-type: application/json' \
+            --header 'stripe-signature: t=1,v1=deadbeef' \
+            --data '{}' \
+            --output /tmp/webhook.json \
+            --write-out '%{http_code}' \
+            "$PRODUCTION_URL/api/stripe/webhook" || echo 000)
+          body=$(cat /tmp/webhook.json 2>/dev/null || true)
+          echo "webhook=$code $body"
+          [[ "$code" == "400" ]]
+          [[ "$body" == *'INVALID_STRIPE_SIGNATURE'* ]]
+
+      - name: Verify live checkout route
+        shell: bash
+        run: |
+          set -euo pipefail
+          code=$(curl --silent --show-error --max-time 20 \
+            --request POST \
+            --header 'content-type: application/json' \
+            --data '{"checkoutKey":"final-certification-probe","email":"certification@example.com","items":[{"productId":"does-not-exist","quantity":1}]}' \
+            --output /tmp/checkout.json \
+            --write-out '%{http_code}' \
+            "$PRODUCTION_URL/api/checkout" || echo 000)
+          body=$(cat /tmp/checkout.json 2>/dev/null || true)
+          echo "checkout=$code $body"
+          [[ "$code" == "409" ]]
+          [[ "$body" == *'PRODUCT_NOT_FOUND'* ]]
