@@ -1,0 +1,88 @@
+name: DealForge Phase 2.5 Live Checkout Certification
+
+on:
+  pull_request:
+    branches:
+      - migration/cloudflare-workers
+    paths:
+      - .github/workflows/phase-2-5-live-checkout-cert.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  certify-live-checkout:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    env:
+      PRODUCTION_URL: https://www.deal-forge.sale
+      EXPECTED_PRODUCTION_SHA: 77d6366cca2157fe54328bbd97a7f65815f385b8
+      PRODUCT_ID: cert_live_20260822
+      CERT_EMAIL: phase25-cert@deal-forge.sale
+    steps:
+      - name: Verify exact production build
+        shell: bash
+        run: |
+          set -euo pipefail
+          code=$(curl --silent --show-error --max-time 20 --output /tmp/build.json --write-out '%{http_code}' "$PRODUCTION_URL/api/build" || echo 000)
+          [[ "$code" == "200" ]]
+          actual_sha=$(python - <<'PY'
+          import json
+          from pathlib import Path
+          print(json.loads(Path('/tmp/build.json').read_text()).get('sha', ''))
+          PY
+          )
+          echo "production sha=$actual_sha expected=$EXPECTED_PRODUCTION_SHA"
+          [[ "$actual_sha" == "$EXPECTED_PRODUCTION_SHA" ]]
+
+      - name: Create idempotent live Checkout Session through DealForge
+        shell: bash
+        run: |
+          set -euo pipefail
+          checkout_key="phase25-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          payload=$(printf '{"checkoutKey":"%s","email":"%s","items":[{"productId":"%s","quantity":1}]}' "$checkout_key" "$CERT_EMAIL" "$PRODUCT_ID")
+
+          first_code=$(curl --silent --show-error --max-time 30 \
+            --request POST \
+            --header 'content-type: application/json' \
+            --data "$payload" \
+            --output /tmp/checkout-first.json \
+            --write-out '%{http_code}' \
+            "$PRODUCTION_URL/api/checkout" || echo 000)
+
+          if [[ "$first_code" != "201" ]]; then
+            echo "checkout first attempt failed: HTTP $first_code"
+            python - <<'PY'
+          import json
+          from pathlib import Path
+          try:
+              data = json.loads(Path('/tmp/checkout-first.json').read_text())
+              print({k: v for k, v in data.items() if k != 'checkoutUrl'})
+          except Exception:
+              print('unparseable checkout error response')
+          PY
+            exit 1
+          fi
+
+          second_code=$(curl --silent --show-error --max-time 30 \
+            --request POST \
+            --header 'content-type: application/json' \
+            --data "$payload" \
+            --output /tmp/checkout-second.json \
+            --write-out '%{http_code}' \
+            "$PRODUCTION_URL/api/checkout" || echo 000)
+          [[ "$second_code" == "201" ]]
+
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          first = json.loads(Path('/tmp/checkout-first.json').read_text())
+          second = json.loads(Path('/tmp/checkout-second.json').read_text())
+          assert first.get('checkoutUrl', '').startswith('https://checkout.stripe.com/'), 'missing Stripe Checkout URL'
+          assert first.get('orderNumber'), 'missing order number'
+          assert first.get('orderNumber') == second.get('orderNumber'), 'order number changed on idempotent retry'
+          assert first.get('checkoutUrl') == second.get('checkoutUrl'), 'Checkout Session changed on idempotent retry'
+          print('checkout session created through production DealForge route')
+          print('order number=' + first['orderNumber'])
+          PY
