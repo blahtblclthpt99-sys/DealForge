@@ -1,5 +1,6 @@
 name: DealForge Live Payment Readiness
 
+# Redeploy/recheck marker: 2026-08-22 17:28 CDT
 on:
   push:
     branches:
