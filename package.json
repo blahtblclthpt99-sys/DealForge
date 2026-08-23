@@ -10,7 +10,7 @@
     "dev": "next dev",
     "build": "node scripts/prisma-generate.mjs && next build",
     "build:vercel": "prisma generate --schema=prisma/schema.postgres.prisma && next build",
-    "cf:build": "NEXT_PUBLIC_BUILD_SHA=${WORKERS_CI_COMMIT_SHA:-${GITHUB_SHA:-local}} CLOUDFLARE_WORKERS=1 opennextjs-cloudflare build",
+    "cf:build": "NEXT_PUBLIC_BUILD_SHA=${WORKERS_CI_COMMIT_SHA:-${GITHUB_SHA:-local}} opennextjs-cloudflare build",
     "cf:dry-run": "wrangler deploy --dry-run --outdir .wrangler-dry-run",
     "cf:preview": "npm run cf:build && wrangler dev",
     "cf:deploy": "npm run cf:build && wrangler deploy",
