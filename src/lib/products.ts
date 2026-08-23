@@ -1,6 +1,6 @@
 /**
  * Product query layer — DB-level pagination (never loads the full catalog).
- * Public DTOs distinguish verified-current prices from older recorded catalog prices.
+ * Public DTOs distinguish DealForge direct-commerce pricing from supplier/reference pricing.
  */
 import { prisma } from "./db";
 import { cacheGet, cacheSet } from "./cache";
@@ -38,7 +38,10 @@ export type ProductDTO = {
   affiliateUrl: string;
   retailer: string;
   availability: string;
-  specifications: Record<string, string>;
+  commerceEnabled: boolean;
+  sellingPriceCents: number | null;
+  currency: string;
+  specifications: Record<string, unknown>;
   trendingScore: number;
   clickCount: number;
   viewCount: number;
@@ -137,7 +140,7 @@ function timestamp(value: unknown) {
 
 function hasFreshTrustedAmazonCommerce(
   retailer: string,
-  specs: Record<string, string>,
+  specs: Record<string, unknown>,
   lastUpdated: Date,
 ) {
   if (retailer.trim().toLowerCase() !== "amazon") return true;
@@ -152,7 +155,7 @@ export function toProductDTO(
 ): ProductDTO {
   const withCat = p as ProductWithCategory;
   const images = cleanImages(p.images);
-  const specs = parseJson<Record<string, string>>(p.specifications, {});
+  const specs = parseJson<Record<string, unknown>>(p.specifications, {});
   const storedPricing = sanitizePricing(p.price, p.originalPrice, p.discountPercent);
   const freshCommerce = hasFreshTrustedAmazonCommerce(p.retailer, specs, p.lastUpdated);
   const isAmazon = p.retailer.trim().toLowerCase() === "amazon";
@@ -201,6 +204,9 @@ export function toProductDTO(
     }),
     retailer: p.retailer,
     availability: p.availability,
+    commerceEnabled: p.commerceEnabled,
+    sellingPriceCents: Number.isSafeInteger(p.sellingPriceCents) ? p.sellingPriceCents : null,
+    currency: p.currency.toLowerCase(),
     specifications: specs,
     trendingScore: p.trendingScore,
     clickCount: p.clickCount,
@@ -280,7 +286,7 @@ export async function queryProducts(params: ProductQuery) {
   const normalized = normalizeProductQuery(params);
   const page = normalized.page ?? 1;
   const limit = normalized.limit ?? 24;
-  const cacheKey = `products:v11:${JSON.stringify(normalized)}`;
+  const cacheKey = `products:v12:${JSON.stringify(normalized)}`;
   const cached = await cacheGet<{
     items: ProductDTO[];
     total: number;
