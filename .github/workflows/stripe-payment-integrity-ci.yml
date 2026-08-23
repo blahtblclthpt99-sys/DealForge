@@ -59,6 +59,16 @@ jobs:
           grep -Fq 'data: { status: "payment_failed" }' src/app/api/checkout/route.ts
           grep -Fq 'order.status === "payment_failed" && !order.stripeCheckoutSessionId' src/app/api/checkout/route.ts
 
+      - name: Same-origin Checkout resume regression guard
+        run: |
+          set -euo pipefail
+          grep -Fq '/api/checkout/resume?order=' src/app/api/checkout/route.ts
+          grep -Fq 'retrieveStripeCheckoutSession' src/app/api/checkout/resume/route.ts
+          grep -Fq 'session.client_reference_id !== order.id' src/app/api/checkout/resume/route.ts
+          grep -Fq 'session.metadata?.order_id !== order.id' src/app/api/checkout/resume/route.ts
+          grep -Fq 'Referrer-Policy", "no-referrer' src/app/api/checkout/resume/route.ts
+          grep -Fq 'NextResponse.redirect(session.url, 302)' src/app/api/checkout/resume/route.ts
+
       - name: Refund webhook-race regression guard
         run: |
           set -euo pipefail
