@@ -49,6 +49,19 @@ function stripeProviderMetadata(message: string) {
   return { type, code, param };
 }
 
+function redactedStripeProviderMessage(message: string) {
+  if (!message.startsWith("STRIPE_API_ERROR:")) return null;
+  const remainder = message.slice("STRIPE_API_ERROR:".length);
+  const parts = remainder.split(":");
+  const providerMessage = parts.slice(3).join(":").trim();
+  if (!providerMessage) return null;
+  return providerMessage
+    .replace(/\b(?:sk|rk|pk)_(?:live|test)_[A-Za-z0-9]+\b/gi, "[redacted-key]")
+    .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, "[redacted-email]")
+    .replace(/https?:\/\/\S+/gi, "[redacted-url]")
+    .slice(0, 800);
+}
+
 function classifyStripeCheckoutError(message: string) {
   if (message === "STRIPE_SECRET_KEY_MISSING") return "STRIPE_SECRET_KEY_MISSING";
   if (message === "STRIPE_SECRET_KEY_WRONG_TYPE") return "STRIPE_SECRET_KEY_WRONG_TYPE";
@@ -71,6 +84,21 @@ function classifyStripeCheckoutError(message: string) {
   if (/payment_intent_data/i.test(detail)) return "STRIPE_INVALID_PAYMENT_INTENT_DATA";
   if (/live charges|activate|account.*not.*active|charges.*disabled/i.test(detail)) return "STRIPE_LIVE_CHARGES_DISABLED";
   return "STRIPE_API_REJECTED";
+}
+
+async function persistStripeDiagnostic(input: { error: string; stage: CheckoutStage; provider: ReturnType<typeof stripeProviderMetadata>; providerMessage: string | null }) {
+  try {
+    await prisma.systemLog.create({
+      data: {
+        level: "error",
+        source: "stripe.checkout",
+        message: input.error,
+        meta: JSON.stringify({ stage: input.stage, provider: input.provider, providerMessage: input.providerMessage }),
+      },
+    });
+  } catch (diagnosticError) {
+    console.error("checkout.create.stripe_diagnostic_failed", { errorName: diagnosticError instanceof Error ? diagnosticError.name : "UNKNOWN" });
+  }
 }
 
 export async function POST(request: Request) {
@@ -142,6 +170,8 @@ export async function POST(request: Request) {
     const stripeError = classifyStripeCheckoutError(message);
     if (stripeError) {
       const provider = stripeProviderMetadata(message);
+      const providerMessage = redactedStripeProviderMessage(message);
+      await persistStripeDiagnostic({ error: stripeError, stage, provider, providerMessage });
       console.error("checkout.create.stripe_failed", { error: stripeError, stage, provider });
       return NextResponse.json({ error: stripeError, stage, ...(provider ? { stripe: provider } : {}) }, { status: 503 });
     }
