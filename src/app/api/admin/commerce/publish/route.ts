@@ -84,7 +84,7 @@ export async function POST(request: Request) {
     pricing: parsed.data.pricing,
     nowMs,
   });
-  const { assessment, source } = result;
+  const { assessment, source, effectivePricing } = result;
   if (
     !assessment.eligible ||
     assessment.recommendedSellingPriceCents === null ||
@@ -100,7 +100,7 @@ export async function POST(request: Request) {
     source,
     assessment,
     costs: parsed.data.costs,
-    pricing: parsed.data.pricing,
+    pricing: effectivePricing,
   });
 
   try {
@@ -137,6 +137,7 @@ export async function POST(request: Request) {
             profitabilityScore: assessment.profitabilityScore,
             priceSource: source.priceSource,
             sourceCheckedAtMs: source.sourceCheckedAtMs,
+            effectivePricing,
           }),
         },
       });
@@ -162,6 +163,7 @@ export async function POST(request: Request) {
     profitabilityScore: assessment.profitabilityScore,
     profitabilityTier: assessment.profitabilityTier,
     sourceCheckedAtMs: source.sourceCheckedAtMs,
+    effectivePricing,
   });
 }
 
