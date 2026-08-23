@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { checkDirectCommerceReadiness } from "../src/lib/direct-commerce-readiness";
+import {
+  checkDirectCommerceActivationReadiness,
+  checkDirectCommerceReadiness,
+} from "../src/lib/direct-commerce-readiness";
 
 const NOW = Date.parse("2026-08-22T22:00:00.000Z");
 const SOURCE_CHECKED = Date.parse("2026-08-22T21:30:00.000Z");
@@ -37,7 +40,7 @@ function input(overrides: Record<string, unknown> = {}) {
   };
 }
 
-test("ready requires certified finance, active commerce, current source, and exact reviewed financials", () => {
+test("runtime readiness requires certified finance, active commerce, current source, and reviewed financials", () => {
   const result = checkDirectCommerceReadiness(input());
   assert.deepEqual(result, {
     ready: true,
@@ -48,13 +51,23 @@ test("ready requires certified finance, active commerce, current source, and exa
   });
 });
 
+test("pre-activation readiness validates the same controls while commerce is still disabled", () => {
+  const result = checkDirectCommerceActivationReadiness(input({ commerceEnabled: false }));
+  assert.equal(result.ready, true);
+  assert.equal(result.reason, "READY");
+  assert.equal(
+    checkDirectCommerceActivationReadiness(input({ commerceEnabled: true })).reason,
+    "ALREADY_ACTIVE",
+  );
+});
+
 test("financial gate can instantly fail direct commerce closed", () => {
   const result = checkDirectCommerceReadiness(input({ financialGateCertified: false }));
   assert.equal(result.ready, false);
   assert.equal(result.reason, "BLOCKED_FINANCIAL_GATE");
 });
 
-test("disabled or unavailable products are never ready", () => {
+test("disabled or unavailable runtime products are never ready", () => {
   assert.equal(checkDirectCommerceReadiness(input({ commerceEnabled: false })).reason, "COMMERCE_DISABLED");
   assert.equal(checkDirectCommerceReadiness(input({ availability: "out_of_stock" })).reason, "UNAVAILABLE");
 });
