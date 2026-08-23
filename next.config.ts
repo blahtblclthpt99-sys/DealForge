@@ -1,13 +1,9 @@
 import type { NextConfig } from "next";
 import path from "path";
 
-const isVercel = process.env.VERCEL === "1";
-
 const nextConfig: NextConfig = {
-  // Standalone is for self-hosted Node zips — Vercel uses its own output.
-  ...(!isVercel
-    ? { output: "standalone" as const, outputFileTracingRoot: path.join(__dirname) }
-    : {}),
+  output: "standalone",
+  outputFileTracingRoot: path.join(__dirname),
   images: {
     remotePatterns: [
       { protocol: "https", hostname: "m.media-amazon.com" },
