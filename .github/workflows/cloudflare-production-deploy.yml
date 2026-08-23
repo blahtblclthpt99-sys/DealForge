@@ -88,6 +88,23 @@ jobs:
           echo "health HTTP $health_code"
           cat /tmp/health-body
           echo
+
+          db_state=$(node -e "try{const j=require('/tmp/health-body');process.stdout.write(String(j.database||'unknown'))}catch{process.stdout.write('invalid_response')}")
+          case "$db_state" in
+            ok)
+              gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=success -f context=cloudflare-db-ok -f description='Cloudflare Worker connected to Neon'
+              ;;
+            not_configured)
+              gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=failure -f context=cloudflare-db-not-configured -f description='DATABASE_URL missing or invalid in Cloudflare runtime'
+              ;;
+            unreachable)
+              gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=failure -f context=cloudflare-db-unreachable -f description='DATABASE_URL present but Neon connection failed'
+              ;;
+            *)
+              gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=failure -f context=cloudflare-db-health-invalid -f description='Health response did not expose a valid database state'
+              ;;
+          esac
+
           if [[ "$health_code" == '200' ]]; then
             gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=success -f context=cloudflare-live-health -f description='Live /api/health returned HTTP 200'
           else
@@ -136,5 +153,3 @@ jobs:
         shell: bash
         run: |
           gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=failure -f context=cloudflare-production-deploy -f description='Cloudflare production deployment failed'
-
-# redeploy after DATABASE_URL update: 2026-08-23T17:49-05:00
