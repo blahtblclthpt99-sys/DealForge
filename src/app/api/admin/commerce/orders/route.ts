@@ -6,6 +6,7 @@ import {
   stateFromFulfillmentMeta,
   type FulfillmentState,
 } from "@/lib/order-fulfillment";
+import { evaluateOrderOperationsHealth } from "@/lib/order-operations-health";
 import { isProductOwner } from "@/lib/owner-access";
 import { parseJson } from "@/lib/utils";
 
@@ -79,11 +80,22 @@ export async function GET(request: Request) {
     if (!latest.has(log.source)) latest.set(log.source, log);
   }
 
+  const nowMs = Date.now();
   const items = orders.map((order) => {
     const log = latest.get(fulfillmentLogSource(order.id));
     const logMeta = log ? parseJson<Record<string, unknown>>(log.meta, {}) : {};
     const fulfillmentState: FulfillmentState | null =
       stateFromFulfillmentMeta(logMeta) || (order.status === "paid" ? "awaiting_sourcing" : null);
+    const stateEnteredAtMs = fulfillmentState === "awaiting_sourcing"
+      ? order.paidAt?.getTime() ?? null
+      : log?.createdAt.getTime() ?? null;
+    const operationsHealth = evaluateOrderOperationsHealth({
+      financialStatus: order.status,
+      fulfillmentState,
+      paidAtMs: order.paidAt?.getTime() ?? null,
+      stateEnteredAtMs,
+      nowMs,
+    });
     const refundedCents = order.refunds.reduce((sum, refund) => sum + refund.amountCents, 0);
     const succeededPayment = order.payments.find(
       (payment) =>
@@ -105,6 +117,7 @@ export async function GET(request: Request) {
       updatedAt: order.updatedAt.toISOString(),
       paymentCertified: Boolean(succeededPayment && order.paidAt && order.stripePaymentIntentId),
       fulfillmentState,
+      operationsHealth,
       lastFulfillmentAction: log?.message ?? null,
       lastFulfillmentAt: log?.createdAt.toISOString() ?? null,
       fulfillmentDetail: logMeta,
