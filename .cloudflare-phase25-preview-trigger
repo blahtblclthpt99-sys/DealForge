@@ -1,0 +1,4 @@
+DealForge Phase 2.5 Cloudflare preview trigger.
+Purpose: force a non-production Workers Build from the Managed Payments-fixed code path.
+Required payment fix: cecd97fc49a4a53f8d95a696cf6e6baa4f6cd603
+Generated: 2026-08-23T00:34Z
