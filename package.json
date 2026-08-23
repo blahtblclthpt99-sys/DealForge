@@ -39,7 +39,7 @@
     "ebay:enable": "tsx scripts/enable-ebay.ts",
     "test:price-alert-transitions": "tsx scripts/test-price-alert-transitions.ts",
     "test:pricing": "tsx --test tests/dynamic-pricing.test.ts",
-    "test:commerce-core": "tsx --test tests/dynamic-pricing.test.ts tests/landed-cost.test.ts tests/commerce-eligibility.test.ts tests/direct-commerce-readiness.test.ts tests/commerce-source-binding.test.ts tests/commerce-runtime-safety.test.ts tests/order-fulfillment.test.ts tests/commerce-display.test.ts",
+    "test:commerce-core": "tsx --test tests/dynamic-pricing.test.ts tests/landed-cost.test.ts tests/commerce-eligibility.test.ts tests/direct-commerce-readiness.test.ts tests/commerce-source-binding.test.ts tests/commerce-runtime-safety.test.ts tests/order-access.test.ts tests/order-fulfillment.test.ts tests/commerce-display.test.ts",
     "worker": "tsx src/workers/index.ts",
     "website:package": "powershell -ExecutionPolicy Bypass -File scripts/package-website.ps1",
     "postinstall": "node scripts/prisma-generate.mjs"
@@ -49,7 +49,7 @@
     "@prisma/adapter-neon": "^6.16.0",
     "@prisma/client": "^6.16.0",
     "bcryptjs": "^3.0.3",
-    "clsx": "^2.1.1",
+    "clsx": "^3.0.3",
     "jose": "^6.2.3",
     "lucide-react": "^1.24.0",
     "next": "^15.5.20",
