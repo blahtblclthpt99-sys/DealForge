@@ -4,10 +4,13 @@ import path from "path";
 const isVercel = process.env.VERCEL === "1";
 
 const nextConfig: NextConfig = {
-  // Standalone is for self-hosted Node zips — Vercel uses its own output.
+  // Standalone output is required by OpenNext and remains valid for self-hosted Node.
   ...(!isVercel
     ? { output: "standalone" as const, outputFileTracingRoot: path.join(__dirname) }
     : {}),
+  // Keep Prisma's generated runtime external so OpenNext can package the
+  // Workerd-compatible client/driver adapter correctly.
+  serverExternalPackages: ["@prisma/client", ".prisma/client"],
   images: {
     remotePatterns: [
       { protocol: "https", hostname: "m.media-amazon.com" },
