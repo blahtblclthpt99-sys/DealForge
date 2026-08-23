@@ -14,7 +14,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
-      CLOUDFLARE_WORKERS: "1"
       DATABASE_URL: postgresql://dealforge:ci-only@db.invalid/dealforge?sslmode=require
       AUTH_SECRET: ci-only-not-for-production-00000000000000000000000000000000
       NEXT_PUBLIC_APP_URL: https://www.deal-forge.sale
