@@ -22,11 +22,17 @@ export type CommerceOpportunityInput = {
   nowMs?: number;
 };
 
+export type CommerceOpportunityReadinessReason =
+  | DirectCommerceReadinessReason
+  | "SOURCE_IDENTITY_MISSING"
+  | "SOURCE_IDENTITY_INVALID"
+  | "SOURCE_IDENTITY_DRIFT";
+
 export type CommerceOpportunity = {
   id: string;
   title: string;
   readyForOwnerActivation: boolean;
-  readinessReason: DirectCommerceReadinessReason | "SOURCE_IDENTITY_MISSING" | "SOURCE_IDENTITY_INVALID" | "SOURCE_IDENTITY_DRIFT";
+  readinessReason: CommerceOpportunityReadinessReason;
   profitabilityTier: "strong" | "healthy" | "thin" | "blocked";
   profitabilityScore: number | null;
   estimatedProfitCents: number | null;
@@ -87,16 +93,18 @@ export function evaluateCommerceOpportunity(input: CommerceOpportunityInput): Co
     ? Math.max(0, readiness.maxSourceAgeMs - readiness.sourceAgeMs)
     : null;
   const readyForOwnerActivation = readiness.ready && binding?.bound === true;
+  let readinessReason: CommerceOpportunityReadinessReason = readiness.reason;
+  if (readiness.ready) {
+    if (binding?.bound) readinessReason = "READY";
+    else if (binding && binding.reason !== "SOURCE_BOUND") readinessReason = binding.reason;
+    else readinessReason = "SOURCE_IDENTITY_MISSING";
+  }
 
   return {
     id: input.id,
     title: input.title,
     readyForOwnerActivation,
-    readinessReason: readiness.ready
-      ? binding?.bound
-        ? "READY"
-        : binding?.reason || "SOURCE_IDENTITY_MISSING"
-      : readiness.reason,
+    readinessReason,
     profitabilityTier: tier(result?.profitabilityTier),
     profitabilityScore: safeNumber(result?.profitabilityScore),
     estimatedProfitCents: safeNumber(result?.estimatedProfitCents),
@@ -118,7 +126,10 @@ const TIER_RANK: Record<CommerceOpportunity["profitabilityTier"], number> = {
 };
 
 function descendingNullable(left: number | null, right: number | null) {
-  return (right ?? Number.NEGATIVE_INFINITY) - (left ?? Number.NEGATIVE_INFINITY);
+  if (left == null && right == null) return 0;
+  if (left == null) return 1;
+  if (right == null) return -1;
+  return right - left;
 }
 
 export function compareCommerceOpportunities(left: CommerceOpportunity, right: CommerceOpportunity) {
