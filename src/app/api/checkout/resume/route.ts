@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
+import { checkDirectCommerceProductSafety } from "@/lib/commerce-runtime-safety";
 import { prisma } from "@/lib/db";
-import { checkDirectCommerceReadiness } from "@/lib/direct-commerce-readiness";
 import { isFinancialGateCertified } from "@/lib/financial-gate";
 import { retrieveStripeCheckoutSession } from "@/lib/stripe-commerce";
 
@@ -58,7 +58,7 @@ export async function GET(request: Request) {
     if (!product) {
       return noStore(NextResponse.json({ error: "CHECKOUT_REVALIDATION_REQUIRED" }, { status: 409 }));
     }
-    const readiness = checkDirectCommerceReadiness({
+    const safety = checkDirectCommerceProductSafety({
       financialGateCertified,
       commerceEnabled: product.commerceEnabled,
       availability: product.availability,
@@ -66,10 +66,13 @@ export async function GET(request: Request) {
       landedCostCents: product.landedCostCents,
       sellingPriceCents: product.sellingPriceCents,
       specifications: product.specifications,
+      retailer: product.retailer,
+      sourceUrl: product.affiliateUrl,
+      asin: product.asin,
       nowMs: readinessNowMs,
     });
     if (
-      !readiness.ready ||
+      !safety.safe ||
       item.unitPriceCents !== product.sellingPriceCents ||
       item.landedCostCents !== product.landedCostCents ||
       order.currency !== product.currency.toLowerCase()

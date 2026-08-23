@@ -3,6 +3,20 @@ import test from "node:test";
 import { getCommerceDisplayState } from "../src/lib/commerce-display";
 import type { ProductDTO } from "../src/lib/products";
 
+function directRecommendation(sourceUrl = "https://example.com/source") {
+  return {
+    commerceRecommendation: {
+      status: "owner_reviewed_recommendation",
+      assessedAt: "2026-08-22T21:00:00.000Z",
+      sourceIdentity: {
+        retailer: "amazon",
+        sourceUrl,
+        asin: "B000000001",
+      },
+    },
+  };
+}
+
 function product(overrides: Partial<ProductDTO> = {}): ProductDTO {
   return {
     id: "p1",
@@ -47,16 +61,14 @@ function product(overrides: Partial<ProductDTO> = {}): ProductDTO {
   };
 }
 
-test("direct commerce uses DealForge selling cents only when server readiness passed", () => {
+test("direct commerce uses DealForge selling cents only when server readiness and source binding pass", () => {
   const state = getCommerceDisplayState(product({
     commerceEnabled: true,
     directCommerceReady: true,
     directCommerceReadinessReason: "READY",
     sellingPriceCents: 1599,
     price: 9.99,
-    specifications: {
-      commerceRecommendation: { assessedAt: "2026-08-22T21:00:00.000Z" },
-    },
+    specifications: directRecommendation(),
   }), Date.parse("2026-08-22T21:05:00.000Z"));
 
   assert.equal(state.isDirectCommerce, true);
@@ -67,12 +79,28 @@ test("direct commerce uses DealForge selling cents only when server readiness pa
   assert.match(state.priceCaption, /DealForge selling price/);
 });
 
+test("direct commerce fails closed when supplier identity drifts after review", () => {
+  const state = getCommerceDisplayState(product({
+    commerceEnabled: true,
+    directCommerceReady: true,
+    directCommerceReadinessReason: "READY",
+    sellingPriceCents: 1599,
+    affiliateUrl: "https://example.com/changed-source",
+    specifications: directRecommendation(),
+  }));
+
+  assert.equal(state.canPurchaseDirect, false);
+  assert.equal(state.canDisplayPrice, false);
+  assert.equal(state.displayPrice, null);
+});
+
 test("direct commerce fails closed when the server readiness verdict is false", () => {
   const state = getCommerceDisplayState(product({
     commerceEnabled: true,
     directCommerceReady: false,
     directCommerceReadinessReason: "SOURCE_STALE",
     sellingPriceCents: 1599,
+    specifications: directRecommendation(),
   }));
   assert.equal(state.isDirectCommerce, true);
   assert.equal(state.canPurchaseDirect, false);
@@ -87,6 +115,7 @@ test("direct commerce fails closed when selling price is invalid", () => {
     directCommerceReady: true,
     directCommerceReadinessReason: "READY",
     sellingPriceCents: null,
+    specifications: directRecommendation(),
   }));
   assert.equal(state.isDirectCommerce, true);
   assert.equal(state.canPurchaseDirect, false);
@@ -102,6 +131,7 @@ test("direct commerce fails closed when product is out of stock", () => {
     directCommerceReadinessReason: "READY",
     sellingPriceCents: 1599,
     availability: "out_of_stock",
+    specifications: directRecommendation(),
   }));
   assert.equal(state.canPurchaseDirect, false);
   assert.equal(state.displayPrice, null);

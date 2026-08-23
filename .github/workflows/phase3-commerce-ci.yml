@@ -97,12 +97,12 @@ jobs:
           set -euo pipefail
           grep -Fq 'commerceEnabled: boolean' src/lib/products.ts
           grep -Fq 'directCommerceReady: boolean' src/lib/products.ts
-          grep -Fq 'directCommerceReadinessReason: DirectCommerceReadinessReason' src/lib/products.ts
           grep -Fq 'sellingPriceCents: number | null' src/lib/products.ts
           grep -Fq 'specifications: Record<string, unknown>' src/lib/products.ts
-          grep -Fq 'checkDirectCommerceReadiness' src/lib/products.ts
           grep -Fq 'sellerLabel: "DealForge"' src/lib/commerce-display.ts
           grep -Fq 'product.directCommerceReady' src/lib/commerce-display.ts
+          grep -Fq 'checkRecommendationSourceBinding' src/lib/commerce-display.ts
+          grep -Fq 'sourceBinding?.bound === true' src/lib/commerce-display.ts
           grep -Fq 'product.sellingPriceCents' src/lib/commerce-display.ts
           grep -Fq 'product.availability === "in_stock"' src/lib/commerce-display.ts
           grep -Fq 'fetch("/api/checkout"' src/components/direct-buy-button.tsx
@@ -111,18 +111,22 @@ jobs:
           grep -Fq 'commercerecommendation' 'src/app/product/[slug]/page.tsx'
           grep -Fq '!commerce.isDirectCommerce' 'src/app/product/[slug]/page.tsx'
 
-      - name: Direct-commerce runtime readiness guard
+      - name: Direct-commerce runtime safety guard
         run: |
           set -euo pipefail
           test -f src/lib/direct-commerce-readiness.ts
+          test -f src/lib/commerce-runtime-safety.ts
           grep -Fq 'BLOCKED_FINANCIAL_GATE' src/lib/direct-commerce-readiness.ts
           grep -Fq 'SOURCE_STALE' src/lib/direct-commerce-readiness.ts
           grep -Fq 'FINANCIAL_DRIFT' src/lib/direct-commerce-readiness.ts
           grep -Fq 'checkDirectCommerceActivationReadiness' src/lib/direct-commerce-readiness.ts
-          grep -Fq 'checkDirectCommerceReadiness' src/app/api/checkout/route.ts
-          grep -Fq 'isFinancialGateCertified' src/app/api/checkout/route.ts
-          grep -Fq 'checkDirectCommerceReadiness' src/app/api/checkout/resume/route.ts
+          grep -Fq 'checkDirectCommerceReadiness' src/lib/commerce-runtime-safety.ts
+          grep -Fq 'checkRecommendationSourceBinding' src/lib/commerce-runtime-safety.ts
+          grep -Fq 'checkDirectCommerceProductSafety' src/app/api/checkout/route.ts
+          grep -Fq 'sourceUrl: product.affiliateUrl' src/app/api/checkout/route.ts
+          grep -Fq 'checkDirectCommerceProductSafety' src/app/api/checkout/resume/route.ts
           grep -Fq 'CHECKOUT_REVALIDATION_REQUIRED' src/app/api/checkout/resume/route.ts
+          grep -Fq 'sourceUrl: product.affiliateUrl' src/app/api/checkout/resume/route.ts
           grep -Fq 'item.unitPriceCents !== product.sellingPriceCents' src/app/api/checkout/resume/route.ts
           grep -Fq 'item.landedCostCents !== product.landedCostCents' src/app/api/checkout/resume/route.ts
 
@@ -172,6 +176,30 @@ jobs:
           const activate = source.indexOf('Activate direct commerce');
           if (assess < 0 || save < 0 || activate < 0 || !(assess < save && save < activate)) {
             throw new Error('Owner commerce UI must preserve assess -> save -> activate ordering');
+          }
+          NODE
+
+      - name: Automated quarantine guard
+        run: |
+          set -euo pipefail
+          SAFETY='src/workers/commerce-safety.ts'
+          MAINT='src/app/api/internal/maintenance/route.ts'
+          test -f "$SAFETY"
+          grep -Fq 'checkDirectCommerceProductSafety' "$SAFETY"
+          grep -Fq 'where: { commerceEnabled: true }' "$SAFETY"
+          grep -Fq 'commerceEnabled: false' "$SAFETY"
+          grep -Fq 'specifications: product.specifications' "$SAFETY"
+          grep -Fq 'automaticSupplierPurchasingEnabled: false' "$SAFETY"
+          grep -Fq 'startsWith: "products:"' "$SAFETY"
+          grep -Fq 'source: "commerce-safety"' "$SAFETY"
+          grep -Fq 'quarantineUnsafeDirectCommerce' "$MAINT"
+          grep -Fq 'const commerceSafety = await quarantineUnsafeDirectCommerce(500)' "$MAINT"
+          grep -Fq 'commerceSafety, ownerQueue' "$MAINT"
+          node <<'NODE'
+          const fs = require('node:fs');
+          const source = fs.readFileSync('src/workers/commerce-safety.ts', 'utf8');
+          if (/data:\s*\{[^}]*commerceEnabled:\s*true/s.test(source)) {
+            throw new Error('Automated commerce safety must never activate products');
           }
           NODE
 

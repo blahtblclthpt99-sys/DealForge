@@ -2,8 +2,8 @@ import { randomBytes } from "node:crypto";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { readSession } from "@/lib/auth";
+import { checkDirectCommerceProductSafety } from "@/lib/commerce-runtime-safety";
 import { prisma } from "@/lib/db";
-import { checkDirectCommerceReadiness } from "@/lib/direct-commerce-readiness";
 import { isFinancialGateCertified } from "@/lib/financial-gate";
 import { createStripeCheckoutSession } from "@/lib/stripe-commerce";
 
@@ -146,7 +146,7 @@ export async function POST(request: Request) {
     const productById = new Map(products.map((product) => [product.id, product]));
     const pricedItems = requestedItems.map((item) => {
       const product = productById.get(item.productId)!;
-      const readiness = checkDirectCommerceReadiness({
+      const safety = checkDirectCommerceProductSafety({
         financialGateCertified,
         commerceEnabled: product.commerceEnabled,
         availability: product.availability,
@@ -154,9 +154,12 @@ export async function POST(request: Request) {
         landedCostCents: product.landedCostCents,
         sellingPriceCents: product.sellingPriceCents,
         specifications: product.specifications,
+        retailer: product.retailer,
+        sourceUrl: product.affiliateUrl,
+        asin: product.asin,
         nowMs: readinessNowMs,
       });
-      if (!readiness.ready) throw new Error(`PRODUCT_NOT_PURCHASABLE:${product.id}:${readiness.reason}`);
+      if (!safety.safe) throw new Error(`PRODUCT_NOT_PURCHASABLE:${product.id}:${safety.reason}`);
       const lineTotalCents = product.sellingPriceCents! * item.quantity;
       if (!Number.isSafeInteger(lineTotalCents) || lineTotalCents <= 0) throw new Error("ORDER_AMOUNT_INVALID");
       return { product, quantity: item.quantity, unitPriceCents: product.sellingPriceCents!, lineTotalCents };
