@@ -70,22 +70,15 @@ export async function POST(req: Request, context: { params: Promise<{ id: string
   const { id } = await context.params;
   const product = await prisma.product.findUnique({
     where: { id },
-    select: {
-      id: true,
-      slug: true,
-      title: true,
-      commerceEnabled: true,
-      currency: true,
-      specifications: true,
-    },
+    select: { id: true, commerceEnabled: true },
   });
 
   if (!product) {
     return NextResponse.json({ error: "Product not found" }, { status: 404 });
   }
 
-  // This endpoint is deliberately unable to change an already-live product.
-  // Live commerce changes require a separate activation/update workflow.
+  // Fast-fail before assessment. The transaction repeats this condition at write time
+  // so a concurrent activation cannot be modified by this recommendation route.
   if (product.commerceEnabled) {
     return NextResponse.json({ error: "Active products require the live-commerce update workflow" }, { status: 409 });
   }
@@ -108,7 +101,6 @@ export async function POST(req: Request, context: { params: Promise<{ id: string
     }, { status: 422 });
   }
 
-  const specifications = parseJson<Record<string, unknown>>(product.specifications, {});
   const recommendationAudit = {
     status: "owner_reviewed_recommendation",
     assessedAt: assessedAt.toISOString(),
@@ -137,57 +129,79 @@ export async function POST(req: Request, context: { params: Promise<{ id: string
     },
   };
 
-  const updated = await prisma.$transaction(async (tx) => {
-    const saved = await tx.product.update({
-      where: { id: product.id },
-      data: {
-        landedCostCents: assessment.landedCostCents,
-        sellingPriceCents: assessment.recommendedSellingPriceCents,
-        currency: parsed.data.currency,
-        specifications: JSON.stringify({
-          ...specifications,
-          commerceRecommendation: recommendationAudit,
-        }),
-      },
-      select: {
-        id: true,
-        slug: true,
-        title: true,
-        commerceEnabled: true,
-        landedCostCents: true,
-        sellingPriceCents: true,
-        currency: true,
-      },
-    });
+  try {
+    const updated = await prisma.$transaction(async (tx) => {
+      const current = await tx.product.findUnique({
+        where: { id: product.id },
+        select: { specifications: true, commerceEnabled: true },
+      });
+      if (!current || current.commerceEnabled) {
+        throw new Error("RECOMMENDATION_ROUTE_PRODUCT_BECAME_ACTIVE");
+      }
 
-    await tx.systemLog.create({
-      data: {
-        level: "info",
-        source: "commerce-recommendation",
-        message: `Owner saved commerce recommendation for ${product.id}`,
-        meta: JSON.stringify({
-          productId: product.id,
-          savedByUserId: auth.user.id,
+      const specifications = parseJson<Record<string, unknown>>(current.specifications, {});
+      const write = await tx.product.updateMany({
+        where: { id: product.id, commerceEnabled: false },
+        data: {
           landedCostCents: assessment.landedCostCents,
           sellingPriceCents: assessment.recommendedSellingPriceCents,
-          profitabilityScore: assessment.profitabilityScore,
-          profitabilityTier: assessment.profitabilityTier,
-        }),
-      },
+          currency: parsed.data.currency,
+          specifications: JSON.stringify({
+            ...specifications,
+            commerceRecommendation: recommendationAudit,
+          }),
+        },
+      });
+      if (write.count !== 1) {
+        throw new Error("RECOMMENDATION_ROUTE_PRODUCT_BECAME_ACTIVE");
+      }
+
+      const saved = await tx.product.findUnique({
+        where: { id: product.id },
+        select: {
+          id: true,
+          slug: true,
+          title: true,
+          commerceEnabled: true,
+          landedCostCents: true,
+          sellingPriceCents: true,
+          currency: true,
+        },
+      });
+      if (!saved || saved.commerceEnabled) {
+        throw new Error("RECOMMENDATION_ROUTE_COMMERCE_STATE_VIOLATION");
+      }
+
+      await tx.systemLog.create({
+        data: {
+          level: "info",
+          source: "commerce-recommendation",
+          message: `Owner saved commerce recommendation for ${product.id}`,
+          meta: JSON.stringify({
+            productId: product.id,
+            savedByUserId: auth.user.id,
+            landedCostCents: assessment.landedCostCents,
+            sellingPriceCents: assessment.recommendedSellingPriceCents,
+            profitabilityScore: assessment.profitabilityScore,
+            profitabilityTier: assessment.profitabilityTier,
+          }),
+        },
+      });
+
+      return saved;
     });
 
-    return saved;
-  });
-
-  if (updated.commerceEnabled) {
-    throw new Error("RECOMMENDATION_ROUTE_COMMERCE_STATE_VIOLATION");
+    return NextResponse.json({
+      ok: true,
+      saved: true,
+      commerceEnabled: false,
+      product: updated,
+      assessment,
+    });
+  } catch (error) {
+    if (error instanceof Error && error.message === "RECOMMENDATION_ROUTE_PRODUCT_BECAME_ACTIVE") {
+      return NextResponse.json({ error: "Product became active during review; recommendation was not saved" }, { status: 409 });
+    }
+    throw error;
   }
-
-  return NextResponse.json({
-    ok: true,
-    saved: true,
-    commerceEnabled: false,
-    product: updated,
-    assessment,
-  });
 }
