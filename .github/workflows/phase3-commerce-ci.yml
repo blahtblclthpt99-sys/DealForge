@@ -68,10 +68,11 @@ jobs:
           grep -Fq 'confirm: z.literal("SAVE_RECOMMENDATION")' "$ROUTE"
           grep -Fq 'isProductOwner' "$ROUTE"
           grep -Fq 'isFinancialGateCertified' "$ROUTE"
-          grep -Fq 'if (product.commerceEnabled)' "$ROUTE"
-          grep -Fq 'updateMany' "$ROUTE"
-          grep -Fq 'where: { id: product.id, commerceEnabled: false }' "$ROUTE"
-          grep -Fq 'RECOMMENDATION_ROUTE_PRODUCT_BECAME_ACTIVE' "$ROUTE"
+          grep -Fq 'sourceIdentity:' "$ROUTE"
+          grep -Fq 'retailer: current.retailer' "$ROUTE"
+          grep -Fq 'affiliateUrl: current.affiliateUrl' "$ROUTE"
+          grep -Fq 'asin: current.asin' "$ROUTE"
+          grep -Fq 'specifications: current.specifications' "$ROUTE"
           grep -Fq 'landedCostCents: assessment.landedCostCents' "$ROUTE"
           grep -Fq 'sellingPriceCents: assessment.recommendedSellingPriceCents' "$ROUTE"
           grep -Fq 'commerceRecommendation: recommendationAudit' "$ROUTE"
@@ -117,12 +118,33 @@ jobs:
           grep -Fq 'BLOCKED_FINANCIAL_GATE' src/lib/direct-commerce-readiness.ts
           grep -Fq 'SOURCE_STALE' src/lib/direct-commerce-readiness.ts
           grep -Fq 'FINANCIAL_DRIFT' src/lib/direct-commerce-readiness.ts
+          grep -Fq 'checkDirectCommerceActivationReadiness' src/lib/direct-commerce-readiness.ts
           grep -Fq 'checkDirectCommerceReadiness' src/app/api/checkout/route.ts
           grep -Fq 'isFinancialGateCertified' src/app/api/checkout/route.ts
           grep -Fq 'checkDirectCommerceReadiness' src/app/api/checkout/resume/route.ts
           grep -Fq 'CHECKOUT_REVALIDATION_REQUIRED' src/app/api/checkout/resume/route.ts
           grep -Fq 'item.unitPriceCents !== product.sellingPriceCents' src/app/api/checkout/resume/route.ts
           grep -Fq 'item.landedCostCents !== product.landedCostCents' src/app/api/checkout/resume/route.ts
+
+      - name: Owner activation and deactivation guard
+        run: |
+          set -euo pipefail
+          ACT='src/app/api/admin/commerce/products/[id]/activation/route.ts'
+          DEACT='src/app/api/admin/commerce/products/[id]/deactivation/route.ts'
+          test -f "$ACT"
+          test -f "$DEACT"
+          grep -Fq 'confirm: z.literal("ACTIVATE_DIRECT_COMMERCE")' "$ACT"
+          grep -Fq 'manualProcurementAcknowledged: z.literal(true)' "$ACT"
+          grep -Fq 'checkDirectCommerceActivationReadiness' "$ACT"
+          grep -Fq 'checkRecommendationSourceBinding' "$ACT"
+          grep -Fq 'automaticSupplierPurchasingEnabled: false' "$ACT"
+          grep -Fq 'commerceEnabled: true' "$ACT"
+          grep -Fq 'specifications: current.specifications' "$ACT"
+          grep -Fq 'confirm: z.literal("DEACTIVATE_DIRECT_COMMERCE")' "$DEACT"
+          grep -Fq 'commerceEnabled: false' "$DEACT"
+          grep -Fq 'source: "commerce-deactivation"' "$DEACT"
+          grep -Fq 'SOURCE_IDENTITY_DRIFT' src/lib/commerce-source-binding.ts
+          grep -Fq 'url.protocol !== "https:"' src/lib/commerce-source-binding.ts
 
       - name: Build for Cloudflare
         run: npm run cf:build
