@@ -14,19 +14,26 @@ Legacy affiliate fields, redirect routes, provider tables, and scripts may remai
 
 ## Phase 2.5 certification state
 
-As of August 22, 2026, production has verified:
+As of August 22, 2026, the production Stripe path has been exercised end-to-end with real live events and is certified for guarded Phase 3 development.
+
+Verified production evidence includes:
 
 - server-authoritative Stripe Checkout creation;
 - live Stripe-hosted Checkout reachability;
-- a real live-card payment attempt;
-- correct decline handling with zero funds captured;
-- authoritative `payment_intent.payment_failed` webhook processing;
-- DealForge failed-payment ledger persistence;
-- checkout idempotency for duplicate creation requests;
+- a real live-card decline with zero funds captured;
+- authoritative `payment_intent.payment_failed` webhook processing and failed-payment ledger persistence;
+- a real successful 75¢ live Checkout payment;
+- a succeeded live PaymentIntent with the full amount received;
+- authoritative `payment_intent.succeeded` and `checkout.session.completed` webhook processing;
+- DealForge order/payment ledger transition to `paid`;
+- a successful live full refund;
+- authoritative `refund.created` webhook processing;
+- DealForge refund ledger persistence and order transition to `refunded`;
+- checkout idempotency protections;
 - Managed Payments explicitly disabled for DealForge physical-goods Checkout;
-- refund API/webhook race hardening in CI.
+- refund API/webhook race hardening covered by CI.
 
-A successful live settlement followed by a live refund has not yet been exercised. Therefore Phase 3 catalog, verification, pricing, publication-control, analytics, and non-money automation may proceed. New broad commerce enablement, unattended supplier purchasing, unattended refund execution, marketplace transfers, commissions, and payouts remain gated until successful settlement/refund reconciliation is observed in production.
+The Phase 2.5 payment gate is therefore **PASS** for Phase 3. This does not itself authorize broad catalog enablement or unattended supplier purchasing; those remain separate operational gates that must be introduced deliberately and tested before autonomous execution.
 
 ## Product price trust model
 
@@ -55,6 +62,25 @@ A generated selling price must satisfy every applicable rule:
 8. a cap violation makes the product ineligible instead of silently lowering margin.
 
 Pricing calculations are advisory until a publication action explicitly writes the approved `sellingPriceCents` to a product.
+
+## Commerce eligibility and profitability assessment
+
+The guarded Phase 3 assessment layer combines source verification, landed-cost calculation, payment-fee-aware pricing, margin policy, and a deterministic profitability score.
+
+An assessment can return `ELIGIBLE` or one of these fail-closed block reasons:
+
+- `BLOCKED_FINANCIAL_GATE`
+- `BLOCKED_UNVERIFIED_SOURCE`
+- `BLOCKED_UNAVAILABLE`
+- `BLOCKED_STALE_SOURCE`
+- `BLOCKED_INVALID_COST`
+- `BLOCKED_MARGIN`
+- `BLOCKED_PRICE_CAP`
+- `BLOCKED_INVALID_PRICING`
+
+Profitability score is advisory only. It ranks otherwise eligible candidates using gross-margin quality, return on landed cost, and remaining source-freshness window. It does **not** itself publish a product or authorize a supplier purchase.
+
+The owner-only `/api/admin/commerce/assess` endpoint is intentionally non-mutating. It may recommend a selling price and report eligibility, but it must not write `sellingPriceCents`, `landedCostCents`, or `commerceEnabled`.
 
 ## Source verification
 
@@ -86,9 +112,9 @@ A product must not be broadly enabled for commerce unless:
 
 ## Sourcing and fulfillment gate
 
-Automatic supplier purchasing is a money-moving action and remains disabled during guarded Phase 3.
+Phase 2.5 now permits Phase 3 to advance, but automatic supplier purchasing remains a separate money-moving control and stays disabled during the current guarded rollout.
 
-Until the settlement/refund portion of Phase 2.5 is fully observed in production, Phase 3 may automate:
+Phase 3 may automate:
 
 - discovery;
 - source verification;
@@ -101,7 +127,7 @@ Until the settlement/refund portion of Phase 2.5 is fully observed in production
 - inventory/availability monitoring;
 - operational alerts.
 
-It must not autonomously execute supplier purchases, payouts, transfers, or unreviewed refunds.
+It must not autonomously execute supplier purchases, payouts, transfers, or unreviewed refunds until those specific workflows have their own authorization, limits, idempotency, reconciliation, and production certification.
 
 ## Legacy affiliate behavior
 
@@ -118,7 +144,7 @@ Before a Phase 3 commerce/pricing release:
 1. `npm ci`
 2. `npm run lint`
 3. `npx tsc --noEmit`
-4. `npm run test:pricing`
+4. `npm run test:commerce-core`
 5. existing Stripe payment-integrity tests
 6. Cloudflare/OpenNext build
 7. Wrangler dry-run
