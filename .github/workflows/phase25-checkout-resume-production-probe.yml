@@ -1,0 +1,90 @@
+name: Phase 2.5 Checkout Resume Production Probe
+
+on:
+  pull_request:
+    branches:
+      - migration/cloudflare-workers
+    paths:
+      - .github/workflows/phase25-checkout-resume-production-probe.yml
+
+permissions:
+  contents: read
+
+jobs:
+  verify-production-resume:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    env:
+      PRODUCTION_URL: https://www.deal-forge.sale
+      REQUIRED_FIX_SHA: f16e8149d71235cdc7a0ecc0995d2b5771cf6a46
+      REPOSITORY: blahtblclthpt99-sys/DealForge
+      CERT_ORDER: DF-MT533GVY-1EBD8CF1
+      CERT_KEY: phase25-managedfix-32608596315-1
+    steps:
+      - name: Wait until production contains Checkout resume fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          ready=0
+          for attempt in $(seq 1 42); do
+            code=$(curl --silent --show-error --max-time 20 --output /tmp/build.json --write-out '%{http_code}' "$PRODUCTION_URL/api/build" || echo 000)
+            production_sha=$(python - <<'PY'
+          import json
+          from pathlib import Path
+          try:
+              print(json.loads(Path('/tmp/build.json').read_text()).get('sha',''))
+          except Exception:
+              print('')
+          PY
+            )
+            relation="unknown"
+            if [[ "$code" == "200" && "$production_sha" =~ ^[0-9a-f]{40}$ ]]; then
+              if [[ "$production_sha" == "$REQUIRED_FIX_SHA" ]]; then
+                relation="identical"
+              else
+                compare_code=$(curl --silent --show-error --max-time 20 \
+                  --header 'Accept: application/vnd.github+json' \
+                  --output /tmp/compare.json \
+                  --write-out '%{http_code}' \
+                  "https://api.github.com/repos/$REPOSITORY/compare/$REQUIRED_FIX_SHA...$production_sha" || echo 000)
+                if [[ "$compare_code" == "200" ]]; then
+                  relation=$(python - <<'PY'
+          import json
+          from pathlib import Path
+          try:
+              print(json.loads(Path('/tmp/compare.json').read_text()).get('status','unknown'))
+          except Exception:
+              print('unknown')
+          PY
+                  )
+                fi
+              fi
+            fi
+            echo "attempt=$attempt http=$code production_sha=$production_sha relation=$relation"
+            if [[ "$code" == "200" && ( "$relation" == "identical" || "$relation" == "ahead" ) ]]; then
+              ready=1
+              break
+            fi
+            sleep 10
+          done
+          [[ "$ready" == "1" ]]
+
+      - name: Verify same-origin resume makes one clean Stripe hop
+        shell: bash
+        run: |
+          set -euo pipefail
+          url="$PRODUCTION_URL/api/checkout/resume?order=$CERT_ORDER&key=$CERT_KEY"
+          code=$(curl --silent --show-error --max-time 20 --max-redirs 0 \
+            --dump-header /tmp/headers.txt \
+            --output /tmp/body.txt \
+            --write-out '%{http_code}' \
+            "$url" || true)
+          echo "resume_http=$code"
+          [[ "$code" == "302" ]]
+          location=$(awk 'BEGIN{IGNORECASE=1} /^location:/{sub(/^[^:]+:[[:space:]]*/,""); sub(/\r$/,""); print; exit}' /tmp/headers.txt)
+          [[ "$location" == https://checkout.stripe.com/* ]]
+          grep -qi '^cache-control: .*no-store' /tmp/headers.txt
+          grep -qi '^referrer-policy: no-referrer' /tmp/headers.txt
+          echo 'resume_location=stripe_checkout'
+          echo 'cache_control=no_store'
+          echo 'referrer_policy=no_referrer'
