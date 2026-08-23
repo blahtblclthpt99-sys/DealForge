@@ -70,3 +70,14 @@ test("never treats a zero landed cost as a valid autonomous quote", () => {
   assert.equal(quote.eligible, false);
   assert.equal(quote.reason, "INVALID_INPUT");
 });
+
+test("fails closed when financial values exceed JavaScript safe-integer range", () => {
+  const quote = quoteSellingPrice({
+    landedCostCents: Number.MAX_SAFE_INTEGER,
+    targetGrossMarginBps: 2_000,
+    paymentFixedFeeCents: Number.MAX_SAFE_INTEGER,
+  });
+
+  assert.equal(quote.eligible, false);
+  assert.equal(quote.reason, "INVALID_INPUT");
+});
