@@ -9,6 +9,11 @@ import { computeRankScore } from "./ranking";
 import { parseJson } from "./utils";
 import { normalizeProductImage } from "./product-image";
 import { parseQuantityFromTitle } from "./quantity";
+import { isFinancialGateCertified } from "./financial-gate";
+import {
+  checkDirectCommerceReadiness,
+  type DirectCommerceReadinessReason,
+} from "./direct-commerce-readiness";
 import {
   publicProductVisibilityClauses,
   publicProductWhere,
@@ -39,6 +44,8 @@ export type ProductDTO = {
   retailer: string;
   availability: string;
   commerceEnabled: boolean;
+  directCommerceReady: boolean;
+  directCommerceReadinessReason: DirectCommerceReadinessReason;
   sellingPriceCents: number | null;
   currency: string;
   specifications: Record<string, unknown>;
@@ -158,6 +165,15 @@ export function toProductDTO(
   const specs = parseJson<Record<string, unknown>>(p.specifications, {});
   const storedPricing = sanitizePricing(p.price, p.originalPrice, p.discountPercent);
   const freshCommerce = hasFreshTrustedAmazonCommerce(p.retailer, specs, p.lastUpdated);
+  const directReadiness = checkDirectCommerceReadiness({
+    financialGateCertified: isFinancialGateCertified(),
+    commerceEnabled: p.commerceEnabled,
+    availability: p.availability,
+    currency: p.currency,
+    landedCostCents: p.landedCostCents,
+    sellingPriceCents: p.sellingPriceCents,
+    specifications: specs,
+  });
   const isAmazon = p.retailer.trim().toLowerCase() === "amazon";
   const recordedPriceAvailable = isAmazon && storedPricing.price > 0 && !freshCommerce;
   const publicPricing = freshCommerce
@@ -205,6 +221,8 @@ export function toProductDTO(
     retailer: p.retailer,
     availability: p.availability,
     commerceEnabled: p.commerceEnabled,
+    directCommerceReady: directReadiness.ready,
+    directCommerceReadinessReason: directReadiness.reason,
     sellingPriceCents: Number.isSafeInteger(p.sellingPriceCents) ? p.sellingPriceCents : null,
     currency: p.currency.toLowerCase(),
     specifications: specs,
@@ -286,7 +304,7 @@ export async function queryProducts(params: ProductQuery) {
   const normalized = normalizeProductQuery(params);
   const page = normalized.page ?? 1;
   const limit = normalized.limit ?? 24;
-  const cacheKey = `products:v12:${JSON.stringify(normalized)}`;
+  const cacheKey = `products:v13:${JSON.stringify(normalized)}`;
   const cached = await cacheGet<{
     items: ProductDTO[];
     total: number;

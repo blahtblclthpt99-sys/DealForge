@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
+import { checkDirectCommerceReadiness } from "@/lib/direct-commerce-readiness";
+import { isFinancialGateCertified } from "@/lib/financial-gate";
 import { retrieveStripeCheckoutSession } from "@/lib/stripe-commerce";
 
 export const runtime = "nodejs";
@@ -26,7 +28,10 @@ export async function GET(request: Request) {
     return noStore(NextResponse.json({ error: "INVALID_CHECKOUT_RESUME_REQUEST" }, { status: 400 }));
   }
 
-  const order = await prisma.order.findUnique({ where: { checkoutKey } });
+  const order = await prisma.order.findUnique({
+    where: { checkoutKey },
+    include: { items: true },
+  });
   if (!order || order.orderNumber !== orderNumber) {
     return noStore(NextResponse.json({ error: "CHECKOUT_NOT_FOUND" }, { status: 404 }));
   }
@@ -37,6 +42,40 @@ export async function GET(request: Request) {
   }
   if (!order.stripeCheckoutSessionId) {
     return noStore(NextResponse.json({ error: "CHECKOUT_SESSION_NOT_READY" }, { status: 409 }));
+  }
+
+  const productIds = [...new Set(order.items.map((item) => item.productId))];
+  const products = await prisma.product.findMany({ where: { id: { in: productIds } } });
+  if (products.length !== productIds.length) {
+    return noStore(NextResponse.json({ error: "CHECKOUT_REVALIDATION_REQUIRED" }, { status: 409 }));
+  }
+
+  const financialGateCertified = isFinancialGateCertified();
+  const readinessNowMs = Date.now();
+  const productById = new Map(products.map((product) => [product.id, product]));
+  for (const item of order.items) {
+    const product = productById.get(item.productId);
+    if (!product) {
+      return noStore(NextResponse.json({ error: "CHECKOUT_REVALIDATION_REQUIRED" }, { status: 409 }));
+    }
+    const readiness = checkDirectCommerceReadiness({
+      financialGateCertified,
+      commerceEnabled: product.commerceEnabled,
+      availability: product.availability,
+      currency: product.currency,
+      landedCostCents: product.landedCostCents,
+      sellingPriceCents: product.sellingPriceCents,
+      specifications: product.specifications,
+      nowMs: readinessNowMs,
+    });
+    if (
+      !readiness.ready ||
+      item.unitPriceCents !== product.sellingPriceCents ||
+      item.landedCostCents !== product.landedCostCents ||
+      order.currency !== product.currency.toLowerCase()
+    ) {
+      return noStore(NextResponse.json({ error: "CHECKOUT_REVALIDATION_REQUIRED" }, { status: 409 }));
+    }
   }
 
   try {

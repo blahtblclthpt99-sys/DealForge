@@ -72,6 +72,7 @@ export function getCommerceDisplayState(
     | "reviewCount"
     | "specifications"
     | "commerceEnabled"
+    | "directCommerceReady"
     | "sellingPriceCents"
     | "currency"
     | "availability"
@@ -83,9 +84,10 @@ export function getCommerceDisplayState(
   const isDirectCommerce = product.commerceEnabled;
   const canPurchaseDirect =
     isDirectCommerce &&
+    product.directCommerceReady &&
     Number.isSafeInteger(product.sellingPriceCents) &&
     (product.sellingPriceCents ?? 0) > 0 &&
-    /^[a-z]{3}$/.test(currency) &&
+    currency === "usd" &&
     product.availability === "in_stock";
 
   if (isDirectCommerce) {
@@ -104,8 +106,8 @@ export function getCommerceDisplayState(
       canDisplayDiscount: false,
       checkedDate: assessedAt == null ? null : new Date(assessedAt).toISOString().slice(0, 10),
       priceCaption: canPurchaseDirect
-        ? "DealForge selling price · final order amount is validated again at secure checkout"
-        : "Temporarily unavailable from DealForge",
+        ? "DealForge selling price · source and order amount are validated again at secure checkout"
+        : "Temporarily unavailable from DealForge while price, source, or fulfillment readiness is revalidated",
       reviewCountIsCredible: product.reviewCount > 0 && !(isAmazon && product.reviewCount === 100),
     };
   }

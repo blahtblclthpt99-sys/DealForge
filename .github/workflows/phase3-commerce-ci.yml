@@ -95,9 +95,13 @@ jobs:
         run: |
           set -euo pipefail
           grep -Fq 'commerceEnabled: boolean' src/lib/products.ts
+          grep -Fq 'directCommerceReady: boolean' src/lib/products.ts
+          grep -Fq 'directCommerceReadinessReason: DirectCommerceReadinessReason' src/lib/products.ts
           grep -Fq 'sellingPriceCents: number | null' src/lib/products.ts
           grep -Fq 'specifications: Record<string, unknown>' src/lib/products.ts
+          grep -Fq 'checkDirectCommerceReadiness' src/lib/products.ts
           grep -Fq 'sellerLabel: "DealForge"' src/lib/commerce-display.ts
+          grep -Fq 'product.directCommerceReady' src/lib/commerce-display.ts
           grep -Fq 'product.sellingPriceCents' src/lib/commerce-display.ts
           grep -Fq 'product.availability === "in_stock"' src/lib/commerce-display.ts
           grep -Fq 'fetch("/api/checkout"' src/components/direct-buy-button.tsx
@@ -105,6 +109,20 @@ jobs:
           grep -Fq 'DirectBuyButton' 'src/app/product/[slug]/page.tsx'
           grep -Fq 'commercerecommendation' 'src/app/product/[slug]/page.tsx'
           grep -Fq '!commerce.isDirectCommerce' 'src/app/product/[slug]/page.tsx'
+
+      - name: Direct-commerce runtime readiness guard
+        run: |
+          set -euo pipefail
+          test -f src/lib/direct-commerce-readiness.ts
+          grep -Fq 'BLOCKED_FINANCIAL_GATE' src/lib/direct-commerce-readiness.ts
+          grep -Fq 'SOURCE_STALE' src/lib/direct-commerce-readiness.ts
+          grep -Fq 'FINANCIAL_DRIFT' src/lib/direct-commerce-readiness.ts
+          grep -Fq 'checkDirectCommerceReadiness' src/app/api/checkout/route.ts
+          grep -Fq 'isFinancialGateCertified' src/app/api/checkout/route.ts
+          grep -Fq 'checkDirectCommerceReadiness' src/app/api/checkout/resume/route.ts
+          grep -Fq 'CHECKOUT_REVALIDATION_REQUIRED' src/app/api/checkout/resume/route.ts
+          grep -Fq 'item.unitPriceCents !== product.sellingPriceCents' src/app/api/checkout/resume/route.ts
+          grep -Fq 'item.landedCostCents !== product.landedCostCents' src/app/api/checkout/resume/route.ts
 
       - name: Build for Cloudflare
         run: npm run cf:build

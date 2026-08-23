@@ -26,6 +26,8 @@ function product(overrides: Partial<ProductDTO> = {}): ProductDTO {
     retailer: "amazon",
     availability: "in_stock",
     commerceEnabled: false,
+    directCommerceReady: false,
+    directCommerceReadinessReason: "COMMERCE_DISABLED",
     sellingPriceCents: null,
     currency: "usd",
     specifications: {
@@ -45,9 +47,11 @@ function product(overrides: Partial<ProductDTO> = {}): ProductDTO {
   };
 }
 
-test("direct commerce uses DealForge selling cents instead of supplier price", () => {
+test("direct commerce uses DealForge selling cents only when server readiness passed", () => {
   const state = getCommerceDisplayState(product({
     commerceEnabled: true,
+    directCommerceReady: true,
+    directCommerceReadinessReason: "READY",
     sellingPriceCents: 1599,
     price: 9.99,
     specifications: {
@@ -63,8 +67,27 @@ test("direct commerce uses DealForge selling cents instead of supplier price", (
   assert.match(state.priceCaption, /DealForge selling price/);
 });
 
+test("direct commerce fails closed when the server readiness verdict is false", () => {
+  const state = getCommerceDisplayState(product({
+    commerceEnabled: true,
+    directCommerceReady: false,
+    directCommerceReadinessReason: "SOURCE_STALE",
+    sellingPriceCents: 1599,
+  }));
+  assert.equal(state.isDirectCommerce, true);
+  assert.equal(state.canPurchaseDirect, false);
+  assert.equal(state.canDisplayPrice, false);
+  assert.equal(state.displayPrice, null);
+  assert.equal(state.priceStatus, "unavailable");
+});
+
 test("direct commerce fails closed when selling price is invalid", () => {
-  const state = getCommerceDisplayState(product({ commerceEnabled: true, sellingPriceCents: null }));
+  const state = getCommerceDisplayState(product({
+    commerceEnabled: true,
+    directCommerceReady: true,
+    directCommerceReadinessReason: "READY",
+    sellingPriceCents: null,
+  }));
   assert.equal(state.isDirectCommerce, true);
   assert.equal(state.canPurchaseDirect, false);
   assert.equal(state.canDisplayPrice, false);
@@ -75,6 +98,8 @@ test("direct commerce fails closed when selling price is invalid", () => {
 test("direct commerce fails closed when product is out of stock", () => {
   const state = getCommerceDisplayState(product({
     commerceEnabled: true,
+    directCommerceReady: true,
+    directCommerceReadinessReason: "READY",
     sellingPriceCents: 1599,
     availability: "out_of_stock",
   }));
