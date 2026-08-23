@@ -61,7 +61,7 @@ A generated selling price must satisfy every applicable rule:
 7. stale or ambiguous cost data fails closed;
 8. a cap violation makes the product ineligible instead of silently lowering margin.
 
-Pricing calculations are advisory until a publication action explicitly writes the approved `sellingPriceCents` to a product.
+A pricing calculation is advisory until the owner explicitly saves a reviewed recommendation. Persisting `sellingPriceCents` and `landedCostCents` as a recommendation still does **not** make a product purchasable; only the separate activation gate may set `commerceEnabled=true`.
 
 ## Commerce eligibility and profitability assessment
 
@@ -98,7 +98,7 @@ This step is deliberately narrower than publication or activation:
 - never writes `commerceEnabled=true` and therefore does not publish the product for direct sale;
 - never initiates supplier procurement or any other money-moving operation.
 
-Saving a recommendation means **financially reviewed candidate**, not **live product**. A separate controlled activation gate must re-check freshness, financial values, fulfillment readiness, and owner authorization before commerce can be enabled.
+Saving a recommendation means **financially reviewed candidate**, not **live product**.
 
 ## Direct-commerce storefront authority
 
@@ -116,6 +116,50 @@ For direct-commerce products:
 - malformed or unavailable direct-commerce records fail closed as unavailable instead of falling back to a retailer purchase link.
 
 This storefront work does not itself activate any product. Activation remains a separate owner-controlled gate.
+
+## Controlled activation
+
+A reviewed recommendation becomes purchasable only through `/api/admin/commerce/products/[id]/activation` after a second server-side gate.
+
+Activation:
+
+- requires the explicit confirmation token `ACTIVATE_COMMERCE`;
+- requires owner authorization and the certified Phase 2.5 financial gate;
+- currently permits only `manual_supplier_purchase` fulfillment, so activation never triggers an unattended supplier order;
+- consumes the already-saved recommendation instead of accepting a replacement client price, landed cost, source-verification flag, or source timestamp;
+- requires the current catalog source to be trusted `amazon-creators-api` data for the initial guarded rollout;
+- requires the current source price and verification timestamp to exactly match the recommendation being activated;
+- requires source data no older than six hours;
+- requires an approved HTTPS Amazon supplier route and a currently available product;
+- requires the persisted `landedCostCents` and `sellingPriceCents` to exactly match the saved recommendation;
+- re-runs the commerce eligibility calculation from the current source snapshot and saved cost/pricing policy before activation;
+- enforces minimum activation policy floors of 15% gross margin, $2.00 estimated absolute profit, 3% payment-fee allowance, and $0.30 fixed payment-fee allowance;
+- uses a conditional write over the reviewed catalog snapshot so concurrent source or financial changes return `ACTIVATION_SOURCE_CHANGED` instead of enabling stale state;
+- records activation owner, source snapshot, recommendation reference, fulfillment mode, and financial values in audit metadata and SystemLog.
+
+Only after every check succeeds may the route set `commerceEnabled=true`. Recognized source availability values are normalized to Checkout's canonical `in_stock` state during activation.
+
+The owner can explicitly disable an activated product with `DISABLE_COMMERCE`. Disabling sets `commerceEnabled=false`, preserves the prior activation audit, records who disabled it and when, and requires no supplier purchase or refund action.
+
+## Checkout revalidation
+
+`commerceEnabled=true` is necessary but no longer sufficient for Checkout.
+
+Every new Checkout creation re-runs the activation assessment against the current server-stored product record before creating a Stripe Checkout Session. Checkout therefore fails closed when:
+
+- the Phase 2.5 financial gate is not certified;
+- the trusted source marker is missing or changed;
+- source availability is no longer acceptable;
+- the source verification timestamp has aged past the six-hour window;
+- source price or verification timestamp differs from the saved recommendation;
+- the saved recommendation falls below activation policy floors;
+- persisted financial values no longer match the recommendation;
+- the approved supplier route is no longer valid;
+- re-calculated landed cost or selling price no longer matches the reviewed recommendation.
+
+A source refresh or source-price change therefore requires a new reviewed recommendation and activation before a new customer Checkout can be created. Checkout does not expose internal profitability or supplier details to the customer; an invalid product is returned only as non-purchasable.
+
+This revalidation narrows the interval between supplier verification and customer charge, but it does not guarantee supplier inventory after a Stripe Checkout Session has already been created. Fulfillment remains manual in this stage, and later procurement automation requires its own pre-purchase revalidation and certification gate.
 
 ## Source verification
 
@@ -185,8 +229,9 @@ Before a Phase 3 commerce/pricing release:
 7. Wrangler dry-run
 8. production dependency audit
 9. verify no product was unintentionally commerce-enabled
-10. verify any published selling price satisfies landed-cost/profit policy
-11. smoke-test `www.deal-forge.sale`
-12. keep bare-apex routing tracked separately until its stale Vercel/DNS conflict is removed
+10. verify any activated selling price satisfies its saved landed-cost/profit policy and current source snapshot
+11. verify Checkout revalidates current activation eligibility before Stripe session creation
+12. smoke-test `www.deal-forge.sale`
+13. keep bare-apex routing tracked separately until its stale Vercel/DNS conflict is removed
 
 No release may be called production-certified solely because it builds or deploys.
