@@ -1,0 +1,30 @@
+name: Phase 2.5 Stripe Short URL Probe
+
+on:
+  pull_request:
+    branches:
+      - migration/cloudflare-workers
+    paths:
+      - .github/workflows/phase25-stripe-short-url-probe.yml
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Verify Stripe session URL works without browser fragment
+        shell: bash
+        run: |
+          set -euo pipefail
+          url='https://checkout.stripe.com/c/pay/cs_live_a11G7U01Bxz8FfpNjKvmcS3B5DA4KtDAFf3cyNvHczlLMJwBkdHok1YrZi'
+          code=$(curl --silent --show-error --max-time 20 --output /tmp/body --dump-header /tmp/headers --write-out '%{http_code}' "$url")
+          echo "stripe_short_url_http=$code"
+          [[ "$code" == "200" || "$code" == "302" || "$code" == "303" || "$code" == "307" || "$code" == "308" ]]
+          content_type=$(awk 'BEGIN{IGNORECASE=1} /^content-type:/{sub(/^[^:]+:[[:space:]]*/,""); sub(/\r$/,""); print; exit}' /tmp/headers)
+          echo "content_type=$content_type"
+          if [[ "$code" == "200" ]]; then
+            [[ "$content_type" == text/html* ]]
+          fi
