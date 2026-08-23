@@ -34,6 +34,7 @@ export type CommerceEligibilityResult = {
 };
 
 const BIGINT_ZERO = BigInt(0);
+const BIGINT_TWENTY = BigInt(20);
 const BIGINT_BPS_SCALE = BigInt(10_000);
 
 function blocked(reason: CommerceEligibilityReason, landedCostCents: number | null = null, pricingQuote: PricingQuote | null = null): CommerceEligibilityResult {
@@ -63,7 +64,8 @@ function sourceFreshnessPoints(input: LandedCostInput) {
   const ageMs = Math.max(0, nowMs - input.sourceCheckedAtMs);
   if (ageMs >= input.maxSourceAgeMs) return 0;
   const remaining = input.maxSourceAgeMs - ageMs;
-  return clampInt(Math.floor((remaining * 20) / input.maxSourceAgeMs), 0, 20);
+  const points = (BigInt(remaining) * BIGINT_TWENTY) / BigInt(input.maxSourceAgeMs);
+  return clampInt(Number(points), 0, 20);
 }
 
 function roiBps(profitCents: number, landedCostCents: number) {
