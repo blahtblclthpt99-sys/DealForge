@@ -1,7 +1,7 @@
 Cloudflare candidate deployment trigger.
 Branch: migration/cloudflare-workers
-Purpose: force a fresh Git-connected production build after merging the Stripe Price-backed Checkout fix for Phase 2.5 live transaction certification.
-Release marker: 2026-08-22 Stripe Price-backed checkout certification redeploy retry 2.
-Expected production code includes merge: f6714bbe7b8d6aa3ed0482057c85d6258f3db3e2
+Purpose: force a fresh Git-connected production build after merging the secret-safe Stripe provider diagnostic for Phase 2.5 live Checkout certification.
+Release marker: 2026-08-22 safe Stripe provider diagnostic certification redeploy.
+Expected production code includes merge: fc7e9f934cbe61f8bd92750c37e0d2a058c88424
 Webhook verification target: https://www.deal-forge.sale/api/stripe/webhook
 Checkout verification target: https://www.deal-forge.sale/api/checkout
