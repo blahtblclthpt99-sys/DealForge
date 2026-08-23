@@ -1,114 +1,87 @@
 # DealForge
 
-Modern affiliate product discovery platform. DealForge aggregates products from affiliate partners and routes shoppers to retailers — it does not sell inventory directly.
+DealForge is a commerce platform that discovers products from verified suppliers, calculates landed cost, sets a DealForge selling price, accepts customer payment through DealForge, then sources and fulfills the order while retaining the resulting margin.
+
+The current operating model is:
+
+**DISCOVER → VERIFY → IMPORT → CALCULATE LANDED COST → PRICE → PUBLISH → SELL → SOURCE → FULFILL → SUPPORT → RECONCILE → OPTIMIZE**
+
+DealForge is no longer designed as an affiliate-link-first storefront. Legacy affiliate/provider metadata may still exist in the repository for source discovery or historical compatibility, but customer financial truth must come from DealForge's own order ledger and verified Stripe events.
 
 ## Stack
 
-- **Next.js 15** (App Router) + TypeScript + Tailwind CSS v4
-- **Prisma** + SQLite (swap `DATABASE_URL` to PostgreSQL for production)
+- **Next.js 16** + TypeScript + Tailwind CSS
+- **Prisma** + PostgreSQL in production
 - **JWT sessions** with bcrypt password hashing
-- **Modular affiliate connectors** (Amazon Associates live; Walmart, eBay, CJ, Impact, Awin, Rakuten, ShareASale, Etsy stubbed)
-- **Redis-ready cache** with in-memory + DB fallback
-- **Background worker** for trending scores, flash expiry, cache purge, price alerts
+- **Stripe Checkout** for DealForge-owned checkout
+- **Verified Stripe webhooks** as authoritative payment state
+- **Order, payment, payment-event, and refund ledgers**
+- **Product Engine** for controlled product discovery and intake
+- **Background workers** for catalog and operational processing
+
+## Financial safety gate — Phase 2.5
+
+Commerce remains gated until the complete Stripe transaction lifecycle is certified.
+
+Required certification path:
+
+1. Apply committed PostgreSQL migrations.
+2. Configure server-side `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET`.
+3. Configure the Stripe webhook endpoint at `/api/stripe/webhook`.
+4. Enable only a controlled certification product.
+5. Create Checkout from server-authoritative product pricing.
+6. Complete a Stripe test-mode payment.
+7. Confirm the order changes state from a verified webhook, not from the browser success page.
+8. Replay the webhook and verify no duplicate order/payment state is created.
+9. Issue a controlled refund and verify the refund ledger and Stripe state reconcile.
+10. Reconcile Stripe financial state against DealForge records.
+11. Only after all checks pass may broader commerce automation be enabled.
+
+Products are intentionally `commerceEnabled=false` by default until this gate is passed.
+
+## Release verification
+
+Before promotion, run:
+
+```bash
+npm ci
+npm run lint
+npm run typecheck
+npm test
+npm run prisma:validate
+npm run build
+```
+
+GitHub Actions also runs the DealForge Commerce CI gate on pushes and pull requests targeting `main`.
 
 ## Quick start
 
 ```bash
 npm install
 cp .env.example .env
-npm run db:setup       # prisma db push + seed
+npm run db:setup
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000).
+## Production requirements
 
-### Demo accounts
+- Use PostgreSQL for `DATABASE_URL`.
+- Keep Stripe secrets server-side; never expose them through `NEXT_PUBLIC_*` variables.
+- Apply committed migrations before enabling commerce products.
+- Use verified Stripe webhook events as financial truth.
+- Do not enable autonomous supplier purchasing until payment, refund, reconciliation, and order-integrity certification are complete.
+- Keep supplier/source verification and landed-cost controls ahead of publication.
 
-| Role  | Email               | Password           |
-|-------|---------------------|--------------------|
-| User  | demo@dealforge.com   | DemoUser123!       |
-| Admin | admin@dealforge.com  | AdminDealForge2026! |
+## Primary pages
 
-## Amazon Associates
-
-Tracking ID: **`titanfieldos-20`**
-
-Every Amazon purchase link is generated as:
-
-```
-https://www.amazon.com/dp/{ASIN}?tag=titanfieldos-20
-```
-
-See `src/lib/affiliate/providers/amazon.ts`. To enable Product Advertising API imports, set `AMAZON_ACCESS_KEY` and `AMAZON_SECRET_KEY` in `.env`.
-
-## Adding another affiliate network
-
-1. Implement `AffiliateConnector` in `src/lib/affiliate/providers/`
-2. Register it in `src/lib/affiliate/registry.ts`
-3. Enable the row in Admin → Affiliate networks (or seed `AffiliateProvider`)
-
-## Scripts
-
-| Command            | Description                          |
-|--------------------|--------------------------------------|
-| `npm run dev`      | Local development                    |
-| `npm run build`    | Production build                     |
-| `npm run db:setup` | Push schema + seed                   |
-| `npm run worker`   | Background jobs (loop every 5 min)   |
-| `npm run worker -- --once` | Single worker pass            |
-
-## Pages
-
-- `/` — Home (hero, featured, trending, flash, categories, infinite feed)
+- `/` — storefront and deal discovery
 - `/categories`, `/categories/[slug]`
-- `/product/[slug]` — SEO product detail + buy CTA
-- `/search` — Live search + filters + sort
-- `/deals` — Flash deals
-- `/dashboard/*` — Wishlist, saved searches, recent, alerts, settings
-- `/admin` — Affiliate stats, imports, logs, cache, users, products
+- `/product/[slug]` — product detail and DealForge purchase entry point
+- `/search` — product search and filters
+- `/deals` — active deals
+- `/dashboard/*` — customer account features
+- `/admin` — controlled catalog and operations management
 
-## Affiliate disclosure
+## Production domain
 
-A required disclosure appears in the site footer stating DealForge may earn commissions from qualifying purchases through affiliate links.
-
-## Production notes
-
-- Set a strong `AUTH_SECRET`
-- Use PostgreSQL: change Prisma `provider` to `postgresql` and set `DATABASE_URL`
-- Set `REDIS_URL` for shared cache / rate-limit counters
-- Put images behind a CDN; seed currently uses inline SVG placeholders for offline demos
-- Run `npm run worker` as a separate process (or cron)
-- Configure Amazon PA-API credentials before live catalog sync
-
-## Deploy to the web (website launcher)
-
-DealForge is a full Next.js app (API routes + database). It cannot run on plain static file hosting alone.
-
-### Quick — Vercel (recommended)
-
-```bash
-npm i -g vercel   # once
-vercel login
-vercel --prod
-```
-
-Set env vars in the Vercel dashboard from `.env.production.example`. Use **PostgreSQL** for `DATABASE_URL` (Neon, Supabase, or Vercel Postgres). After connecting the DB, run `npm run db:setup` once locally against that URL, or use `vercel env pull` + `db:setup`.
-
-Point your domain (IONOS, etc.): add a **CNAME** for `www` to your Vercel project.
-
-### Upload zip — self-hosted Node (VPS / Node hosting)
-
-Same workflow as TitanOS `ionos:package`, but runs a Node server instead of static files:
-
-```bash
-npm run website:package
-```
-
-Upload **`release/DealForge-Web.zip`** to your server, unzip, edit `.env`, then run `START.bat` or `node server.js`. Full instructions are inside the zip (`UPLOAD-INSTRUCTIONS.txt`).
-
-The zip includes the seeded SQLite catalog (~15k products) so the live site works immediately.
-
-| Command | Purpose |
-|---------|---------|
-| `npm run website:package` | Build + zip for Node self-host |
-| `npm run deploy:vercel` | Deploy to Vercel production |
+**https://deal-forge.sale**
