@@ -2,7 +2,7 @@
   "name": "dealforge",
   "version": "1.0.0",
   "private": true,
-  "description": "DealForge — affiliate product discovery platform",
+  "description": "DealForge — controlled commerce, pricing, sourcing and fulfillment platform",
   "scripts": {
     "dev": "next dev",
     "build": "node scripts/prisma-generate.mjs && next build",
