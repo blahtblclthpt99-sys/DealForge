@@ -7,6 +7,8 @@ import { SectionHeader } from "@/components/section-header";
 import { getCategories, queryProducts } from "@/lib/products";
 import { isDatabaseConfigured } from "@/lib/db";
 
+export const dynamic = "force-dynamic";
+
 function SetupBanner({ message }: { message: string }) {
   return (
     <div className="dn-container py-16">
@@ -18,30 +20,22 @@ function SetupBanner({ message }: { message: string }) {
         <p className="mt-3 text-forest-muted">{message}</p>
         <ol className="mt-6 list-decimal space-y-2 pl-5 text-left text-sm text-forest-ink">
           <li>
-            Create a free Postgres database at{" "}
-            <a className="text-forest underline" href="https://neon.tech" target="_blank" rel="noreferrer">
-              neon.tech
-            </a>
+            Create or select the production PostgreSQL database. DealForge is configured for a
+            hosted PostgreSQL/Neon connection in production.
           </li>
           <li>
-            In Vercel → Project → Settings → Environment Variables, set{" "}
-            <code className="rounded bg-forest/10 px-1">DATABASE_URL</code> to the Neon connection
-            string
+            In the Cloudflare Worker settings, configure the server-side{" "}
+            <code className="rounded bg-forest/10 px-1">DATABASE_URL</code> secret.
           </li>
           <li>
-            Also set <code className="rounded bg-forest/10 px-1">AUTH_SECRET</code> and{" "}
+            Also configure <code className="rounded bg-forest/10 px-1">AUTH_SECRET</code> and{" "}
             <code className="rounded bg-forest/10 px-1">NEXT_PUBLIC_APP_URL</code>=
-            <code className="rounded bg-forest/10 px-1">https://deal-forge.sale</code>
+            <code className="rounded bg-forest/10 px-1">https://www.deal-forge.sale</code>.
           </li>
           <li>
-            From your PC, seed the database:
-            <pre className="mt-2 overflow-x-auto rounded-lg bg-forest/5 p-3 text-xs">
-              {`$env:DATABASE_URL="postgresql://..."
-npx prisma db push --schema=prisma/schema.postgres.prisma
-npm run db:seed`}
-            </pre>
+            Apply the committed PostgreSQL migrations before enabling commerce products.
           </li>
-          <li>Redeploy on Vercel</li>
+          <li>Redeploy the certified revision through Cloudflare Workers.</li>
         </ol>
       </div>
     </div>
@@ -51,7 +45,7 @@ npm run db:seed`}
 export default async function HomePage() {
   if (!isDatabaseConfigured()) {
     return (
-      <SetupBanner message="Vercel cannot use the local SQLite file. Connect a PostgreSQL database (Neon is free) and redeploy." />
+      <SetupBanner message="DealForge requires a production PostgreSQL connection. Configure DATABASE_URL in Cloudflare and redeploy the certified revision." />
     );
   }
 
@@ -74,7 +68,7 @@ export default async function HomePage() {
     const msg = err instanceof Error ? err.message : "Unknown database error";
     return (
       <SetupBanner
-        message={`Could not load products (${msg}). Set a PostgreSQL DATABASE_URL in Vercel and run prisma db push + seed against it.`}
+        message={`Could not load the live catalog (${msg}). Verify the production PostgreSQL connection and committed migrations.`}
       />
     );
   }
@@ -93,14 +87,14 @@ export default async function HomePage() {
           <div className="dn-container relative grid items-center gap-10 py-16 md:grid-cols-[1.1fr_0.9fr] md:py-24">
             <div className="animate-fade-up">
               <p className="mb-3 text-sm font-semibold uppercase tracking-[0.2em] text-forest">
-                Product discovery
+                Verified commerce
               </p>
               <h1 className="font-display text-4xl font-semibold leading-[1.1] tracking-tight text-forest-ink md:text-6xl">
                 DealForge
               </h1>
               <p className="mt-4 max-w-xl text-lg text-forest-muted">
-                Find trending products, flash savings, and curated deals from trusted retailers —
-                then buy where the price is best.
+                Discover verified products and strong values, purchase securely through DealForge,
+                and track the order while DealForge handles sourcing and fulfillment.
               </p>
               <div className="mt-8 flex flex-wrap gap-3">
                 <Link
@@ -125,23 +119,23 @@ export default async function HomePage() {
                   <div className="flex items-center gap-3 rounded-2xl bg-forest/10 p-4">
                     <Flame className="h-5 w-5 text-forest" />
                     <div>
-                      <p className="text-sm font-semibold text-forest-ink">Trending now</p>
-                      <p className="text-xs text-forest-muted">Ranked by savings, ratings & demand</p>
+                      <p className="text-sm font-semibold text-forest-ink">Verified sources</p>
+                      <p className="text-xs text-forest-muted">Products are checked before commerce activation</p>
                     </div>
                   </div>
                   <div className="flex items-center gap-3 rounded-2xl bg-forest/10 p-4">
                     <Zap className="h-5 w-5 text-forest" />
                     <div>
-                      <p className="text-sm font-semibold text-forest-ink">Flash deals</p>
-                      <p className="text-xs text-forest-muted">Limited-time drops refreshed daily</p>
+                      <p className="text-sm font-semibold text-forest-ink">Controlled pricing</p>
+                      <p className="text-xs text-forest-muted">Selling price is validated server-side at checkout</p>
                     </div>
                   </div>
                   <div className="flex items-center gap-3 rounded-2xl bg-forest/10 p-4">
                     <Sparkles className="h-5 w-5 text-forest" />
                     <div>
-                      <p className="text-sm font-semibold text-forest-ink">Retailer links</p>
+                      <p className="text-sm font-semibold text-forest-ink">DealForge checkout</p>
                       <p className="text-xs text-forest-muted">
-                        We route you to stores — we never sell stock
+                        Purchase through DealForge with payment-backed order tracking
                       </p>
                     </div>
                   </div>
@@ -154,7 +148,7 @@ export default async function HomePage() {
         <section className="dn-container py-14">
           <SectionHeader
             title="Featured Deals"
-            subtitle="Hand-picked savings with strong ratings"
+            subtitle="Hand-picked values from verified sources"
             href="/search?featured=1"
           />
           <div className="grid grid-cols-2 gap-3 sm:gap-4 md:grid-cols-3 lg:grid-cols-4">
@@ -178,7 +172,7 @@ export default async function HomePage() {
         <section className="dn-container py-14">
           <SectionHeader
             title="Trending Products"
-            subtitle="What shoppers are clicking now"
+            subtitle="What shoppers are exploring now"
             href="/search?sort=popularity"
           />
           <div className="grid grid-cols-2 gap-3 sm:gap-4 md:grid-cols-3 lg:grid-cols-4">
@@ -189,7 +183,7 @@ export default async function HomePage() {
         </section>
 
         <section className="dn-container py-14">
-          <SectionHeader title="Flash Deals" subtitle="Limited-time price drops" href="/deals" />
+          <SectionHeader title="Flash Deals" subtitle="Limited-time DealForge offers" href="/deals" />
           <div className="grid grid-cols-2 gap-3 sm:gap-4 md:grid-cols-3 lg:grid-cols-4">
             {flash.items.map((p) => (
               <ProductCard key={p.id} product={p} />
@@ -200,7 +194,7 @@ export default async function HomePage() {
         <section className="dn-container py-14">
           <SectionHeader
             title="New Arrivals"
-            subtitle="Fresh finds just added"
+            subtitle="Fresh verified finds just added"
             href="/search?sort=newest"
           />
           <div className="grid grid-cols-2 gap-3 sm:gap-4 md:grid-cols-3 lg:grid-cols-4">

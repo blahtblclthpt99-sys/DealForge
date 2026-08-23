@@ -4,6 +4,9 @@ import path from "path";
 const nextConfig: NextConfig = {
   output: "standalone",
   outputFileTracingRoot: path.join(__dirname),
+  // Keep Prisma's generated runtime external so OpenNext can package the
+  // workerd-compatible client/driver adapter correctly.
+  serverExternalPackages: ["@prisma/client", ".prisma/client"],
   images: {
     remotePatterns: [
       { protocol: "https", hostname: "m.media-amazon.com" },
