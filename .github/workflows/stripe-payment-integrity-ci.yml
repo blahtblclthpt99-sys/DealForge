@@ -58,6 +58,7 @@ jobs:
           grep -Fq 'STRIPE_REFUND_PAYMENT_INTENT_MISMATCH' src/app/api/admin/refunds/route.ts
           grep -Fq 'STRIPE_REFUND_AMOUNT_MISMATCH' src/app/api/admin/refunds/route.ts
           grep -Fq 'STRIPE_REFUND_CURRENCY_MISMATCH' src/app/api/admin/refunds/route.ts
+          grep -Fq 'stripeRefundStatus !== "pending"' src/app/api/admin/refunds/route.ts
 
       - name: Build for Cloudflare
         run: npm run cf:build
