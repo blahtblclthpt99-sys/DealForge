@@ -78,10 +78,6 @@ function isInternalCertificationProduct(specifications: string) {
 
 export async function POST(request: Request) {
   try {
-    if (!commerceEnabled()) {
-      return NextResponse.json({ error: "COMMERCE_DISABLED" }, { status: 503 });
-    }
-
     const parsed = CheckoutSchema.safeParse(await request.json());
     if (!parsed.success) {
       return NextResponse.json(
@@ -115,6 +111,13 @@ export async function POST(request: Request) {
     const products = await prisma.product.findMany({ where: { id: { in: productIds } } });
     if (products.length !== productIds.length) {
       return NextResponse.json({ error: "PRODUCT_NOT_FOUND" }, { status: 409 });
+    }
+
+    const certificationOnly =
+      products.length > 0 && products.every((product) => isInternalCertificationProduct(product.specifications));
+    const certificationBypass = certificationOnly && stripeTestMode();
+    if (!commerceEnabled() && !certificationBypass) {
+      return NextResponse.json({ error: "COMMERCE_DISABLED" }, { status: 503 });
     }
 
     const productById = new Map(products.map((product) => [product.id, product]));
