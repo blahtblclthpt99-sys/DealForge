@@ -10,7 +10,8 @@ DealForge is no longer designed as an affiliate-link-first storefront. Legacy af
 
 ## Stack
 
-- **Next.js 16** + TypeScript + Tailwind CSS
+- **Next.js 15.5 compatibility line** + TypeScript + Tailwind CSS, pinned for the current Cloudflare/OpenNext payment-certification release
+- **Cloudflare Workers + OpenNext** for production runtime and deployment
 - **Prisma** + PostgreSQL in production
 - **JWT sessions** with bcrypt password hashing
 - **Stripe Checkout** for DealForge-owned checkout
@@ -50,9 +51,11 @@ npm run typecheck
 npm test
 npm run prisma:validate
 npm run build
+npm run cf:build
+npm run cf:dry-run
 ```
 
-GitHub Actions also runs the DealForge Commerce CI gate on pushes and pull requests targeting `main`.
+GitHub Actions runs the DealForge Commerce CI, Product Engine CI, and Cloudflare Workers dry-run gates on pull requests targeting `main`.
 
 ## Quick start
 
@@ -71,6 +74,7 @@ npm run dev
 - Use verified Stripe webhook events as financial truth.
 - Do not enable autonomous supplier purchasing until payment, refund, reconciliation, and order-integrity certification are complete.
 - Keep supplier/source verification and landed-cost controls ahead of publication.
+- Keep the Cloudflare/OpenNext compatibility pin unchanged during Phase 2.5 certification; framework upgrades require their own tested release.
 
 ## Primary pages
 
