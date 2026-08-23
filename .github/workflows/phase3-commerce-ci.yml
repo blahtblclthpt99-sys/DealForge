@@ -38,8 +38,8 @@ jobs:
       - name: Typecheck
         run: npx tsc --noEmit
 
-      - name: Dynamic pricing tests
-        run: npm run test:pricing
+      - name: Guarded commerce core tests
+        run: npm run test:commerce-core
 
       - name: Stripe payment integrity tests
         run: npx tsx --test tests/stripe-commerce.test.ts
@@ -50,6 +50,7 @@ jobs:
           grep -Fq 'merchant-of-record deal commerce and sourcing platform' package.json
           grep -Fq 'DealForge is a **merchant-of-record commerce platform**' docs/CATALOG_OPERATIONS.md
           grep -Fq 'PRICE_CAP_EXCEEDED' src/lib/dynamic-pricing.ts
+          grep -Fq 'SOURCE_STALE' src/lib/landed-cost.ts
           grep -Fq 'isProductOwner' src/app/api/admin/pricing/quote/route.ts
           grep -Fq 'quoteSellingPrice' src/app/api/admin/pricing/quote/route.ts
 
