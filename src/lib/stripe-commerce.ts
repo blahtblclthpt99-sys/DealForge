@@ -191,6 +191,9 @@ export async function createStripeCheckoutSession(input: { orderId: string; orde
 
   const body = new URLSearchParams();
   body.set("mode", "payment");
+  // DealForge remains merchant of record. Managed Payments requires a Stripe tax code
+  // on every product; catalog tax classification is gated separately before Phase 3.
+  body.set("managed_payments[enabled]", "false");
   body.set("client_reference_id", input.orderId);
   body.set("customer_email", input.customerEmail);
   body.set("success_url", input.successUrl);
