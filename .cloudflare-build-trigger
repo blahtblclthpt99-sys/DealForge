@@ -1,7 +1,8 @@
 Cloudflare candidate deployment trigger.
 Branch: migration/cloudflare-workers
-Purpose: force a fresh Git-connected production build after Cloudflare Git event processing recovered; publish the Stripe Managed Payments Checkout fix for Phase 2.5 live transaction certification.
-Release marker: 2026-08-23 production payment recovery redeploy.
-Expected production code includes merge: cecd97fc49a4a53f8d95a696cf6e6baa4f6cd603
+Purpose: force a fresh Git-connected production build for the same-origin Checkout resume, accurate provider-failure state, and refund webhook-race fixes.
+Release marker: 2026-08-23 checkout resume reliability redeploy.
+Expected production code includes merge: f16e8149d71235cdc7a0ecc0995d2b5771cf6a46
 Webhook verification target: https://www.deal-forge.sale/api/stripe/webhook
 Checkout verification target: https://www.deal-forge.sale/api/checkout
+Checkout resume verification target: https://www.deal-forge.sale/api/checkout/resume
