@@ -60,6 +60,37 @@ jobs:
           grep -Fq 'mutatesCatalog: false' src/app/api/admin/commerce/assess/route.ts
           grep -Fq 'DEALFORGE_FINANCIAL_GATE_CERTIFIED' wrangler.jsonc
 
+      - name: Controlled recommendation persistence guard
+        run: |
+          set -euo pipefail
+          ROUTE='src/app/api/admin/commerce/products/[id]/recommendation/route.ts'
+          test -f "$ROUTE"
+          grep -Fq 'confirm: z.literal("SAVE_RECOMMENDATION")' "$ROUTE"
+          grep -Fq 'isProductOwner' "$ROUTE"
+          grep -Fq 'isFinancialGateCertified' "$ROUTE"
+          grep -Fq 'if (product.commerceEnabled)' "$ROUTE"
+          grep -Fq 'updateMany' "$ROUTE"
+          grep -Fq 'where: { id: product.id, commerceEnabled: false }' "$ROUTE"
+          grep -Fq 'RECOMMENDATION_ROUTE_PRODUCT_BECAME_ACTIVE' "$ROUTE"
+          grep -Fq 'landedCostCents: assessment.landedCostCents' "$ROUTE"
+          grep -Fq 'sellingPriceCents: assessment.recommendedSellingPriceCents' "$ROUTE"
+          grep -Fq 'commerceRecommendation: recommendationAudit' "$ROUTE"
+          grep -Fq 'commerceEnabled: false' "$ROUTE"
+          node <<'NODE'
+          const fs = require('node:fs');
+          const route = 'src/app/api/admin/commerce/products/[id]/recommendation/route.ts';
+          const source = fs.readFileSync(route, 'utf8');
+          const start = source.indexOf('const write = await tx.product.updateMany({');
+          const end = source.indexOf('});', start);
+          if (start < 0 || end < 0) throw new Error('Recommendation updateMany block not found');
+          const block = source.slice(start, end);
+          const dataStart = block.indexOf('data:');
+          if (dataStart < 0) throw new Error('Recommendation update data block not found');
+          if (/commerceEnabled\s*:/.test(block.slice(dataStart))) {
+            throw new Error('Recommendation update data must never write commerceEnabled');
+          }
+          NODE
+
       - name: Build for Cloudflare
         run: npm run cf:build
 
