@@ -108,6 +108,14 @@ async function markPaymentSucceeded(
     throw new Error("WEBHOOK_PAYMENT_INTENT_MISMATCH");
   }
 
+  const existingPayment = await tx.payment.findUnique({
+    where: { providerPaymentId: intentId },
+    select: { orderId: true },
+  });
+  if (existingPayment && existingPayment.orderId !== orderId) {
+    throw new Error("WEBHOOK_PAYMENT_ORDER_MISMATCH");
+  }
+
   await tx.payment.upsert({
     where: { providerPaymentId: intentId },
     create: {
@@ -148,6 +156,14 @@ async function markPaymentFailed(
   const intentId = eventObjectPaymentIntentId(object);
 
   if (intentId) {
+    const existingPayment = await tx.payment.findUnique({
+      where: { providerPaymentId: intentId },
+      select: { orderId: true },
+    });
+    if (existingPayment && existingPayment.orderId !== orderId) {
+      throw new Error("WEBHOOK_PAYMENT_ORDER_MISMATCH");
+    }
+
     await tx.payment.upsert({
       where: { providerPaymentId: intentId },
       create: {
@@ -182,7 +198,7 @@ async function reconcileRefund(
     ? await tx.order.findUnique({ where: { id: metadata.order_id } })
     : await tx.order.findUnique({ where: { stripePaymentIntentId: intentId } });
   if (!order) throw new Error("WEBHOOK_REFUND_ORDER_NOT_FOUND");
-  if (order.stripePaymentIntentId && order.stripePaymentIntentId !== intentId) {
+  if (order.stripePaymentIntentId !== intentId) {
     throw new Error("WEBHOOK_REFUND_PAYMENT_INTENT_MISMATCH");
   }
   if (order.currency.toLowerCase() !== currency) {
@@ -190,11 +206,30 @@ async function reconcileRefund(
   }
 
   const payment = await tx.payment.findUnique({ where: { providerPaymentId: intentId } });
+  if (!payment) throw new Error("WEBHOOK_REFUND_PAYMENT_NOT_FOUND");
+  if (payment.orderId !== order.id) throw new Error("WEBHOOK_REFUND_PAYMENT_ORDER_MISMATCH");
+
+  const existingRefund = await tx.refund.findUnique({
+    where: { providerRefundId: refundId },
+    select: { orderId: true, amountCents: true, currency: true },
+  });
+  if (existingRefund) {
+    if (existingRefund.orderId !== order.id) {
+      throw new Error("WEBHOOK_REFUND_ORDER_MISMATCH");
+    }
+    if (
+      existingRefund.amountCents !== amountCents ||
+      existingRefund.currency.toLowerCase() !== currency
+    ) {
+      throw new Error("WEBHOOK_REFUND_IMMUTABLE_FIELD_MISMATCH");
+    }
+  }
+
   await tx.refund.upsert({
     where: { providerRefundId: refundId },
     create: {
       orderId: order.id,
-      paymentId: payment?.id || null,
+      paymentId: payment.id,
       providerRefundId: refundId,
       idempotencyKey: `stripe-refund:${refundId}`,
       amountCents,
@@ -204,9 +239,7 @@ async function reconcileRefund(
       requestedBy: "stripe",
     },
     update: {
-      paymentId: payment?.id || undefined,
-      amountCents,
-      currency,
+      paymentId: payment.id,
       status,
       reason: asString(object.reason),
     },
@@ -281,7 +314,7 @@ async function claimStripeEvent(
     if (existing.type !== event.type || existing.payloadSha256 !== hash) {
       throw new Error("WEBHOOK_EVENT_REPLAY_MISMATCH");
     }
-    return { duplicate: true, hash };
+    return { duplicate: true };
   }
 
   try {
@@ -303,7 +336,7 @@ async function claimStripeEvent(
     throw error;
   }
 
-  return { duplicate: false, hash };
+  return { duplicate: false };
 }
 
 export async function POST(request: Request) {
