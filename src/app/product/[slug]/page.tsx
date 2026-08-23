@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import { ExternalLink, ShieldCheck, Star } from "lucide-react";
 import { ProductCard } from "@/components/product-card";
 import { BuyButton } from "@/components/buy-button";
+import { DirectBuyButton } from "@/components/direct-buy-button";
 import { WishlistButton } from "@/components/wishlist-button";
 import { ProductImage } from "@/components/product-image";
 import { AdSlot } from "@/components/ad-slot";
@@ -32,6 +33,7 @@ const INTERNAL_SPEC_KEYS = new Set([
   "importsource",
   "storefrontblocked",
   "storefrontblockedreason",
+  "commercerecommendation",
 ]);
 
 function cleanRecentProductIds(value: unknown) {
@@ -41,6 +43,15 @@ function cleanRecentProductIds(value: unknown) {
     .map((id) => id.trim())
     .filter((id) => id.length > 0 && id.length <= 100)
     .slice(0, 40);
+}
+
+function publicProductSpecs(specifications: Record<string, unknown>) {
+  return Object.entries(specifications)
+    .filter(([key, value]) => {
+      if (INTERNAL_SPEC_KEYS.has(key.toLowerCase())) return false;
+      return typeof value === "string" || typeof value === "number" || typeof value === "boolean";
+    })
+    .map(([key, value]) => [key, String(value)] as const);
 }
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
@@ -94,11 +105,10 @@ export default async function ProductPage({ params }: Props) {
   const commerce = getCommerceDisplayState(product);
   const save = commerce.canDisplayDiscount ? discountLabel(product.discountPercent) : null;
   const qnty = formatQuantityLabel(product.quantity);
-  const retailer = retailerLabel(product.retailer);
+  const sourceRetailer = retailerLabel(product.retailer);
+  const seller = commerce.sellerLabel;
   const ads = getAdsenseConfig();
-  const publicSpecs = Object.entries(product.specifications).filter(
-    ([key]) => !INTERNAL_SPEC_KEYS.has(key.toLowerCase()),
-  );
+  const publicSpecs = publicProductSpecs(product.specifications);
 
   return (
     <div className="dn-container py-8 md:py-12">
@@ -143,9 +153,14 @@ export default async function ProductPage({ params }: Props) {
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <span className="rounded-full bg-forest/10 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.12em] text-forest">
-              {retailer}
+              {seller}
             </span>
-            {commerce.isAmazon && commerce.priceStatus === "recorded" ? (
+            {commerce.canPurchaseDirect ? (
+              <span className="rounded-full bg-forest px-3 py-1 text-[11px] font-bold uppercase tracking-[0.12em] text-white">
+                Direct checkout
+              </span>
+            ) : null}
+            {!commerce.isDirectCommerce && commerce.isAmazon && commerce.priceStatus === "recorded" ? (
               <span className="rounded-full border border-card-border bg-card px-3 py-1 text-[11px] font-bold uppercase tracking-[0.12em] text-forest-muted">
                 Price refresh needed
               </span>
@@ -161,7 +176,7 @@ export default async function ProductPage({ params }: Props) {
           </div>
 
           <p className="mt-5 text-xs font-bold uppercase tracking-[0.16em] text-forest-muted">
-            {product.brand || retailer}
+            {product.brand || seller}
           </p>
           <h1 className="mt-2 font-display text-3xl font-semibold leading-[1.08] tracking-tight text-forest-ink md:text-5xl">
             {product.title}
@@ -192,13 +207,13 @@ export default async function ProductPage({ params }: Props) {
 
           <div
             className="mt-7 rounded-2xl border border-card-border bg-card p-5 shadow-sm"
-            data-price-display={commerce.canDisplayPrice ? "current" : "retailer-check"}
+            data-price-display={commerce.canPurchaseDirect ? "dealforge" : commerce.canDisplayPrice ? "current" : "retailer-check"}
           >
-            {commerce.canDisplayPrice ? (
+            {commerce.canDisplayPrice && commerce.displayPrice != null ? (
               <>
                 <div className="flex flex-wrap items-end gap-3">
                   <p className="text-4xl font-extrabold tracking-tight text-forest">
-                    {formatPrice(product.price)}
+                    {formatPrice(commerce.displayPrice)}
                   </p>
                   {commerce.canDisplayDiscount ? (
                     <p className="pb-1 text-lg text-forest-muted line-through">{formatPrice(product.originalPrice)}</p>
@@ -212,7 +227,11 @@ export default async function ProductPage({ params }: Props) {
                 <p className="mt-2 text-xs leading-relaxed text-forest-muted">
                   {commerce.priceCaption}
                 </p>
-                {commerce.isAmazon ? (
+                {commerce.isDirectCommerce ? (
+                  <p className="mt-3 text-[11px] leading-relaxed text-forest-muted/80">
+                    Sold by DealForge. The server validates product availability and the current DealForge selling price again before creating secure checkout.
+                  </p>
+                ) : commerce.isAmazon ? (
                   <p className="mt-3 text-[11px] leading-relaxed text-forest-muted/80">
                     Amazon prices and availability can change; the amount shown by Amazon when you purchase is the controlling offer.
                   </p>
@@ -224,11 +243,15 @@ export default async function ProductPage({ params }: Props) {
                   <ShieldCheck className="h-5 w-5" />
                 </div>
                 <div>
-                  <p className="font-bold text-forest-ink">Check current price on {retailer}</p>
+                  <p className="font-bold text-forest-ink">
+                    {commerce.isDirectCommerce ? "Temporarily unavailable from DealForge" : `Check current price on ${sourceRetailer}`}
+                  </p>
                   <p className="mt-1 text-sm leading-relaxed text-forest-muted">
-                    {commerce.isAmazon
-                      ? "The stored Amazon amount is not fresh enough to publish as a current price. Open Amazon to see today’s price and availability."
-                      : "The retailer listing is the source of truth for the current price and availability."}
+                    {commerce.isDirectCommerce
+                      ? "DealForge checkout is disabled for this item until its direct-sale price and availability are valid."
+                      : commerce.isAmazon
+                        ? "The stored Amazon amount is not fresh enough to publish as a current price. Open Amazon to see today’s price and availability."
+                        : "The retailer listing is the source of truth for the current price and availability."}
                   </p>
                 </div>
               </div>
@@ -243,18 +266,32 @@ export default async function ProductPage({ params }: Props) {
 
           <p className="mt-6 text-sm leading-7 text-forest-muted">{product.description}</p>
 
-          <div className="mt-8 flex flex-wrap gap-3">
-            <BuyButton
-              productId={product.id}
-              retailer={product.retailer}
-              priceNeedsCheck={commerce.priceNeedsCheck}
-            />
+          <div className="mt-8 flex flex-wrap items-start gap-3">
+            {commerce.canPurchaseDirect ? (
+              <DirectBuyButton productId={product.id} defaultEmail={session?.email || ""} />
+            ) : !commerce.isDirectCommerce ? (
+              <BuyButton
+                productId={product.id}
+                retailer={product.retailer}
+                priceNeedsCheck={commerce.priceNeedsCheck}
+              />
+            ) : (
+              <span className="inline-flex min-h-12 items-center rounded-full border border-card-border bg-card px-6 py-3 text-sm font-bold text-forest-muted">
+                DealForge checkout unavailable
+              </span>
+            )}
             <WishlistButton productId={product.id} initial={wishlist.includes(product.id)} />
           </div>
 
-          <p className="mt-3 max-w-xl text-[11px] leading-relaxed text-forest-muted/75">
-            Links to retailers may be affiliate links. As an Amazon Associate I earn from qualifying purchases.
-          </p>
+          {!commerce.isDirectCommerce ? (
+            <p className="mt-3 max-w-xl text-[11px] leading-relaxed text-forest-muted/75">
+              Links to retailers may be affiliate links. As an Amazon Associate I earn from qualifying purchases.
+            </p>
+          ) : (
+            <p className="mt-3 max-w-xl text-[11px] leading-relaxed text-forest-muted/75">
+              Secure payment is processed through DealForge checkout. Supplier/source details do not change the price charged by DealForge for this order.
+            </p>
+          )}
 
           {publicSpecs.length > 0 ? (
             <div className="mt-10">
@@ -270,14 +307,16 @@ export default async function ProductPage({ params }: Props) {
             </div>
           ) : null}
 
-          <a
-            href={`/go/${product.id}`}
-            target="_blank"
-            rel="noopener noreferrer sponsored nofollow"
-            className="mt-6 inline-flex items-center gap-2 text-sm font-semibold text-forest hover:underline"
-          >
-            Open retailer listing <ExternalLink className="h-3.5 w-3.5" />
-          </a>
+          {!commerce.isDirectCommerce ? (
+            <a
+              href={`/go/${product.id}`}
+              target="_blank"
+              rel="noopener noreferrer sponsored nofollow"
+              className="mt-6 inline-flex items-center gap-2 text-sm font-semibold text-forest hover:underline"
+            >
+              Open retailer listing <ExternalLink className="h-3.5 w-3.5" />
+            </a>
+          ) : null}
         </div>
       </div>
 
