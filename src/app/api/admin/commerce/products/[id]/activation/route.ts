@@ -77,7 +77,8 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     financialGateCertified: isFinancialGateCertified(),
     nowMs,
   });
-  if (!assessment.eligible || !assessment.recommendation) {
+  const recommendation = assessment.recommendation;
+  if (!assessment.eligible || !recommendation) {
     return NextResponse.json({
       ok: false,
       activated: false,
@@ -128,8 +129,8 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
             fulfillmentMode: parsed.data.fulfillmentMode,
             sourceCheckedAtMs: assessment.source.checkedAtMs,
             priceSource: assessment.source.priceSource,
-            landedCostCents: assessment.recommendation.landedCostCents,
-            sellingPriceCents: assessment.recommendation.sellingPriceCents,
+            landedCostCents: recommendation.landedCostCents,
+            sellingPriceCents: recommendation.sellingPriceCents,
           }),
         },
       });
@@ -151,8 +152,8 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     commerceEnabled: true,
     fulfillmentMode: parsed.data.fulfillmentMode,
     sourceCheckedAtMs: assessment.source.checkedAtMs,
-    landedCostCents: assessment.recommendation.landedCostCents,
-    sellingPriceCents: assessment.recommendation.sellingPriceCents,
+    landedCostCents: recommendation.landedCostCents,
+    sellingPriceCents: recommendation.sellingPriceCents,
   });
 }
 
