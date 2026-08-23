@@ -5,6 +5,7 @@ import {
   deriveCatalogSourceSnapshot,
   disabledPublicationSpecifications,
   publicationAuditSpecifications,
+  publicationPricingPolicy,
 } from "../src/lib/catalog-commerce-publication";
 
 const NOW = Date.parse("2026-08-23T02:30:00.000Z");
@@ -67,6 +68,14 @@ test("derives price, freshness, trust and canonical availability only from store
   assert.equal(source.sourceAvailable, true);
   assert.equal(source.canonicalAvailability, "in_stock");
   assert.equal(source.sourceCheckedAtMs, Date.parse("2026-08-23T02:25:00.000Z"));
+});
+
+test("publication policy prevents accidental break-even pricing", () => {
+  const policy = publicationPricingPolicy({ targetGrossMarginBps: 0 });
+  assert.equal(policy.targetGrossMarginBps, 1_500);
+  assert.equal(policy.minimumProfitCents, 200);
+  assert.equal(policy.paymentFeeBps, 300);
+  assert.equal(policy.paymentFixedFeeCents, 30);
 });
 
 test("eligible approved catalog data can produce a publication recommendation", () => {
@@ -157,7 +166,7 @@ test("publication audit metadata records the assessed source and disabling prese
     source: result.source,
     assessment: result.assessment,
     costs: costs(),
-    pricing: pricing(),
+    pricing: result.effectivePricing,
   });
   const publishedJson = record(JSON.parse(published) as unknown);
   const publishedAudit = record(publishedJson.commercePublication);
