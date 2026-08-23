@@ -183,7 +183,8 @@ export async function POST(request: Request) {
 
     stage = "order_update";
     await prisma.order.update({ where: { id: order.id }, data: { stripeCheckoutSessionId: stripeSession.id } });
-    return NextResponse.json({ checkoutUrl: stripeSession.url, orderNumber: order.orderNumber }, { status: 201 });
+    const checkoutUrl = `${base}/api/checkout/resume?order=${encodeURIComponent(order.orderNumber)}&key=${encodeURIComponent(parsed.data.checkoutKey)}`;
+    return NextResponse.json({ checkoutUrl, orderNumber: order.orderNumber }, { status: 201 });
   } catch (error) {
     const message = error instanceof Error ? error.message : "UNKNOWN";
     if (message.startsWith("PRODUCT_NOT_PURCHASABLE") || message === "QUANTITY_LIMIT_EXCEEDED") return NextResponse.json({ error: message.split(":")[0] }, { status: 409 });
