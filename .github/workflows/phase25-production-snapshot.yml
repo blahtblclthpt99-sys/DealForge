@@ -1,0 +1,26 @@
+name: Phase 2.5 Production Snapshot
+
+on:
+  pull_request:
+    branches:
+      - migration/cloudflare-workers
+    paths:
+      - .github/workflows/phase25-production-snapshot.yml
+
+permissions:
+  contents: read
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Read production build identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          code=$(curl --silent --show-error --max-time 20 --output /tmp/build.json --write-out '%{http_code}' https://www.deal-forge.sale/api/build || echo 000)
+          echo "http=$code"
+          cat /tmp/build.json 2>/dev/null || true
+          echo
+          [[ "$code" == "200" ]]
