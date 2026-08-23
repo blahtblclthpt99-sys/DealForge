@@ -1,0 +1,26 @@
+name: Phase 2.5 Cloudflare Deploy Capability
+
+on:
+  pull_request:
+    branches:
+      - migration/cloudflare-workers
+    paths:
+      - .github/workflows/phase25-cloudflare-deploy-capability.yml
+
+permissions:
+  contents: read
+
+jobs:
+  capability:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - name: Check direct deploy credentials without revealing secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -n "${CLOUDFLARE_API_TOKEN:-}" ]]; then echo 'api_token=present'; else echo 'api_token=missing'; fi
+          if [[ -n "${CLOUDFLARE_ACCOUNT_ID:-}" ]]; then echo 'account_id=present'; else echo 'account_id=missing'; fi
