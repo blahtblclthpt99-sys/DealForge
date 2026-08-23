@@ -1,3 +1,4 @@
+import { checkRecommendationSourceBinding } from "@/lib/commerce-source-binding";
 import type { ProductDTO } from "@/lib/products";
 
 const AMAZON_PRICE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
@@ -64,6 +65,8 @@ export function getCommerceDisplayState(
   product: Pick<
     ProductDTO,
     | "retailer"
+    | "affiliateUrl"
+    | "asin"
     | "lastUpdated"
     | "price"
     | "originalPrice"
@@ -82,9 +85,18 @@ export function getCommerceDisplayState(
   const isAmazon = product.retailer.trim().toLowerCase() === "amazon";
   const currency = product.currency.trim().toLowerCase();
   const isDirectCommerce = product.commerceEnabled;
+  const sourceBinding = isDirectCommerce
+    ? checkRecommendationSourceBinding({
+        retailer: product.retailer,
+        sourceUrl: product.affiliateUrl,
+        asin: product.asin,
+        specifications: product.specifications,
+      })
+    : null;
   const canPurchaseDirect =
     isDirectCommerce &&
     product.directCommerceReady &&
+    sourceBinding?.bound === true &&
     Number.isSafeInteger(product.sellingPriceCents) &&
     (product.sellingPriceCents ?? 0) > 0 &&
     currency === "usd" &&
