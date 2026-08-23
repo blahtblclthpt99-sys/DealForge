@@ -25,4 +25,4 @@ jobs:
       - name: Install locked application dependencies
         run: npm ci --no-fund --no-audit
       - name: Reproduce Workers automatic configuration and bundle
-        run: npx --yes wrangler@latest deploy --dry-run --x-autoconfig --outdir .wrangler-dry-run
+        run: npx --yes wrangler@latest deploy --dry-run --autoconfig --outdir .wrangler-dry-run
