@@ -94,11 +94,28 @@ This step is deliberately narrower than publication or activation:
 - persists verified `landedCostCents` and the recommended `sellingPriceCents` in integer cents;
 - records source timing, explicit landed-cost components, pricing policy, profitability metrics, assessment time, and approving owner in audit metadata;
 - writes an operational SystemLog entry;
-- refuses to modify an already commerce-enabled product;
+- refuses to modify an already commerce-enabled product, including a concurrent activation race;
 - never writes `commerceEnabled=true` and therefore does not publish the product for direct sale;
 - never initiates supplier procurement or any other money-moving operation.
 
 Saving a recommendation means **financially reviewed candidate**, not **live product**. A separate controlled activation gate must re-check freshness, financial values, fulfillment readiness, and owner authorization before commerce can be enabled.
+
+## Direct-commerce storefront authority
+
+When `commerceEnabled=true`, the public storefront must represent DealForge as the seller and DealForge's integer-cent selling price as the price authority.
+
+For direct-commerce products:
+
+- public DTOs expose `commerceEnabled`, `sellingPriceCents`, and currency but never expose `landedCostCents`;
+- the displayed customer price is derived from `sellingPriceCents`, not the supplier/reference `price` field;
+- DealForge is labeled as the seller;
+- direct purchase is available only when the selling price is a positive safe integer, currency is valid, and availability is `in_stock`;
+- checkout begins through DealForge's server-authoritative `/api/checkout` path, which re-reads product price and availability from the database;
+- supplier/affiliate links and affiliate disclosures are not presented as the purchase path for a direct-commerce item;
+- structured internal recommendation metadata is hidden from public product details;
+- malformed or unavailable direct-commerce records fail closed as unavailable instead of falling back to a retailer purchase link.
+
+This storefront work does not itself activate any product. Activation remains a separate owner-controlled gate.
 
 ## Source verification
 

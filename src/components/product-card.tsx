@@ -23,8 +23,13 @@ export function ProductCard({
   const commerce = getCommerceDisplayState(product);
   const save = commerce.canDisplayDiscount ? discountLabel(product.discountPercent) : null;
   const qnty = formatQuantityLabel(product.quantity);
-  const retailer = retailerLabel(product.retailer);
-  const canShowRecorded = !commerce.canDisplayPrice && product.recordedPriceAvailable && product.recordedPrice > 0;
+  const sourceRetailer = retailerLabel(product.retailer);
+  const seller = commerce.sellerLabel;
+  const canShowRecorded =
+    !commerce.isDirectCommerce &&
+    !commerce.canDisplayPrice &&
+    product.recordedPriceAvailable &&
+    product.recordedPrice > 0;
 
   async function toggleWish(e: React.MouseEvent) {
     e.preventDefault();
@@ -56,9 +61,14 @@ export function ProductCard({
         </Link>
         <div className="absolute left-3 top-3 flex max-w-[74%] flex-wrap gap-1.5">
           <span className="rounded-full border border-card-border/70 bg-card/90 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.12em] text-forest-ink shadow-sm backdrop-blur">
-            {retailer}
+            {seller}
           </span>
-          {commerce.isAmazon && commerce.priceStatus === "recorded" ? (
+          {commerce.isDirectCommerce && commerce.canPurchaseDirect ? (
+            <span className="rounded-full bg-forest px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-white shadow-sm">
+              Direct checkout
+            </span>
+          ) : null}
+          {!commerce.isDirectCommerce && commerce.isAmazon && commerce.priceStatus === "recorded" ? (
             <span className="rounded-full border border-card-border bg-card/90 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-forest-muted shadow-sm backdrop-blur">
               Recorded price
             </span>
@@ -84,7 +94,7 @@ export function ProductCard({
 
       <div className="flex flex-1 flex-col p-4 sm:p-5">
         <p className="min-h-4 truncate text-[10px] font-bold uppercase tracking-[0.14em] text-forest-muted">
-          {product.brand || retailer}
+          {product.brand || seller}
           {qnty ? <span className="text-forest"> · {qnty}</span> : null}
         </p>
         <Link href={`/product/${product.slug}`} className="mt-1.5">
@@ -94,10 +104,10 @@ export function ProductCard({
         </Link>
 
         <div className="mt-3 min-h-[3.6rem]">
-          {commerce.canDisplayPrice ? (
+          {commerce.canDisplayPrice && commerce.displayPrice != null ? (
             <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
               <p className="text-xl font-extrabold tracking-tight text-forest">
-                {formatPrice(product.price)}
+                {formatPrice(commerce.displayPrice)}
               </p>
               {commerce.canDisplayDiscount ? (
                 <p className="text-xs text-forest-muted line-through">{formatPrice(product.originalPrice)}</p>
@@ -111,10 +121,12 @@ export function ProductCard({
                 </p>
                 <span className="text-[10px] font-bold uppercase tracking-wide text-forest-muted">recorded</span>
               </div>
-              <p className="mt-0.5 text-[10px] font-semibold text-[#F97316]">Verify current price at {retailer}</p>
+              <p className="mt-0.5 text-[10px] font-semibold text-[#F97316]">Verify current price at {sourceRetailer}</p>
             </div>
           ) : (
-            <p className="text-sm font-bold text-forest">Check current price on {retailer}</p>
+            <p className="text-sm font-bold text-forest">
+              {commerce.isDirectCommerce ? "Temporarily unavailable" : `Check current price on ${sourceRetailer}`}
+            </p>
           )}
           <p className="mt-0.5 line-clamp-2 text-[10px] leading-relaxed text-forest-muted/75">
             {commerce.priceCaption}
@@ -131,13 +143,15 @@ export function ProductCard({
               ) : null}
             </div>
           ) : (
-            <span className="text-[10px] font-medium uppercase tracking-wide text-forest-muted">Shop listing</span>
+            <span className="text-[10px] font-medium uppercase tracking-wide text-forest-muted">
+              {commerce.isDirectCommerce ? "Sold by DealForge" : "Shop listing"}
+            </span>
           )}
           <Link
             href={`/product/${product.slug}`}
             className="inline-flex shrink-0 items-center gap-1 text-xs font-bold text-forest hover:underline"
           >
-            View deal <ArrowUpRight className="h-3.5 w-3.5" />
+            {commerce.canPurchaseDirect ? "Buy deal" : "View deal"} <ArrowUpRight className="h-3.5 w-3.5" />
           </Link>
         </div>
       </div>
