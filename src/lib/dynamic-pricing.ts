@@ -17,6 +17,9 @@ export type PricingQuote = {
   grossMarginBps: number | null;
 };
 
+const BIGINT_ZERO = BigInt(0);
+const BIGINT_ONE = BigInt(1);
+const BIGINT_BPS_SCALE = BigInt(10_000);
 const MAX_SAFE_BIGINT = BigInt(Number.MAX_SAFE_INTEGER);
 
 function isNonNegativeSafeInteger(value: number) {
@@ -24,22 +27,22 @@ function isNonNegativeSafeInteger(value: number) {
 }
 
 function ceilDiv(numerator: bigint, denominator: bigint) {
-  return (numerator + denominator - 1n) / denominator;
+  return (numerator + denominator - BIGINT_ONE) / denominator;
 }
 
 function safeNumber(value: bigint) {
-  if (value < 0n || value > MAX_SAFE_BIGINT) return null;
+  if (value < BIGINT_ZERO || value > MAX_SAFE_BIGINT) return null;
   return Number(value);
 }
 
 function paymentFeeCents(priceCents: number, feeBps: number, fixedFeeCents: number) {
-  const variable = ceilDiv(BigInt(priceCents) * BigInt(feeBps), 10_000n);
+  const variable = ceilDiv(BigInt(priceCents) * BigInt(feeBps), BIGINT_BPS_SCALE);
   return safeNumber(BigInt(fixedFeeCents) + variable);
 }
 
 function grossMarginBps(profitCents: number, sellingPriceCents: number) {
   if (profitCents < 0 || sellingPriceCents <= 0) return -1;
-  return Number((BigInt(profitCents) * 10_000n) / BigInt(sellingPriceCents));
+  return Number((BigInt(profitCents) * BIGINT_BPS_SCALE) / BigInt(sellingPriceCents));
 }
 
 function invalidQuote(reason: PricingQuote["reason"]): PricingQuote {
@@ -80,11 +83,11 @@ export function quoteSellingPrice(input: PricingInput): PricingQuote {
 
   const marginDenominator = BigInt(10_000 - input.targetGrossMarginBps - paymentFeeBps);
   const marginBase = BigInt(input.landedCostCents) + BigInt(paymentFixedFeeCents);
-  const marginPrice = safeNumber(ceilDiv(marginBase * 10_000n, marginDenominator));
+  const marginPrice = safeNumber(ceilDiv(marginBase * BIGINT_BPS_SCALE, marginDenominator));
 
   const profitDenominator = BigInt(10_000 - paymentFeeBps);
   const profitBase = BigInt(input.landedCostCents) + BigInt(paymentFixedFeeCents) + BigInt(minimumProfitCents);
-  const profitPrice = safeNumber(ceilDiv(profitBase * 10_000n, profitDenominator));
+  const profitPrice = safeNumber(ceilDiv(profitBase * BIGINT_BPS_SCALE, profitDenominator));
 
   if (marginPrice === null || profitPrice === null) return invalidQuote("INVALID_INPUT");
 
