@@ -5,6 +5,7 @@ import {
   assertPositiveCents,
   createStripeCheckoutSession,
   payloadSha256,
+  retrieveStripeCheckoutSession,
   verifyStripeSignature,
 } from "../src/lib/stripe-commerce";
 
@@ -117,6 +118,37 @@ test("Checkout disables Managed Payments and uses immutable Stripe Prices", asyn
     assert.equal(checkoutRequest.body.get("line_items[0][price]"), "price_unit_checkout");
     assert.equal(checkoutRequest.body.get("line_items[0][quantity]"), "1");
     assert.equal(checkoutRequest.body.get("mode"), "payment");
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousSecretKey === undefined) delete process.env.STRIPE_SECRET_KEY;
+    else process.env.STRIPE_SECRET_KEY = previousSecretKey;
+  }
+});
+
+test("Checkout resume retrieves the exact Stripe session server-side", async () => {
+  const previousSecretKey = process.env.STRIPE_SECRET_KEY;
+  const previousFetch = globalThis.fetch;
+  process.env.STRIPE_SECRET_KEY = "sk_test_dealforge_resume";
+
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+    assert.equal(url, "https://api.stripe.com/v1/checkout/sessions/cs_test_resume_123");
+    assert.equal(init?.method, "GET");
+    return new Response(JSON.stringify({
+      id: "cs_test_resume_123",
+      url: "https://checkout.stripe.com/c/pay/cs_test_resume_123",
+      status: "open",
+      payment_status: "unpaid",
+      client_reference_id: "order_resume_1",
+      metadata: { order_id: "order_resume_1", order_number: "DF-RESUME-1" },
+    }), { status: 200, headers: { "content-type": "application/json" } });
+  }) as typeof fetch;
+
+  try {
+    const session = await retrieveStripeCheckoutSession("cs_test_resume_123");
+    assert.equal(session.id, "cs_test_resume_123");
+    assert.equal(session.status, "open");
+    assert.equal(session.payment_status, "unpaid");
   } finally {
     globalThis.fetch = previousFetch;
     if (previousSecretKey === undefined) delete process.env.STRIPE_SECRET_KEY;

@@ -23,6 +23,7 @@ type StripePrice = {
 export type StripeCheckoutSession = {
   id: string;
   url: string | null;
+  status?: string | null;
   payment_status?: string;
   payment_intent?: string | null;
   client_reference_id?: string | null;
@@ -208,6 +209,11 @@ export async function createStripeCheckoutSession(input: { orderId: string; orde
   });
 
   return stripeRequest<StripeCheckoutSession>("/checkout/sessions", { method: "POST", body, idempotencyKey: `dealforge-checkout:${input.orderId}` });
+}
+
+export async function retrieveStripeCheckoutSession(checkoutSessionId: string) {
+  if (!/^cs_[A-Za-z0-9_]+$/.test(checkoutSessionId)) throw new Error("CHECKOUT_SESSION_ID_INVALID");
+  return stripeRequest<StripeCheckoutSession>(`/checkout/sessions/${encodeURIComponent(checkoutSessionId)}`);
 }
 
 export async function retrieveStripePaymentIntent(paymentIntentId: string) {

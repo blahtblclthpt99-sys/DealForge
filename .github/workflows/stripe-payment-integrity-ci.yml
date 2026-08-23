@@ -50,6 +50,35 @@ jobs:
           grep -Fq 'const status = refunded >= order.totalCents ? "refunded" : refunded > 0 ? "partially_refunded" : "paid"' src/app/api/stripe/webhook/route.ts
           grep -Fq '["paid", "partially_refunded", "refunded"].includes(order.status)' src/app/api/stripe/webhook/route.ts
 
+      - name: Checkout provider failure-state regression guard
+        run: |
+          set -euo pipefail
+          grep -Fq 'async function markStripeInitializationFailed(orderId: string)' src/app/api/checkout/route.ts
+          grep -Fq 'stripeCheckoutSessionId: null' src/app/api/checkout/route.ts
+          grep -Fq 'status: { notIn: ["paid", "partially_refunded", "refunded"] }' src/app/api/checkout/route.ts
+          grep -Fq 'data: { status: "payment_failed" }' src/app/api/checkout/route.ts
+          grep -Fq 'order.status === "payment_failed" && !order.stripeCheckoutSessionId' src/app/api/checkout/route.ts
+
+      - name: Same-origin Checkout resume regression guard
+        run: |
+          set -euo pipefail
+          grep -Fq '/api/checkout/resume?order=' src/app/api/checkout/route.ts
+          grep -Fq 'retrieveStripeCheckoutSession' src/app/api/checkout/resume/route.ts
+          grep -Fq 'session.client_reference_id !== order.id' src/app/api/checkout/resume/route.ts
+          grep -Fq 'session.metadata?.order_id !== order.id' src/app/api/checkout/resume/route.ts
+          grep -Fq 'Referrer-Policy", "no-referrer' src/app/api/checkout/resume/route.ts
+          grep -Fq 'NextResponse.redirect(session.url, 302)' src/app/api/checkout/resume/route.ts
+
+      - name: Refund webhook-race regression guard
+        run: |
+          set -euo pipefail
+          grep -Fq 'await prisma.refund.upsert({' src/app/api/admin/refunds/route.ts
+          grep -Fq 'where: { providerRefundId: stripeRefund.id }' src/app/api/admin/refunds/route.ts
+          grep -Fq 'STRIPE_REFUND_PAYMENT_INTENT_MISMATCH' src/app/api/admin/refunds/route.ts
+          grep -Fq 'STRIPE_REFUND_AMOUNT_MISMATCH' src/app/api/admin/refunds/route.ts
+          grep -Fq 'STRIPE_REFUND_CURRENCY_MISMATCH' src/app/api/admin/refunds/route.ts
+          grep -Fq 'stripeRefundStatus !== "pending"' src/app/api/admin/refunds/route.ts
+
       - name: Build for Cloudflare
         run: npm run cf:build
 
