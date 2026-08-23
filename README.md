@@ -52,7 +52,8 @@ See `src/lib/affiliate/providers/amazon.ts`. To enable Product Advertising API i
 | Command            | Description                          |
 |--------------------|--------------------------------------|
 | `npm run dev`      | Local development                    |
-| `npm run build`    | Production build                     |
+| `npm run build`    | Provider-neutral production build    |
+| `npm run gate:ship` | Lint, typecheck, tests, Prisma validation, production build |
 | `npm run db:setup` | Push schema + seed                   |
 | `npm run worker`   | Background jobs (loop every 5 min)   |
 | `npm run worker -- --once` | Single worker pass            |
@@ -74,41 +75,37 @@ A required disclosure appears in the site footer stating DealForge may earn comm
 ## Production notes
 
 - Set a strong `AUTH_SECRET`
-- Use PostgreSQL: change Prisma `provider` to `postgresql` and set `DATABASE_URL`
-- Set `REDIS_URL` for shared cache / rate-limit counters
-- Put images behind a CDN; seed currently uses inline SVG placeholders for offline demos
-- Run `npm run worker` as a separate process (or cron)
-- Configure Amazon PA-API credentials before live catalog sync
+- Use PostgreSQL and set `DATABASE_URL`
+- Set `REDIS_URL` for shared cache / rate-limit counters when external caching is enabled
+- Put images behind a CDN when appropriate
+- Run `npm run worker` as a separate process or scheduled worker
+- Keep production commerce disabled until the Stripe payment lifecycle certification gate passes
 
-## Deploy to the web (website launcher)
+## Deploy to the web
 
-DealForge is a full Next.js app (API routes + database). It cannot run on plain static file hosting alone.
+DealForge is a full Next.js application with API routes and database-backed functionality. It requires a Node-compatible runtime or another hosting environment that fully supports the application's server-side Next.js features; plain static hosting is not sufficient.
 
-### Quick — Vercel (recommended)
+### Provider-neutral production flow
 
 ```bash
-npm i -g vercel   # once
-vercel login
-vercel --prod
+npm ci
+npm run gate:ship
+npm run db:setup:postgres
+npm run start
 ```
 
-Set env vars in the Vercel dashboard from `.env.production.example`. Use **PostgreSQL** for `DATABASE_URL` (Neon, Supabase, or Vercel Postgres). After connecting the DB, run `npm run db:setup` once locally against that URL, or use `vercel env pull` + `db:setup`.
+Set production environment variables from `.env.production.example`, including a PostgreSQL `DATABASE_URL`, authentication secrets, and Stripe configuration. Route `deal-forge.sale` to the chosen production runtime only after health checks and the transaction certification gate pass.
 
-Point your domain (IONOS, etc.): add a **CNAME** for `www` to your Vercel project.
-
-### Upload zip — self-hosted Node (VPS / Node hosting)
-
-Same workflow as TitanOS `ionos:package`, but runs a Node server instead of static files:
+### Packaged self-hosted Node deployment
 
 ```bash
 npm run website:package
 ```
 
-Upload **`release/DealForge-Web.zip`** to your server, unzip, edit `.env`, then run `START.bat` or `node server.js`. Full instructions are inside the zip (`UPLOAD-INSTRUCTIONS.txt`).
-
-The zip includes the seeded SQLite catalog (~15k products) so the live site works immediately.
+Upload **`release/DealForge-Web.zip`** to a compatible Node host, unzip it, configure `.env`, and start the packaged server according to `UPLOAD-INSTRUCTIONS.txt`.
 
 | Command | Purpose |
 |---------|---------|
-| `npm run website:package` | Build + zip for Node self-host |
-| `npm run deploy:vercel` | Deploy to Vercel production |
+| `npm run build` | Build the production application without provider-specific tooling |
+| `npm run gate:ship` | Run the release quality gate before deployment |
+| `npm run website:package` | Build and package DealForge for Node self-hosting |
