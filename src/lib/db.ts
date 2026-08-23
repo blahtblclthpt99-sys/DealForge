@@ -8,6 +8,7 @@
  */
 import { PrismaClient } from "@prisma/client";
 import { PrismaNeon } from "@prisma/adapter-neon";
+import { neonConfig } from "@neondatabase/serverless";
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 
 const globalForPrisma = globalThis as unknown as {
@@ -18,6 +19,21 @@ const cloudflareRequestClients = new WeakMap<object, PrismaClient>();
 
 function isCloudflareRuntime() {
   return process.env.CLOUDFLARE_WORKERS === "1";
+}
+
+function configureNeonRuntime() {
+  if (!isCloudflareRuntime()) return;
+
+  // Pool.query() is safe to route over Neon's HTTP transport for ordinary
+  // one-shot Prisma queries. Interactive transactions still use WebSockets.
+  neonConfig.poolQueryViaFetch = true;
+
+  // OpenNext runs with nodejs_compat, but Cloudflare also exposes the standard
+  // WebSocket constructor. Bind it explicitly so PrismaNeon's Pool.connect()
+  // path can establish transaction-scoped WebSocket sessions reliably.
+  if (typeof globalThis.WebSocket !== "undefined") {
+    neonConfig.webSocketConstructor = globalThis.WebSocket;
+  }
 }
 
 function databaseUrl() {
@@ -45,6 +61,7 @@ export function isDatabaseConfigured() {
 function createClient() {
   const url = databaseUrl();
   if (isPostgresUrl(url)) {
+    configureNeonRuntime();
     const adapter = new PrismaNeon({ connectionString: url });
     return new PrismaClient({ adapter });
   }
