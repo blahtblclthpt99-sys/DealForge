@@ -17,7 +17,7 @@ export default function StripeCertificationPage() {
         <p className="text-sm font-semibold uppercase tracking-[0.18em] text-forest">Internal certification</p>
         <h1 className="mt-2 font-display text-3xl font-semibold text-forest-ink">Stripe test checkout</h1>
         <p className="mt-3 text-sm leading-relaxed text-forest-muted">
-          This private page exercises DealForge's real server-side checkout, Stripe Checkout, signed webhook,
+          This private page exercises DealForge&apos;s real server-side checkout, Stripe Checkout, signed webhook,
           order payment ledger, and refund reconciliation path. It is excluded from the public catalog and search engines.
         </p>
 
