@@ -55,6 +55,23 @@ test("Stripe webhook signature rejects tampered payloads", () => {
   );
 });
 
+test("Stripe webhook signature accepts the exact tolerance boundary", () => {
+  const secret = "whsec_test_secret";
+  const timestamp = 1_800_000_000;
+  const body = "payload";
+  const signature = createHmac("sha256", secret)
+    .update(`${timestamp}.${body}`, "utf8")
+    .digest("hex");
+
+  assert.equal(
+    verifyStripeSignature(body, `t=${timestamp},v1=${signature}`, secret, {
+      nowSeconds: timestamp + 300,
+      toleranceSeconds: 300,
+    }),
+    true,
+  );
+});
+
 test("Stripe webhook signature rejects replay outside tolerance", () => {
   const secret = "whsec_test_secret";
   const timestamp = 1_800_000_000;
