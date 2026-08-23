@@ -1,0 +1,66 @@
+name: DealForge Commerce CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: commerce-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify-commerce:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: dealforge
+          POSTGRES_PASSWORD: dealforge
+          POSTGRES_DB: dealforge_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U dealforge -d dealforge_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://dealforge:dealforge@localhost:5432/dealforge_ci?schema=public
+      AUTH_SECRET: ci-only-auth-secret-not-for-production
+      NEXT_PUBLIC_APP_URL: http://localhost:3000
+      PRODUCT_ENGINE_OWNER_EMAIL: owner@example.test
+      STRIPE_SECRET_KEY: sk_test_ci_placeholder
+      STRIPE_WEBHOOK_SECRET: whsec_ci_placeholder
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Production dependency audit
+        run: npm audit --omit=dev --audit-level=high
+      - name: Validate Prisma schemas
+        run: npm run prisma:validate
+      - name: Apply clean PostgreSQL migration chain
+        run: npx prisma migrate deploy --schema=prisma/schema.postgres.prisma
+      - name: Lint
+        run: npm run lint
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Complete test suite
+        run: npm test
+      - name: Stripe commerce tests explicitly
+        run: npx tsx --test tests/stripe-commerce.test.ts
+      - name: Production build
+        run: npm run build
