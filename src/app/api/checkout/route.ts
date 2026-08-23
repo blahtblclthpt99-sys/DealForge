@@ -59,8 +59,16 @@ function appUrl(request: Request) {
   return new URL(request.url).origin;
 }
 
+function commerceEnabled() {
+  return process.env.COMMERCE_ENABLED === "true";
+}
+
 export async function POST(request: Request) {
   try {
+    if (!commerceEnabled()) {
+      return NextResponse.json({ error: "COMMERCE_DISABLED" }, { status: 503 });
+    }
+
     const parsed = CheckoutSchema.safeParse(await request.json());
     if (!parsed.success) {
       return NextResponse.json(
