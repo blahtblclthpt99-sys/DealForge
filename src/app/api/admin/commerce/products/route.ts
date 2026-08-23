@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import type { Prisma } from "@prisma/client";
 import { readSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { isProductOwner } from "@/lib/owner-access";
@@ -6,6 +7,12 @@ import { parseJson } from "@/lib/utils";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+function noStore(response: NextResponse) {
+  response.headers.set("Cache-Control", "private, no-store, max-age=0");
+  response.headers.set("Pragma", "no-cache");
+  return response;
+}
 
 async function currentOwner() {
   const session = await readSession();
@@ -34,22 +41,22 @@ function object(value: unknown) {
 export async function GET(request: Request) {
   const auth = await currentOwner();
   if ("error" in auth) {
-    return NextResponse.json({ error: auth.error }, { status: auth.status });
+    return noStore(NextResponse.json({ error: auth.error }, { status: auth.status }));
   }
 
   const url = new URL(request.url);
   const query = (url.searchParams.get("q") || "").trim().slice(0, 120);
   const active = url.searchParams.get("active");
 
-  const where = {
+  const where: Prisma.ProductWhereInput = {
     ...(active === "true" ? { commerceEnabled: true } : active === "false" ? { commerceEnabled: false } : {}),
     ...(query
       ? {
           OR: [
             { id: { contains: query } },
-            { asin: { contains: query, mode: "insensitive" as const } },
-            { title: { contains: query, mode: "insensitive" as const } },
-            { brand: { contains: query, mode: "insensitive" as const } },
+            { asin: { contains: query, mode: "insensitive" } },
+            { title: { contains: query, mode: "insensitive" } },
+            { brand: { contains: query, mode: "insensitive" } },
           ],
         }
       : {}),
@@ -132,5 +139,5 @@ export async function GET(request: Request) {
     };
   });
 
-  return NextResponse.json({ ok: true, items });
+  return noStore(NextResponse.json({ ok: true, items }));
 }
