@@ -62,12 +62,29 @@ jobs:
       - name: Same-origin Checkout resume regression guard
         run: |
           set -euo pipefail
+          ROUTE='src/app/api/checkout/resume/route.ts'
           grep -Fq '/api/checkout/resume?order=' src/app/api/checkout/route.ts
-          grep -Fq 'retrieveStripeCheckoutSession' src/app/api/checkout/resume/route.ts
-          grep -Fq 'session.client_reference_id !== order.id' src/app/api/checkout/resume/route.ts
-          grep -Fq 'session.metadata?.order_id !== order.id' src/app/api/checkout/resume/route.ts
-          grep -Fq 'Referrer-Policy", "no-referrer' src/app/api/checkout/resume/route.ts
-          grep -Fq 'NextResponse.redirect(session.url, 302)' src/app/api/checkout/resume/route.ts
+          grep -Fq 'retrieveStripeCheckoutSession' "$ROUTE"
+          grep -Fq 'sessionMatchesOrder' "$ROUTE"
+          grep -Fq 'session.client_reference_id === order.id' "$ROUTE"
+          grep -Fq 'session.metadata?.order_id === order.id' "$ROUTE"
+          grep -Fq 'session.metadata?.order_number === order.orderNumber' "$ROUTE"
+          grep -Fq 'Referrer-Policy", "no-referrer' "$ROUTE"
+          grep -Fq 'NextResponse.redirect(session.url, 302)' "$ROUTE"
+          grep -Fq 'checkPendingCheckoutSafety' "$ROUTE"
+          grep -Fq 'expireStripeCheckoutSession' "$ROUTE"
+          node <<'NODE'
+          const fs = require('node:fs');
+          const source = fs.readFileSync('src/app/api/checkout/resume/route.ts', 'utf8');
+          const retrieve = source.indexOf('const session = await retrieveStripeCheckoutSession(');
+          const identity = source.indexOf('if (!sessionMatchesOrder(session, order))');
+          const paid = source.indexOf('if (session.payment_status === "paid" || session.status === "complete")');
+          const unsafe = source.indexOf('if (!checkoutSafety.safe)');
+          const expire = source.indexOf('await expireStripeCheckoutSession({');
+          if ([retrieve, identity, paid, unsafe, expire].some((value) => value < 0) || !(retrieve < identity && identity < paid && paid < unsafe && unsafe < expire)) {
+            throw new Error('Checkout resume must verify identity and paid state before session revocation');
+          }
+          NODE
 
       - name: Refund webhook-race regression guard
         run: |

@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { readSession } from "@/lib/auth";
+import { checkCheckoutExposure } from "@/lib/checkout-exposure";
 import { checkDirectCommerceProductSafety } from "@/lib/commerce-runtime-safety";
 import { prisma } from "@/lib/db";
 import { isFinancialGateCertified } from "@/lib/financial-gate";
@@ -172,6 +173,19 @@ export async function POST(request: Request) {
     if (currency !== "usd") return NextResponse.json({ error: "PRODUCT_CURRENCY_INVALID" }, { status: 409 });
     const subtotalCents = pricedItems.reduce((sum, item) => sum + item.lineTotalCents, 0);
     if (!Number.isSafeInteger(subtotalCents) || subtotalCents <= 0) return NextResponse.json({ error: "ORDER_AMOUNT_INVALID" }, { status: 409 });
+
+    const exposure = checkCheckoutExposure(pricedItems.map(({ product, quantity, unitPriceCents }) => ({
+      quantity,
+      unitPriceCents,
+      landedCostCents: product.landedCostCents,
+    })));
+    if (!exposure.eligible || exposure.customerTotalCents !== subtotalCents) {
+      console.warn("checkout.create.exposure_blocked", {
+        reason: exposure.reason,
+        unitCount: exposure.unitCount,
+      });
+      return NextResponse.json({ error: "CHECKOUT_LIMIT_EXCEEDED" }, { status: 409 });
+    }
 
     stage = "order_create";
     const order = existing || await prisma.order.create({

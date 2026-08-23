@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { runMaintenanceOnce } from "@/workers/maintenance";
 import { quarantineUnsafeDirectCommerce } from "@/workers/commerce-safety";
+import { revokeUnsafePendingCheckouts } from "@/workers/checkout-safety";
 import { monitorOrderOperations } from "@/workers/order-operations-monitor";
 import { refreshOwnerIntakeQueue } from "@/lib/owner-product-intake";
 
@@ -62,6 +63,10 @@ export async function POST(req: Request) {
     // maintenance so stale/drifted active products fail closed as quickly as possible.
     const commerceSafety = await quarantineUnsafeDirectCommerce(500);
 
+    // Immediately after product quarantine, revoke any still-open unpaid Stripe
+    // session that no longer passes current product or transaction exposure safety.
+    const checkoutSafety = await revokeUnsafePendingCheckouts(100);
+
     // Order operations monitoring is observational only. It records deduplicated
     // owner alerts for paid orders that exceed fulfillment-stage SLA thresholds.
     const orderOperations = await monitorOrderOperations(200);
@@ -85,7 +90,7 @@ export async function POST(req: Request) {
       cleanCache: true,
       processPriceAlerts: true,
     });
-    return NextResponse.json({ ok: true, commerceSafety, ownerQueue, orderOperations, ...result });
+    return NextResponse.json({ ok: true, commerceSafety, ownerQueue, orderOperations, checkoutSafety, ...result });
   } catch (error) {
     console.error("DealForge maintenance route failed", error);
     return NextResponse.json({ error: "Maintenance failed" }, { status: 500 });

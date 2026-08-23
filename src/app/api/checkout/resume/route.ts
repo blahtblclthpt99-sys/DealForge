@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
-import { checkDirectCommerceProductSafety } from "@/lib/commerce-runtime-safety";
 import { prisma } from "@/lib/db";
 import { isFinancialGateCertified } from "@/lib/financial-gate";
-import { retrieveStripeCheckoutSession } from "@/lib/stripe-commerce";
+import { checkPendingCheckoutSafety } from "@/lib/pending-checkout-safety";
+import { expireStripeCheckoutSession, retrieveStripeCheckoutSession } from "@/lib/stripe-commerce";
 
 export const runtime = "nodejs";
 
@@ -18,6 +18,44 @@ function noStore(response: NextResponse) {
   response.headers.set("Cache-Control", "no-store, max-age=0");
   response.headers.set("Referrer-Policy", "no-referrer");
   return response;
+}
+
+function sessionMatchesOrder(
+  session: Awaited<ReturnType<typeof retrieveStripeCheckoutSession>>,
+  order: { id: string; orderNumber: string; stripeCheckoutSessionId: string | null },
+) {
+  return Boolean(
+    order.stripeCheckoutSessionId
+    && session.id === order.stripeCheckoutSessionId
+    && session.client_reference_id === order.id
+    && session.metadata?.order_id === order.id
+    && session.metadata?.order_number === order.orderNumber,
+  );
+}
+
+async function recordRevocation(order: { id: string; orderNumber: string }, reason: string, detail: string | null) {
+  try {
+    await prisma.systemLog.create({
+      data: {
+        level: "warn",
+        source: "checkout-safety",
+        message: "Unsafe unpaid Stripe Checkout Session expired",
+        meta: JSON.stringify({
+          orderId: order.id,
+          orderNumber: order.orderNumber,
+          reason,
+          detail,
+          automaticRefundsEnabled: false,
+          automaticSupplierPurchasingEnabled: false,
+        }),
+      },
+    });
+  } catch (error) {
+    console.error("checkout.resume.revocation_log_failed", {
+      orderId: order.id,
+      errorName: error instanceof Error ? error.name : "UNKNOWN",
+    });
+  }
 }
 
 export async function GET(request: Request) {
@@ -46,44 +84,23 @@ export async function GET(request: Request) {
 
   const productIds = [...new Set(order.items.map((item) => item.productId))];
   const products = await prisma.product.findMany({ where: { id: { in: productIds } } });
-  if (products.length !== productIds.length) {
-    return noStore(NextResponse.json({ error: "CHECKOUT_REVALIDATION_REQUIRED" }, { status: 409 }));
-  }
-
-  const financialGateCertified = isFinancialGateCertified();
-  const readinessNowMs = Date.now();
-  const productById = new Map(products.map((product) => [product.id, product]));
-  for (const item of order.items) {
-    const product = productById.get(item.productId);
-    if (!product) {
-      return noStore(NextResponse.json({ error: "CHECKOUT_REVALIDATION_REQUIRED" }, { status: 409 }));
-    }
-    const safety = checkDirectCommerceProductSafety({
-      financialGateCertified,
-      commerceEnabled: product.commerceEnabled,
-      availability: product.availability,
-      currency: product.currency,
-      landedCostCents: product.landedCostCents,
-      sellingPriceCents: product.sellingPriceCents,
-      specifications: product.specifications,
-      retailer: product.retailer,
-      sourceUrl: product.affiliateUrl,
-      asin: product.asin,
-      nowMs: readinessNowMs,
-    });
-    if (
-      !safety.safe ||
-      item.unitPriceCents !== product.sellingPriceCents ||
-      item.landedCostCents !== product.landedCostCents ||
-      order.currency !== product.currency.toLowerCase()
-    ) {
-      return noStore(NextResponse.json({ error: "CHECKOUT_REVALIDATION_REQUIRED" }, { status: 409 }));
-    }
-  }
+  const checkoutSafety = checkPendingCheckoutSafety({
+    currency: order.currency,
+    totalCents: order.totalCents,
+    items: order.items.map((item) => ({
+      productId: item.productId,
+      quantity: item.quantity,
+      unitPriceCents: item.unitPriceCents,
+      landedCostCents: item.landedCostCents,
+    })),
+    products,
+    financialGateCertified: isFinancialGateCertified(),
+    nowMs: Date.now(),
+  });
 
   try {
     const session = await retrieveStripeCheckoutSession(order.stripeCheckoutSessionId);
-    if (session.id !== order.stripeCheckoutSessionId || session.client_reference_id !== order.id || session.metadata?.order_id !== order.id || session.metadata?.order_number !== order.orderNumber) {
+    if (!sessionMatchesOrder(session, order)) {
       return noStore(NextResponse.json({ error: "CHECKOUT_SESSION_MISMATCH" }, { status: 409 }));
     }
     if (session.payment_status === "paid" || session.status === "complete") {
@@ -91,6 +108,30 @@ export async function GET(request: Request) {
     }
     if (session.status !== "open" || !session.url) {
       return noStore(NextResponse.json({ error: "CHECKOUT_SESSION_NOT_OPEN" }, { status: 409 }));
+    }
+
+    if (!checkoutSafety.safe) {
+      try {
+        await expireStripeCheckoutSession({
+          checkoutSessionId: session.id,
+          orderId: order.id,
+          reason: `${checkoutSafety.reason}:${checkoutSafety.detail || "none"}`,
+        });
+      } catch (expireError) {
+        // A customer may complete payment between our GET and expire POST. Re-read
+        // Stripe before deciding whether the revocation truly failed.
+        const latest = await retrieveStripeCheckoutSession(order.stripeCheckoutSessionId);
+        if (!sessionMatchesOrder(latest, order)) {
+          return noStore(NextResponse.json({ error: "CHECKOUT_SESSION_MISMATCH" }, { status: 409 }));
+        }
+        if (latest.payment_status === "paid" || latest.status === "complete") {
+          return noStore(NextResponse.redirect(`${base}/checkout/success?order=${encodeURIComponent(order.orderNumber)}`, 302));
+        }
+        if (latest.status !== "expired") throw expireError;
+      }
+
+      await recordRevocation(order, checkoutSafety.reason, checkoutSafety.detail);
+      return noStore(NextResponse.json({ error: "CHECKOUT_REVALIDATION_REQUIRED" }, { status: 409 }));
     }
 
     return noStore(NextResponse.redirect(session.url, 302));

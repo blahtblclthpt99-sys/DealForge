@@ -216,6 +216,24 @@ export async function retrieveStripeCheckoutSession(checkoutSessionId: string) {
   return stripeRequest<StripeCheckoutSession>(`/checkout/sessions/${encodeURIComponent(checkoutSessionId)}`);
 }
 
+export async function expireStripeCheckoutSession(input: { checkoutSessionId: string; orderId: string; reason: string }) {
+  if (!/^cs_[A-Za-z0-9_]+$/.test(input.checkoutSessionId)) throw new Error("CHECKOUT_SESSION_ID_INVALID");
+  if (!input.orderId.trim() || !input.reason.trim()) throw new Error("CHECKOUT_SESSION_EXPIRE_INPUT_INVALID");
+  const digest = createHash("sha256").update(`${input.orderId}:${input.checkoutSessionId}:${input.reason}`, "utf8").digest("hex");
+  const session = await stripeRequest<StripeCheckoutSession>(
+    `/checkout/sessions/${encodeURIComponent(input.checkoutSessionId)}/expire`,
+    {
+      method: "POST",
+      body: new URLSearchParams(),
+      idempotencyKey: `dealforge-expire:${digest}`,
+    },
+  );
+  if (session.id !== input.checkoutSessionId || session.status !== "expired") {
+    throw new Error("STRIPE_CHECKOUT_SESSION_EXPIRE_INVALID");
+  }
+  return session;
+}
+
 export async function retrieveStripePaymentIntent(paymentIntentId: string) {
   if (!/^pi_[A-Za-z0-9_]+$/.test(paymentIntentId)) throw new Error("PAYMENT_INTENT_ID_INVALID");
   return stripeRequest<StripePaymentIntent>(`/payment_intents/${encodeURIComponent(paymentIntentId)}?expand%5B%5D=latest_charge`);
