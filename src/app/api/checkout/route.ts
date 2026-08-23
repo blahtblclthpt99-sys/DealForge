@@ -101,8 +101,24 @@ async function persistStripeDiagnostic(input: { error: string; stage: CheckoutSt
   }
 }
 
+async function markStripeInitializationFailed(orderId: string) {
+  try {
+    await prisma.order.updateMany({
+      where: {
+        id: orderId,
+        stripeCheckoutSessionId: null,
+        status: { notIn: ["paid", "partially_refunded", "refunded"] },
+      },
+      data: { status: "payment_failed" },
+    });
+  } catch (stateError) {
+    console.error("checkout.create.payment_state_failed", { orderId, errorName: stateError instanceof Error ? stateError.name : "UNKNOWN" });
+  }
+}
+
 export async function POST(request: Request) {
   let stage: CheckoutStage = "request";
+  let orderIdForStripeFailure: string | null = null;
   try {
     const parsed = CheckoutSchema.safeParse(await request.json());
     if (!parsed.success) return NextResponse.json({ error: "INVALID_CHECKOUT_REQUEST", details: parsed.error.flatten() }, { status: 400 });
@@ -147,10 +163,14 @@ export async function POST(request: Request) {
       },
       include: { items: true },
     });
+    orderIdForStripeFailure = order.id;
 
     if (order.currency !== currency || order.totalCents !== subtotalCents || !sameOrderItems(order.items, requestedItems)) return NextResponse.json({ error: "ORDER_PRICE_CHANGED_RESTART_CHECKOUT" }, { status: 409 });
 
     stage = "stripe_checkout";
+    if (order.status === "payment_failed" && !order.stripeCheckoutSessionId) {
+      await prisma.order.update({ where: { id: order.id }, data: { status: "pending_payment" } });
+    }
     const base = appUrl(request);
     const stripeSession = await createStripeCheckoutSession({
       orderId: order.id, orderNumber: order.orderNumber, customerEmail: order.email, currency: order.currency,
@@ -169,6 +189,7 @@ export async function POST(request: Request) {
     if (message.startsWith("PRODUCT_NOT_PURCHASABLE") || message === "QUANTITY_LIMIT_EXCEEDED") return NextResponse.json({ error: message.split(":")[0] }, { status: 409 });
     const stripeError = classifyStripeCheckoutError(message);
     if (stripeError) {
+      if (stage === "stripe_checkout" && orderIdForStripeFailure) await markStripeInitializationFailed(orderIdForStripeFailure);
       const provider = stripeProviderMetadata(message);
       const providerMessage = redactedStripeProviderMessage(message);
       await persistStripeDiagnostic({ error: stripeError, stage, provider, providerMessage });
@@ -176,6 +197,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: stripeError, stage, ...(provider ? { stripe: provider } : {}) }, { status: 503 });
     }
     if (stage === "stripe_checkout") {
+      if (orderIdForStripeFailure) await markStripeInitializationFailed(orderIdForStripeFailure);
       console.error("checkout.create.stripe_unclassified", { stage, errorName: error instanceof Error ? error.name : "UNKNOWN" });
       return NextResponse.json({ error: "STRIPE_UNCLASSIFIED_FAILURE", stage }, { status: 503 });
     }
