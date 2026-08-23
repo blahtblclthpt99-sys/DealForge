@@ -15,6 +15,13 @@ export const runtime = "nodejs";
 
 const MAX_WEBHOOK_BYTES = 1024 * 1024;
 
+class DuplicateStripeEventError extends Error {
+  constructor() {
+    super("DUPLICATE_STRIPE_EVENT");
+    this.name = "DuplicateStripeEventError";
+  }
+}
+
 function asString(value: unknown) {
   return typeof value === "string" && value.length > 0 ? value : null;
 }
@@ -81,12 +88,10 @@ async function resolveOrderId(
     await assertPaymentIntentOrderBinding(tx, metadataOrderId, intentId);
     return metadataOrderId;
   }
-
   if (clientReferenceId) {
     await assertPaymentIntentOrderBinding(tx, clientReferenceId, intentId);
     return clientReferenceId;
   }
-
   if (intentId) {
     const order = await tx.order.findUnique({
       where: { stripePaymentIntentId: intentId },
@@ -218,6 +223,22 @@ async function reconcileRefund(
   if (order.currency.toLowerCase() !== currency) throw new Error("WEBHOOK_REFUND_CURRENCY_MISMATCH");
   if (amountCents > order.totalCents) throw new Error("WEBHOOK_REFUND_AMOUNT_INVALID");
 
+  const existingRefund = await tx.refund.findUnique({
+    where: { providerRefundId: refundId },
+    select: { orderId: true, paymentId: true, amountCents: true, currency: true },
+  });
+  if (existingRefund) {
+    if (existingRefund.orderId !== order.id || existingRefund.paymentId !== payment.id) {
+      throw new Error("WEBHOOK_REFUND_ORDER_MISMATCH");
+    }
+    if (
+      existingRefund.amountCents !== amountCents ||
+      existingRefund.currency.toLowerCase() !== currency
+    ) {
+      throw new Error("WEBHOOK_REFUND_IMMUTABLE_FIELD_MISMATCH");
+    }
+  }
+
   await tx.refund.upsert({
     where: { providerRefundId: refundId },
     create: {
@@ -232,9 +253,6 @@ async function reconcileRefund(
       requestedBy: "stripe",
     },
     update: {
-      paymentId: payment.id,
-      amountCents,
-      currency,
       status,
       reason: asString(object.reason),
     },
@@ -294,6 +312,45 @@ async function processStripeEvent(tx: Prisma.TransactionClient, event: StripeEve
   return orderId;
 }
 
+async function claimStripeEvent(
+  tx: Prisma.TransactionClient,
+  event: StripeEvent,
+  rawBody: string,
+) {
+  const hash = payloadSha256(rawBody);
+  const existing = await tx.paymentEvent.findUnique({
+    where: { providerEventId: event.id },
+    select: { type: true, payloadSha256: true },
+  });
+  if (existing) {
+    if (existing.type !== event.type || existing.payloadSha256 !== hash) {
+      throw new Error("WEBHOOK_EVENT_REPLAY_MISMATCH");
+    }
+    return { duplicate: true };
+  }
+
+  try {
+    await tx.paymentEvent.create({
+      data: {
+        providerEventId: event.id,
+        type: event.type,
+        payloadSha256: hash,
+        status: "processing",
+      },
+    });
+  } catch (error) {
+    // Only this unique event-ledger insert is allowed to represent a harmless
+    // concurrent Stripe retry. Unique failures from order/payment/refund writes
+    // must propagate and be retried rather than acknowledged.
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+      throw new DuplicateStripeEventError();
+    }
+    throw error;
+  }
+
+  return { duplicate: false };
+}
+
 export async function POST(request: Request) {
   const contentLength = Number(request.headers.get("content-length") || "0");
   if (Number.isFinite(contentLength) && contentLength > MAX_WEBHOOK_BYTES) {
@@ -304,7 +361,6 @@ export async function POST(request: Request) {
   if (Buffer.byteLength(rawBody, "utf8") > MAX_WEBHOOK_BYTES) {
     return NextResponse.json({ error: "WEBHOOK_PAYLOAD_TOO_LARGE" }, { status: 413 });
   }
-
   const signature = request.headers.get("stripe-signature") || "";
 
   let secret: string;
@@ -335,10 +391,10 @@ export async function POST(request: Request) {
 
   const existingEvent = await prisma.paymentEvent.findUnique({
     where: { providerEventId: event.id },
-    select: { payloadSha256: true },
+    select: { type: true, payloadSha256: true },
   });
   if (existingEvent) {
-    if (!isExactWebhookReplay(existingEvent.payloadSha256, rawBody)) {
+    if (existingEvent.type !== event.type || !isExactWebhookReplay(existingEvent.payloadSha256, rawBody)) {
       console.error("stripe.webhook.event_id_payload_mismatch", { eventId: event.id, type: event.type });
       return NextResponse.json({ error: "STRIPE_EVENT_REPLAY_MISMATCH" }, { status: 409 });
     }
@@ -346,31 +402,41 @@ export async function POST(request: Request) {
   }
 
   try {
-    await prisma.$transaction(async (tx) => {
+    const result = await prisma.$transaction(async (tx) => {
+      const claim = await claimStripeEvent(tx, event, rawBody);
+      if (claim.duplicate) return { duplicate: true };
+
       const orderId = await processStripeEvent(tx, event);
-      await tx.paymentEvent.create({
+      await tx.paymentEvent.update({
+        where: { providerEventId: event.id },
         data: {
-          providerEventId: event.id,
-          type: event.type,
-          payloadSha256: payloadSha256(rawBody),
           status: "processed",
           orderId,
           processedAt: new Date(),
         },
       });
+      return { duplicate: false };
     });
-    return NextResponse.json({ received: true });
+
+    return NextResponse.json(
+      result.duplicate ? { received: true, duplicate: true } : { received: true },
+    );
   } catch (error) {
-    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+    if (error instanceof DuplicateStripeEventError) {
       const winner = await prisma.paymentEvent.findUnique({
         where: { providerEventId: event.id },
-        select: { payloadSha256: true },
+        select: { type: true, payloadSha256: true },
       });
-      if (winner && isExactWebhookReplay(winner.payloadSha256, rawBody)) {
+      if (winner && winner.type === event.type && isExactWebhookReplay(winner.payloadSha256, rawBody)) {
         return NextResponse.json({ received: true, duplicate: true });
       }
-      return NextResponse.json({ error: "STRIPE_EVENT_REPLAY_MISMATCH" }, { status: 409 });
+      if (winner) {
+        return NextResponse.json({ error: "STRIPE_EVENT_REPLAY_MISMATCH" }, { status: 409 });
+      }
+      console.error("stripe.webhook.concurrent_event_claim_missing", { eventId: event.id, type: event.type });
+      return NextResponse.json({ error: "WEBHOOK_PROCESSING_FAILED" }, { status: 500 });
     }
+
     const message = error instanceof Error ? error.message : "UNKNOWN";
     console.error("stripe.webhook.failed", { eventId: event.id, type: event.type, error: message });
     return NextResponse.json({ error: "WEBHOOK_PROCESSING_FAILED" }, { status: 500 });
