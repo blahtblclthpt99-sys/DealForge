@@ -82,6 +82,24 @@ Profitability score is advisory only. It ranks otherwise eligible candidates usi
 
 The owner-only `/api/admin/commerce/assess` endpoint is intentionally non-mutating. It may recommend a selling price and report eligibility, but it must not write `sellingPriceCents`, `landedCostCents`, or `commerceEnabled`.
 
+## Controlled recommendation persistence
+
+After an eligible assessment, an owner may explicitly save the reviewed financial recommendation through `/api/admin/commerce/products/[id]/recommendation`.
+
+This step is deliberately narrower than publication or activation:
+
+- requires the explicit confirmation token `SAVE_RECOMMENDATION`;
+- requires owner authorization and the certified financial gate;
+- recalculates eligibility server-side at save time rather than trusting client-calculated numbers;
+- persists verified `landedCostCents` and the recommended `sellingPriceCents` in integer cents;
+- records source timing, explicit landed-cost components, pricing policy, profitability metrics, assessment time, and approving owner in audit metadata;
+- writes an operational SystemLog entry;
+- refuses to modify an already commerce-enabled product;
+- never writes `commerceEnabled=true` and therefore does not publish the product for direct sale;
+- never initiates supplier procurement or any other money-moving operation.
+
+Saving a recommendation means **financially reviewed candidate**, not **live product**. A separate controlled activation gate must re-check freshness, financial values, fulfillment readiness, and owner authorization before commerce can be enabled.
+
 ## Source verification
 
 Before a product may be marked commerce-ready, DealForge must retain enough source information to re-verify:
