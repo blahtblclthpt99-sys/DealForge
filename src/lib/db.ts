@@ -1,45 +1,81 @@
 /**
- * Lazy Prisma client — never construct on import (avoids Vercel boot crashes
- * when DATABASE_URL is missing or points at a local SQLite file).
+ * Lazy Prisma access for local Node and Cloudflare Workers.
+ *
+ * The PostgreSQL client is generated with Prisma's JS engine so it can run in
+ * workerd. That engine always requires a driver adapter, including during Node
+ * execution. Cloudflare request clients are additionally scoped to the current
+ * ExecutionContext so they are never leaked across requests.
  */
 import { PrismaClient } from "@prisma/client";
+import { PrismaNeon } from "@prisma/adapter-neon";
+import { getCloudflareContext } from "@opennextjs/cloudflare";
 
 const globalForPrisma = globalThis as unknown as {
   prisma?: PrismaClient;
-  prismaReady?: boolean;
 };
 
+const cloudflareRequestClients = new WeakMap<object, PrismaClient>();
+
+function isCloudflareRuntime() {
+  return process.env.CLOUDFLARE_WORKERS === "1";
+}
+
+function databaseUrl() {
+  return (process.env.DATABASE_URL || "").trim();
+}
+
+function isPostgresUrl(url: string) {
+  return url.startsWith("postgres://") || url.startsWith("postgresql://");
+}
+
 export function isDatabaseConfigured() {
-  const url = (process.env.DATABASE_URL || "").trim();
+  const url = databaseUrl();
   if (!url) return false;
-  if (process.env.VERCEL === "1") {
+
+  if (process.env.VERCEL === "1" || process.env.KOYEB_APP_ID || isCloudflareRuntime()) {
     if (url.startsWith("file:") || url.includes("dev.db") || /sqlite/i.test(url)) {
       return false;
     }
-    if (!url.startsWith("postgres://") && !url.startsWith("postgresql://")) {
-      return false;
-    }
+    if (!isPostgresUrl(url)) return false;
   }
+
   return true;
 }
 
 function createClient() {
+  const url = databaseUrl();
+  if (isPostgresUrl(url)) {
+    const adapter = new PrismaNeon({ connectionString: url });
+    return new PrismaClient({ adapter });
+  }
+
   return new PrismaClient({
     log: process.env.NODE_ENV === "development" ? ["error", "warn"] : ["error"],
   });
 }
 
+function getCloudflareRequestClient() {
+  const { ctx } = getCloudflareContext();
+  const requestKey = ctx as unknown as object;
+  const existing = cloudflareRequestClients.get(requestKey);
+  if (existing) return existing;
+
+  const client = createClient();
+  cloudflareRequestClients.set(requestKey, client);
+  return client;
+}
+
 export function getPrisma() {
+  if (isCloudflareRuntime()) {
+    return getCloudflareRequestClient();
+  }
+
   if (!globalForPrisma.prisma) {
     globalForPrisma.prisma = createClient();
   }
   return globalForPrisma.prisma;
 }
 
-/**
- * Deferred client: first property access constructs PrismaClient.
- * Safe to import from layout/auth without a live DATABASE_URL.
- */
 export const prisma: PrismaClient = new Proxy({} as PrismaClient, {
   get(_target, prop, receiver) {
     const client = getPrisma();

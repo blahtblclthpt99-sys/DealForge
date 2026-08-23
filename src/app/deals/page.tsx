@@ -2,6 +2,8 @@ import type { Metadata } from "next";
 import { InfiniteProductFeed } from "@/components/infinite-feed";
 import { queryProducts } from "@/lib/products";
 
+export const dynamic = "force-dynamic";
+
 export const metadata: Metadata = {
   title: "Flash Deals",
   description: "Limited-time flash deals curated by DealForge.",

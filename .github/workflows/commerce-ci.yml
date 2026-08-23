@@ -44,7 +44,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
       - name: Install locked dependencies
         run: npm ci
@@ -58,9 +58,19 @@ jobs:
         run: npm run lint
       - name: Typecheck
         run: npm run typecheck
+      - name: Prepare isolated application test database
+        env:
+          DATABASE_URL: file:./ci-test.db
+        run: |
+          npx prisma generate --schema=prisma/schema.prisma
+          npx prisma db push --schema=prisma/schema.prisma --force-reset --skip-generate
       - name: Complete test suite
+        env:
+          DATABASE_URL: file:./ci-test.db
         run: npm test
       - name: Stripe commerce tests explicitly
+        env:
+          DATABASE_URL: file:./ci-test.db
         run: npx tsx --test tests/stripe-commerce.test.ts
       - name: Production build
         run: npm run build

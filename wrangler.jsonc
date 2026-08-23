@@ -1,0 +1,24 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "dealforge",
+  "main": ".open-next/worker.js",
+  "compatibility_date": "2026-08-20",
+  "compatibility_flags": ["nodejs_compat"],
+  "keep_vars": true,
+  "workers_dev": true,
+  "build": {
+    "command": "node scripts/ensure-cloudflare-build.mjs"
+  },
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS"
+  },
+  "vars": {
+    "CLOUDFLARE_WORKERS": "1",
+    "NEXT_PUBLIC_APP_URL": "https://www.deal-forge.sale",
+    "NEXT_PUBLIC_APP_NAME": "DealForge"
+  },
+  "observability": {
+    "enabled": true
+  }
+}

@@ -10,6 +10,13 @@ import {
 
 export const runtime = "nodejs";
 
+class DuplicateStripeEventError extends Error {
+  constructor() {
+    super("DUPLICATE_STRIPE_EVENT");
+    this.name = "DuplicateStripeEventError";
+  }
+}
+
 function asString(value: unknown) {
   return typeof value === "string" && value.length > 0 ? value : null;
 }
@@ -73,10 +80,13 @@ async function assertPaymentMatchesOrder(
   const order = await tx.order.findUnique({ where: { id: orderId } });
   if (!order) throw new Error("WEBHOOK_ORDER_NOT_FOUND");
 
-  const amount = asInteger(object.amount_total) ?? asInteger(object.amount_received) ?? asInteger(object.amount);
+  const amount =
+    asInteger(object.amount_total) ?? asInteger(object.amount_received) ?? asInteger(object.amount);
   const currency = asString(object.currency)?.toLowerCase();
   if (amount !== null && amount !== order.totalCents) throw new Error("WEBHOOK_AMOUNT_MISMATCH");
-  if (currency && currency !== order.currency.toLowerCase()) throw new Error("WEBHOOK_CURRENCY_MISMATCH");
+  if (currency && currency !== order.currency.toLowerCase()) {
+    throw new Error("WEBHOOK_CURRENCY_MISMATCH");
+  }
   return order;
 }
 
@@ -91,15 +101,19 @@ async function markPaymentSucceeded(
 
   const objectId = asString(object.id);
   const sessionId = objectId?.startsWith("cs_") ? objectId : null;
-  if (
-    sessionId &&
-    order.stripeCheckoutSessionId &&
-    order.stripeCheckoutSessionId !== sessionId
-  ) {
+  if (sessionId && order.stripeCheckoutSessionId && order.stripeCheckoutSessionId !== sessionId) {
     throw new Error("WEBHOOK_CHECKOUT_SESSION_MISMATCH");
   }
   if (order.stripePaymentIntentId && order.stripePaymentIntentId !== intentId) {
     throw new Error("WEBHOOK_PAYMENT_INTENT_MISMATCH");
+  }
+
+  const existingPayment = await tx.payment.findUnique({
+    where: { providerPaymentId: intentId },
+    select: { orderId: true },
+  });
+  if (existingPayment && existingPayment.orderId !== orderId) {
+    throw new Error("WEBHOOK_PAYMENT_ORDER_MISMATCH");
   }
 
   await tx.payment.upsert({
@@ -142,6 +156,14 @@ async function markPaymentFailed(
   const intentId = eventObjectPaymentIntentId(object);
 
   if (intentId) {
+    const existingPayment = await tx.payment.findUnique({
+      where: { providerPaymentId: intentId },
+      select: { orderId: true },
+    });
+    if (existingPayment && existingPayment.orderId !== orderId) {
+      throw new Error("WEBHOOK_PAYMENT_ORDER_MISMATCH");
+    }
+
     await tx.payment.upsert({
       where: { providerPaymentId: intentId },
       create: {
@@ -176,14 +198,38 @@ async function reconcileRefund(
     ? await tx.order.findUnique({ where: { id: metadata.order_id } })
     : await tx.order.findUnique({ where: { stripePaymentIntentId: intentId } });
   if (!order) throw new Error("WEBHOOK_REFUND_ORDER_NOT_FOUND");
-  if (order.currency.toLowerCase() !== currency) throw new Error("WEBHOOK_REFUND_CURRENCY_MISMATCH");
+  if (order.stripePaymentIntentId !== intentId) {
+    throw new Error("WEBHOOK_REFUND_PAYMENT_INTENT_MISMATCH");
+  }
+  if (order.currency.toLowerCase() !== currency) {
+    throw new Error("WEBHOOK_REFUND_CURRENCY_MISMATCH");
+  }
 
   const payment = await tx.payment.findUnique({ where: { providerPaymentId: intentId } });
+  if (!payment) throw new Error("WEBHOOK_REFUND_PAYMENT_NOT_FOUND");
+  if (payment.orderId !== order.id) throw new Error("WEBHOOK_REFUND_PAYMENT_ORDER_MISMATCH");
+
+  const existingRefund = await tx.refund.findUnique({
+    where: { providerRefundId: refundId },
+    select: { orderId: true, amountCents: true, currency: true },
+  });
+  if (existingRefund) {
+    if (existingRefund.orderId !== order.id) {
+      throw new Error("WEBHOOK_REFUND_ORDER_MISMATCH");
+    }
+    if (
+      existingRefund.amountCents !== amountCents ||
+      existingRefund.currency.toLowerCase() !== currency
+    ) {
+      throw new Error("WEBHOOK_REFUND_IMMUTABLE_FIELD_MISMATCH");
+    }
+  }
+
   await tx.refund.upsert({
     where: { providerRefundId: refundId },
     create: {
       orderId: order.id,
-      paymentId: payment?.id || null,
+      paymentId: payment.id,
       providerRefundId: refundId,
       idempotencyKey: `stripe-refund:${refundId}`,
       amountCents,
@@ -193,9 +239,7 @@ async function reconcileRefund(
       requestedBy: "stripe",
     },
     update: {
-      paymentId: payment?.id || undefined,
-      amountCents,
-      currency,
+      paymentId: payment.id,
       status,
       reason: asString(object.reason),
     },
@@ -255,6 +299,46 @@ async function processStripeEvent(tx: Prisma.TransactionClient, event: StripeEve
   return orderId;
 }
 
+async function claimStripeEvent(
+  tx: Prisma.TransactionClient,
+  event: StripeEvent,
+  rawBody: string,
+) {
+  const hash = payloadSha256(rawBody);
+  const existing = await tx.paymentEvent.findUnique({
+    where: { providerEventId: event.id },
+    select: { type: true, payloadSha256: true },
+  });
+
+  if (existing) {
+    if (existing.type !== event.type || existing.payloadSha256 !== hash) {
+      throw new Error("WEBHOOK_EVENT_REPLAY_MISMATCH");
+    }
+    return { duplicate: true };
+  }
+
+  try {
+    await tx.paymentEvent.create({
+      data: {
+        providerEventId: event.id,
+        type: event.type,
+        payloadSha256: hash,
+        status: "processing",
+      },
+    });
+  } catch (error) {
+    // This catch is deliberately scoped to the event-ledger insert. A P2002 from any
+    // payment/order/refund mutation below is a real financial integrity failure and must
+    // propagate as HTTP 500 so Stripe retries instead of receiving a false acknowledgement.
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+      throw new DuplicateStripeEventError();
+    }
+    throw error;
+  }
+
+  return { duplicate: false };
+}
+
 export async function POST(request: Request) {
   const rawBody = await request.text();
   const signature = request.headers.get("stripe-signature") || "";
@@ -281,23 +365,27 @@ export async function POST(request: Request) {
   }
 
   try {
-    await prisma.$transaction(async (tx) => {
+    const result = await prisma.$transaction(async (tx) => {
+      const claim = await claimStripeEvent(tx, event, rawBody);
+      if (claim.duplicate) return { duplicate: true };
+
       const orderId = await processStripeEvent(tx, event);
-      await tx.paymentEvent.create({
+      await tx.paymentEvent.update({
+        where: { providerEventId: event.id },
         data: {
-          providerEventId: event.id,
-          type: event.type,
-          payloadSha256: payloadSha256(rawBody),
           status: "processed",
           orderId,
           processedAt: new Date(),
         },
       });
+      return { duplicate: false };
     });
-    return NextResponse.json({ received: true });
+
+    return NextResponse.json(
+      result.duplicate ? { received: true, duplicate: true } : { received: true },
+    );
   } catch (error) {
-    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
-      // Stripe retries are expected. Unique providerEventId makes repeat delivery a no-op.
+    if (error instanceof DuplicateStripeEventError) {
       return NextResponse.json({ received: true, duplicate: true });
     }
     const message = error instanceof Error ? error.message : "UNKNOWN";
