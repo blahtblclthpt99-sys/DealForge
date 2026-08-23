@@ -10,7 +10,7 @@ DealForge is no longer an affiliate-link-first storefront. Legacy affiliate/prov
 
 ## Stack
 
-- **Next.js 15.5 compatibility line** + TypeScript + Tailwind CSS, locked for the current Cloudflare/OpenNext payment-certification release
+- **Next.js 16.3.2** + TypeScript + Tailwind CSS
 - **Cloudflare Workers + OpenNext** as the primary production runtime
 - **Prisma + PostgreSQL** for production persistence
 - **JWT sessions** with bcrypt password hashing
@@ -75,7 +75,7 @@ npm run dev
 - Keep production commerce disabled until Phase 2.5 transaction certification passes.
 - Do not enable autonomous supplier purchasing until payment, refund, reconciliation, and order-integrity certification are complete.
 - Keep supplier/source verification and landed-cost controls ahead of publication.
-- Keep the Cloudflare/OpenNext compatibility line unchanged during Phase 2.5; framework upgrades require a separate tested release.
+- Treat framework/runtime upgrades as release changes: they must pass Commerce CI, Product Engine CI, and the Cloudflare Workers dry-run before promotion.
 
 ## Deployment
 
