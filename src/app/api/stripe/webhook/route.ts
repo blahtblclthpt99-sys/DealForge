@@ -2,6 +2,9 @@ import { NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import {
+  assertStripeEventMode,
+  expectedStripeLivemode,
+  isExactWebhookReplay,
   payloadSha256,
   stripeWebhookSecret,
   verifyStripeSignature,
@@ -9,6 +12,8 @@ import {
 } from "@/lib/stripe-commerce";
 
 export const runtime = "nodejs";
+
+const MAX_WEBHOOK_BYTES = 1024 * 1024;
 
 function asString(value: unknown) {
   return typeof value === "string" && value.length > 0 ? value : null;
@@ -44,17 +49,44 @@ function eventObjectPaymentIntentId(object: Record<string, unknown>) {
   return objectId?.startsWith("pi_") ? objectId : null;
 }
 
+async function assertPaymentIntentOrderBinding(
+  tx: Prisma.TransactionClient,
+  orderId: string,
+  intentId: string | null,
+) {
+  if (!intentId) return;
+  const payment = await tx.payment.findUnique({
+    where: { providerPaymentId: intentId },
+    select: { orderId: true },
+  });
+  if (payment && payment.orderId !== orderId) {
+    throw new Error("WEBHOOK_PAYMENT_ORDER_MISMATCH");
+  }
+}
+
 async function resolveOrderId(
   tx: Prisma.TransactionClient,
   object: Record<string, unknown>,
 ) {
   const metadata = metadataOf(object);
-  if (metadata.order_id) return metadata.order_id;
-
+  const metadataOrderId = metadata.order_id || null;
   const clientReferenceId = asString(object.client_reference_id);
-  if (clientReferenceId) return clientReferenceId;
-
   const intentId = eventObjectPaymentIntentId(object);
+
+  if (metadataOrderId && clientReferenceId && metadataOrderId !== clientReferenceId) {
+    throw new Error("WEBHOOK_ORDER_REFERENCE_MISMATCH");
+  }
+
+  if (metadataOrderId) {
+    await assertPaymentIntentOrderBinding(tx, metadataOrderId, intentId);
+    return metadataOrderId;
+  }
+
+  if (clientReferenceId) {
+    await assertPaymentIntentOrderBinding(tx, clientReferenceId, intentId);
+    return clientReferenceId;
+  }
+
   if (intentId) {
     const order = await tx.order.findUnique({
       where: { stripePaymentIntentId: intentId },
@@ -72,6 +104,9 @@ async function assertPaymentMatchesOrder(
 ) {
   const order = await tx.order.findUnique({ where: { id: orderId } });
   if (!order) throw new Error("WEBHOOK_ORDER_NOT_FOUND");
+
+  const intentId = eventObjectPaymentIntentId(object);
+  await assertPaymentIntentOrderBinding(tx, orderId, intentId);
 
   const amount = asInteger(object.amount_total) ?? asInteger(object.amount_received) ?? asInteger(object.amount);
   const currency = asString(object.currency)?.toLowerCase();
@@ -91,11 +126,7 @@ async function markPaymentSucceeded(
 
   const objectId = asString(object.id);
   const sessionId = objectId?.startsWith("cs_") ? objectId : null;
-  if (
-    sessionId &&
-    order.stripeCheckoutSessionId &&
-    order.stripeCheckoutSessionId !== sessionId
-  ) {
+  if (sessionId && order.stripeCheckoutSessionId && order.stripeCheckoutSessionId !== sessionId) {
     throw new Error("WEBHOOK_CHECKOUT_SESSION_MISMATCH");
   }
   if (order.stripePaymentIntentId && order.stripePaymentIntentId !== intentId) {
@@ -140,6 +171,7 @@ async function markPaymentFailed(
   const order = await tx.order.findUnique({ where: { id: orderId } });
   if (!order || order.status === "paid" || order.status === "refunded") return;
   const intentId = eventObjectPaymentIntentId(object);
+  await assertPaymentIntentOrderBinding(tx, orderId, intentId);
 
   if (intentId) {
     await tx.payment.upsert({
@@ -172,18 +204,25 @@ async function reconcileRefund(
   }
 
   const metadata = metadataOf(object);
+  const payment = await tx.payment.findUnique({ where: { providerPaymentId: intentId } });
+  if (!payment) throw new Error("WEBHOOK_REFUND_PAYMENT_NOT_FOUND");
+
   const order = metadata.order_id
     ? await tx.order.findUnique({ where: { id: metadata.order_id } })
-    : await tx.order.findUnique({ where: { stripePaymentIntentId: intentId } });
+    : await tx.order.findUnique({ where: { id: payment.orderId } });
   if (!order) throw new Error("WEBHOOK_REFUND_ORDER_NOT_FOUND");
+  if (payment.orderId !== order.id) throw new Error("WEBHOOK_REFUND_ORDER_MISMATCH");
+  if (order.stripePaymentIntentId && order.stripePaymentIntentId !== intentId) {
+    throw new Error("WEBHOOK_REFUND_PAYMENT_INTENT_MISMATCH");
+  }
   if (order.currency.toLowerCase() !== currency) throw new Error("WEBHOOK_REFUND_CURRENCY_MISMATCH");
+  if (amountCents > order.totalCents) throw new Error("WEBHOOK_REFUND_AMOUNT_INVALID");
 
-  const payment = await tx.payment.findUnique({ where: { providerPaymentId: intentId } });
   await tx.refund.upsert({
     where: { providerRefundId: refundId },
     create: {
       orderId: order.id,
-      paymentId: payment?.id || null,
+      paymentId: payment.id,
       providerRefundId: refundId,
       idempotencyKey: `stripe-refund:${refundId}`,
       amountCents,
@@ -193,7 +232,7 @@ async function reconcileRefund(
       requestedBy: "stripe",
     },
     update: {
-      paymentId: payment?.id || undefined,
+      paymentId: payment.id,
       amountCents,
       currency,
       status,
@@ -256,7 +295,16 @@ async function processStripeEvent(tx: Prisma.TransactionClient, event: StripeEve
 }
 
 export async function POST(request: Request) {
+  const contentLength = Number(request.headers.get("content-length") || "0");
+  if (Number.isFinite(contentLength) && contentLength > MAX_WEBHOOK_BYTES) {
+    return NextResponse.json({ error: "WEBHOOK_PAYLOAD_TOO_LARGE" }, { status: 413 });
+  }
+
   const rawBody = await request.text();
+  if (Buffer.byteLength(rawBody, "utf8") > MAX_WEBHOOK_BYTES) {
+    return NextResponse.json({ error: "WEBHOOK_PAYLOAD_TOO_LARGE" }, { status: 413 });
+  }
+
   const signature = request.headers.get("stripe-signature") || "";
 
   let secret: string;
@@ -276,8 +324,25 @@ export async function POST(request: Request) {
     if (!event.id?.startsWith("evt_") || !event.type || !event.data?.object) {
       throw new Error("INVALID_EVENT");
     }
-  } catch {
+    assertStripeEventMode(event, expectedStripeLivemode());
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "INVALID_EVENT";
+    if (message === "STRIPE_EVENT_MODE_MISMATCH") {
+      return NextResponse.json({ error: message }, { status: 400 });
+    }
     return NextResponse.json({ error: "INVALID_STRIPE_EVENT" }, { status: 400 });
+  }
+
+  const existingEvent = await prisma.paymentEvent.findUnique({
+    where: { providerEventId: event.id },
+    select: { payloadSha256: true },
+  });
+  if (existingEvent) {
+    if (!isExactWebhookReplay(existingEvent.payloadSha256, rawBody)) {
+      console.error("stripe.webhook.event_id_payload_mismatch", { eventId: event.id, type: event.type });
+      return NextResponse.json({ error: "STRIPE_EVENT_REPLAY_MISMATCH" }, { status: 409 });
+    }
+    return NextResponse.json({ received: true, duplicate: true });
   }
 
   try {
@@ -297,8 +362,14 @@ export async function POST(request: Request) {
     return NextResponse.json({ received: true });
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
-      // Stripe retries are expected. Unique providerEventId makes repeat delivery a no-op.
-      return NextResponse.json({ received: true, duplicate: true });
+      const winner = await prisma.paymentEvent.findUnique({
+        where: { providerEventId: event.id },
+        select: { payloadSha256: true },
+      });
+      if (winner && isExactWebhookReplay(winner.payloadSha256, rawBody)) {
+        return NextResponse.json({ received: true, duplicate: true });
+      }
+      return NextResponse.json({ error: "STRIPE_EVENT_REPLAY_MISMATCH" }, { status: 409 });
     }
     const message = error instanceof Error ? error.message : "UNKNOWN";
     console.error("stripe.webhook.failed", { eventId: event.id, type: event.type, error: message });
