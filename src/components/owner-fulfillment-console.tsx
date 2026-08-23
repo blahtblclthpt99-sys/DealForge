@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { PackageCheck, RefreshCw, ShieldAlert, Truck } from "lucide-react";
+import { AlertTriangle, PackageCheck, RefreshCw, ShieldAlert, Truck } from "lucide-react";
 
 type FulfillmentState =
   | "awaiting_sourcing"
@@ -10,6 +10,15 @@ type FulfillmentState =
   | "shipped"
   | "delivered"
   | "hold";
+
+type OrderOperationsHealth = {
+  actionable: boolean;
+  severity: "healthy" | "warning" | "critical" | "complete" | "blocked";
+  reason: string;
+  ageMs: number | null;
+  warningAfterMs: number | null;
+  criticalAfterMs: number | null;
+};
 
 type OrderItem = {
   id: string;
@@ -31,6 +40,7 @@ type CommerceOrder = {
   paidAt: string | null;
   paymentCertified: boolean;
   fulfillmentState: FulfillmentState | null;
+  operationsHealth: OrderOperationsHealth;
   lastFulfillmentAction: string | null;
   lastFulfillmentAt: string | null;
   orderItems: OrderItem[];
@@ -46,6 +56,21 @@ function cents(value: string) {
   if (!Number.isFinite(amount) || amount <= 0) return null;
   const result = Math.round(amount * 100);
   return Number.isSafeInteger(result) && result > 0 ? result : null;
+}
+
+function duration(ms: number | null) {
+  if (ms == null || !Number.isFinite(ms)) return "unknown time";
+  const hours = Math.max(0, Math.floor(ms / (60 * 60 * 1000)));
+  if (hours < 48) return `${hours}h`;
+  return `${Math.floor(hours / 24)}d`;
+}
+
+function healthLabel(health: OrderOperationsHealth) {
+  if (health.severity === "critical") return `Critical · ${duration(health.ageMs)} in stage`;
+  if (health.severity === "warning") return `Needs attention · ${duration(health.ageMs)} in stage`;
+  if (health.severity === "complete") return "Delivered";
+  if (health.severity === "blocked") return "Not actionable";
+  return "On track";
 }
 
 async function readJson(response: Response) {
@@ -102,6 +127,7 @@ function OrderCard({ order, reload }: { order: CommerceOrder; reload: () => Prom
     };
   });
   const supplierReady = supplierOrders.every((line) => line.supplierOrderReference.length >= 2 && line.actualCostCents != null);
+  const operationsNeedsAttention = order.operationsHealth.severity === "warning" || order.operationsHealth.severity === "critical";
 
   return (
     <article className="rounded-2xl border border-card-border bg-background p-4 sm:p-5">
@@ -111,10 +137,21 @@ function OrderCard({ order, reload }: { order: CommerceOrder; reload: () => Prom
           <h3 className="mt-1 text-lg font-bold text-forest-ink">{money(order.totalCents)} · {order.orderItems.length} line(s)</h3>
           <p className="mt-1 text-xs text-forest-muted">Payment: {order.financialStatus} · Fulfillment: {state?.replaceAll("_", " ") || "blocked"}</p>
         </div>
-        <span className={`rounded-full px-3 py-1 text-xs font-bold ${order.paymentCertified ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300" : "bg-red-100 text-red-800 dark:bg-red-950/30 dark:text-red-300"}`}>
-          {order.paymentCertified ? "Payment ledger verified" : "Payment ledger blocked"}
-        </span>
+        <div className="flex flex-wrap justify-end gap-2">
+          <span className={`rounded-full px-3 py-1 text-xs font-bold ${order.paymentCertified ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300" : "bg-red-100 text-red-800 dark:bg-red-950/30 dark:text-red-300"}`}>
+            {order.paymentCertified ? "Payment ledger verified" : "Payment ledger blocked"}
+          </span>
+          <span className={`rounded-full px-3 py-1 text-xs font-bold ${order.operationsHealth.severity === "critical" ? "bg-red-100 text-red-800 dark:bg-red-950/30 dark:text-red-300" : order.operationsHealth.severity === "warning" ? "bg-amber-100 text-amber-800 dark:bg-amber-950/30 dark:text-amber-300" : "bg-slate-100 text-slate-700 dark:bg-slate-900 dark:text-slate-300"}`}>
+            {healthLabel(order.operationsHealth)}
+          </span>
+        </div>
       </div>
+
+      {operationsNeedsAttention ? (
+        <div role="status" className={`mt-4 rounded-xl border p-3 text-xs leading-5 ${order.operationsHealth.severity === "critical" ? "border-red-200 bg-red-50 text-red-900 dark:border-red-900/60 dark:bg-red-950/20 dark:text-red-200" : "border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/20 dark:text-amber-200"}`}>
+          <AlertTriangle className="mr-1 inline h-4 w-4" /> {order.operationsHealth.reason.replaceAll("_", " ").toLowerCase()}. Review this order before it ages further.
+        </div>
+      ) : null}
 
       <div className="mt-4 space-y-2">
         {order.orderItems.map((item) => (
@@ -227,6 +264,8 @@ export function OwnerFulfillmentConsole() {
     };
   }, []);
 
+  const attentionCount = orders.filter((order) => order.operationsHealth.severity === "warning" || order.operationsHealth.severity === "critical").length;
+
   return (
     <section className="dn-card mt-8 p-5 sm:p-6" aria-labelledby="owner-fulfillment-title">
       <div className="flex flex-wrap items-start justify-between gap-4">
@@ -234,6 +273,7 @@ export function OwnerFulfillmentConsole() {
           <div className="inline-flex items-center gap-2 rounded-full bg-emerald-100 px-3 py-1 text-xs font-bold uppercase tracking-wide text-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300"><Truck className="h-3.5 w-3.5" /> Owner fulfillment</div>
           <h2 id="owner-fulfillment-title" className="mt-3 font-display text-2xl font-semibold text-forest-ink">Paid order sourcing &amp; fulfillment</h2>
           <p className="mt-2 text-sm leading-6 text-forest-muted">Payment status remains Stripe/webhook-owned. This queue separately records manual supplier purchasing, shipping, delivery, and holds with an audit trail.</p>
+          {!busy && attentionCount > 0 ? <p className="mt-2 text-sm font-semibold text-amber-800 dark:text-amber-300">{attentionCount} order{attentionCount === 1 ? "" : "s"} need operational attention.</p> : null}
         </div>
         <button disabled={busy} onClick={() => void load()} className="inline-flex min-h-11 items-center gap-2 rounded-xl border border-card-border px-4 text-sm font-bold text-forest disabled:opacity-50"><RefreshCw className={`h-4 w-4 ${busy ? "animate-spin" : ""}`} /> Refresh</button>
       </div>
