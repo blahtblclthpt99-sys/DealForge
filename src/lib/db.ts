@@ -3,8 +3,8 @@
  *
  * The PostgreSQL client is generated with Prisma's JS engine so it can run in
  * workerd. That engine always requires a driver adapter, including during Node
- * execution. Cloudflare request clients are additionally scoped to the current
- * ExecutionContext so they are never leaked across requests.
+ * execution. Cloudflare request clients are scoped to the current
+ * ExecutionContext so WebSocket-backed transactions never leak across requests.
  */
 import { PrismaClient } from "@prisma/client";
 import { PrismaNeon } from "@prisma/adapter-neon";
@@ -17,20 +17,29 @@ const globalForPrisma = globalThis as unknown as {
 
 const cloudflareRequestClients = new WeakMap<object, PrismaClient>();
 
+type CloudflareContext = ReturnType<typeof getCloudflareContext>;
+
+function tryGetCloudflareContext(): CloudflareContext | null {
+  try {
+    return getCloudflareContext();
+  } catch {
+    return null;
+  }
+}
+
 function isCloudflareRuntime() {
-  return process.env.CLOUDFLARE_WORKERS === "1";
+  return process.env.CLOUDFLARE_WORKERS === "1" || tryGetCloudflareContext() !== null;
 }
 
 function configureNeonRuntime() {
-  if (!isCloudflareRuntime()) return;
-
-  // Pool.query() is safe to route over Neon's HTTP transport for ordinary
-  // one-shot Prisma queries. Interactive transactions still use WebSockets.
+  // Ordinary Pool.query() calls can use Neon's fetch transport. This avoids an
+  // unnecessary WebSocket for one-shot Prisma reads/writes and is supported by
+  // @neondatabase/serverless in Cloudflare Workers.
   neonConfig.poolQueryViaFetch = true;
 
-  // OpenNext runs with nodejs_compat, but Cloudflare also exposes the standard
-  // WebSocket constructor. Bind it explicitly so PrismaNeon's Pool.connect()
-  // path can establish transaction-scoped WebSocket sessions reliably.
+  // Interactive transactions still require a session, so PrismaNeon uses
+  // Pool.connect() over WebSockets for those. Bind the runtime constructor
+  // explicitly when the platform provides it.
   if (typeof globalThis.WebSocket !== "undefined") {
     neonConfig.webSocketConstructor = globalThis.WebSocket;
   }
@@ -71,9 +80,11 @@ function createClient() {
   });
 }
 
-function getCloudflareRequestClient() {
-  const { ctx } = getCloudflareContext();
-  const requestKey = ctx as unknown as object;
+function getCloudflareRequestClient(): PrismaClient | null {
+  const cloudflare = tryGetCloudflareContext();
+  if (!cloudflare) return null;
+
+  const requestKey = cloudflare.ctx as unknown as object;
   const existing = cloudflareRequestClients.get(requestKey);
   if (existing) return existing;
 
@@ -83,9 +94,8 @@ function getCloudflareRequestClient() {
 }
 
 export function getPrisma() {
-  if (isCloudflareRuntime()) {
-    return getCloudflareRequestClient();
-  }
+  const cloudflareClient = getCloudflareRequestClient();
+  if (cloudflareClient) return cloudflareClient;
 
   if (!globalForPrisma.prisma) {
     globalForPrisma.prisma = createClient();
