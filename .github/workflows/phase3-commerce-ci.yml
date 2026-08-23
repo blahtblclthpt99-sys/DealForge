@@ -76,10 +76,20 @@ jobs:
           grep -Fq 'sellingPriceCents: assessment.recommendedSellingPriceCents' "$ROUTE"
           grep -Fq 'commerceRecommendation: recommendationAudit' "$ROUTE"
           grep -Fq 'commerceEnabled: false' "$ROUTE"
-          if grep -Fq 'commerceEnabled: true' "$ROUTE"; then
-            echo 'Recommendation route must never enable commerce.' >&2
-            exit 1
-          fi
+          node <<'NODE'
+          const fs = require('node:fs');
+          const route = 'src/app/api/admin/commerce/products/[id]/recommendation/route.ts';
+          const source = fs.readFileSync(route, 'utf8');
+          const start = source.indexOf('const write = await tx.product.updateMany({');
+          const end = source.indexOf('});', start);
+          if (start < 0 || end < 0) throw new Error('Recommendation updateMany block not found');
+          const block = source.slice(start, end);
+          const dataStart = block.indexOf('data:');
+          if (dataStart < 0) throw new Error('Recommendation update data block not found');
+          if (/commerceEnabled\s*:/.test(block.slice(dataStart))) {
+            throw new Error('Recommendation update data must never write commerceEnabled');
+          }
+          NODE
 
       - name: Build for Cloudflare
         run: npm run cf:build
