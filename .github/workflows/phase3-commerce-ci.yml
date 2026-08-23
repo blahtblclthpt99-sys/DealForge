@@ -106,6 +106,32 @@ jobs:
           grep -Fq 'commercerecommendation' 'src/app/product/[slug]/page.tsx'
           grep -Fq '!commerce.isDirectCommerce' 'src/app/product/[slug]/page.tsx'
 
+      - name: Controlled activation and checkout revalidation guard
+        run: |
+          set -euo pipefail
+          ROUTE='src/app/api/admin/commerce/products/[id]/activation/route.ts'
+          HELPER='src/lib/commerce-activation.ts'
+          CHECKOUT='src/app/api/checkout/route.ts'
+          test -f "$ROUTE"
+          test -f "$HELPER"
+          grep -Fq 'confirm: z.literal("ACTIVATE_COMMERCE")' "$ROUTE"
+          grep -Fq 'fulfillmentMode: z.literal("manual_supplier_purchase")' "$ROUTE"
+          grep -Fq 'confirm: z.literal("DISABLE_COMMERCE")' "$ROUTE"
+          grep -Fq 'isProductOwner' "$ROUTE"
+          grep -Fq 'isFinancialGateCertified' "$ROUTE"
+          grep -Fq 'assessProductForActivation' "$ROUTE"
+          grep -Fq 'commerceEnabled: true' "$ROUTE"
+          grep -Fq 'ACTIVATION_SOURCE_CHANGED' "$ROUTE"
+          grep -Fq 'TRUSTED_PRICE_SOURCES' "$HELPER"
+          grep -Fq 'ACTIVATION_MIN_MARGIN_BPS = 1_500' "$HELPER"
+          grep -Fq 'ACTIVATION_MIN_PROFIT_CENTS = 200' "$HELPER"
+          grep -Fq 'recommendation.sourceCheckedAtMs !== source.checkedAtMs' "$HELPER"
+          grep -Fq 'recommendation.costs.item !== source.itemCostCents' "$HELPER"
+          grep -Fq 'supplierRouteReady' "$HELPER"
+          grep -Fq 'assessProductForActivation' "$CHECKOUT"
+          grep -Fq 'isFinancialGateCertified' "$CHECKOUT"
+          grep -Fq 'activation_revalidation_failed' "$CHECKOUT"
+
       - name: Build for Cloudflare
         run: npm run cf:build
 
