@@ -66,6 +66,17 @@ export function stripeWebhookSecret() {
   return secret;
 }
 
+export function expectedStripeLivemode(secretKey = (process.env.STRIPE_SECRET_KEY || "").trim()) {
+  if (secretKey.startsWith("sk_live_")) return true;
+  if (secretKey.startsWith("sk_test_")) return false;
+  throw new Error("STRIPE_SECRET_KEY_MODE_UNKNOWN");
+}
+
+export function assertStripeEventMode(event: Pick<StripeEvent, "livemode">, expected: boolean) {
+  if (typeof event.livemode !== "boolean") throw new Error("STRIPE_EVENT_LIVEMODE_MISSING");
+  if (event.livemode !== expected) throw new Error("STRIPE_EVENT_MODE_MISMATCH");
+}
+
 export function assertPositiveCents(value: number, field: string) {
   if (!Number.isSafeInteger(value) || value <= 0) {
     throw new Error(`${field.toUpperCase()}_INVALID`);
@@ -74,6 +85,10 @@ export function assertPositiveCents(value: number, field: string) {
 
 export function payloadSha256(payload: string) {
   return createHash("sha256").update(payload, "utf8").digest("hex");
+}
+
+export function isExactWebhookReplay(existingPayloadSha256: string, rawBody: string) {
+  return constantTimeHexEqual(existingPayloadSha256, payloadSha256(rawBody));
 }
 
 function constantTimeHexEqual(a: string, b: string) {
@@ -89,6 +104,7 @@ export function verifyStripeSignature(
   secret: string,
   options?: { nowSeconds?: number; toleranceSeconds?: number },
 ) {
+  if (!secret || !signatureHeader) return false;
   const parts = signatureHeader.split(",").map((part) => part.trim());
   const timestampRaw = parts.find((part) => part.startsWith("t="))?.slice(2);
   const signatures = parts
@@ -97,10 +113,11 @@ export function verifyStripeSignature(
 
   if (!timestampRaw || signatures.length === 0) return false;
   const timestamp = Number(timestampRaw);
-  if (!Number.isSafeInteger(timestamp)) return false;
+  if (!Number.isSafeInteger(timestamp) || timestamp <= 0) return false;
 
   const now = options?.nowSeconds ?? Math.floor(Date.now() / 1000);
   const tolerance = options?.toleranceSeconds ?? DEFAULT_WEBHOOK_TOLERANCE_SECONDS;
+  if (!Number.isSafeInteger(tolerance) || tolerance < 0) return false;
   if (Math.abs(now - timestamp) > tolerance) return false;
 
   const expected = createHmac("sha256", secret)
