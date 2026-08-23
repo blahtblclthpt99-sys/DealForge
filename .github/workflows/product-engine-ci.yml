@@ -39,7 +39,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
       - name: Install exactly locked dependencies
         run: npm ci
@@ -63,9 +63,19 @@ jobs:
         run: npx prisma migrate deploy --schema=prisma/schema.postgres.prisma
       - name: Verify upgraded schema is usable after migration
         run: npx prisma db push --schema=prisma/schema.postgres.prisma --skip-generate
+      - name: Prepare isolated application test database
+        env:
+          DATABASE_URL: file:./ci-test.db
+        run: |
+          npx prisma generate --schema=prisma/schema.prisma
+          npx prisma db push --schema=prisma/schema.prisma --force-reset --skip-generate
       - name: Complete test suite
+        env:
+          DATABASE_URL: file:./ci-test.db
         run: npm test
       - name: Product Engine tests explicitly
+        env:
+          DATABASE_URL: file:./ci-test.db
         run: npm run test:product-engine
       - name: Production build
         run: npm run build
