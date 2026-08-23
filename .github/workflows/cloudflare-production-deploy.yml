@@ -137,4 +137,4 @@ jobs:
         run: |
           gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=failure -f context=cloudflare-production-deploy -f description='Cloudflare production deployment failed'
 
-# redeploy after runtime secret update: 2026-08-23T17:33-05:00
+# redeploy after DATABASE_URL update: 2026-08-23T17:49-05:00
