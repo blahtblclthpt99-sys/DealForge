@@ -1,0 +1,105 @@
+name: Phase 2.5 Production Readiness Probe
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/phase25-production-readiness.yml
+
+permissions:
+  contents: read
+
+jobs:
+  production-readiness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      WORKER_URL: https://dealforge.blahtblclthpt99.workers.dev
+      PRODUCTION_URL: https://www.deal-forge.sale
+      EXPECTED_SHA: 22e577ff3b52f68d2e52388db344ad6c2fd09a2a
+    steps:
+      - name: Verify exact merged revision is deployed
+        shell: bash
+        run: |
+          set -euo pipefail
+          ready=0
+          for attempt in $(seq 1 48); do
+            worker_code=$(curl --silent --show-error --max-time 20 --output /tmp/worker-build.json --write-out '%{http_code}' "$WORKER_URL/api/build" || echo 000)
+            production_code=$(curl --silent --show-error --max-time 20 --output /tmp/production-build.json --write-out '%{http_code}' "$PRODUCTION_URL/api/build" || echo 000)
+            worker_sha=$(python - <<'PY'
+          import json
+          from pathlib import Path
+          try:
+              print(json.loads(Path('/tmp/worker-build.json').read_text()).get('sha',''))
+          except Exception:
+              print('')
+          PY
+            )
+            production_sha=$(python - <<'PY'
+          import json
+          from pathlib import Path
+          try:
+              print(json.loads(Path('/tmp/production-build.json').read_text()).get('sha',''))
+          except Exception:
+              print('')
+          PY
+            )
+            echo "attempt=$attempt worker=$worker_code:$worker_sha production=$production_code:$production_sha expected=$EXPECTED_SHA"
+            if [[ "$worker_code" == "200" && "$production_code" == "200" && "$worker_sha" == "$EXPECTED_SHA" && "$production_sha" == "$EXPECTED_SHA" ]]; then
+              ready=1
+              break
+            fi
+            sleep 10
+          done
+          if [[ "$ready" != "1" ]]; then
+            echo "::error::Merged Phase 2.5 SHA is not live on both Cloudflare Worker and production domain."
+            exit 1
+          fi
+
+      - name: Verify health endpoint
+        shell: bash
+        run: |
+          set -euo pipefail
+          for base in "$WORKER_URL" "$PRODUCTION_URL"; do
+            code=$(curl --silent --show-error --max-time 20 --output /tmp/health.json --write-out '%{http_code}' "$base/api/health" || echo 000)
+            echo "$base health_http=$code body=$(cat /tmp/health.json 2>/dev/null || true)"
+            [[ "$code" == "200" ]]
+          done
+
+      - name: Verify Stripe webhook secret without sending an event
+        shell: bash
+        run: |
+          set -euo pipefail
+          code=$(curl --silent --show-error --max-time 20 \
+            --request POST \
+            --header 'content-type: application/json' \
+            --header 'stripe-signature: t=1,v1=deadbeef' \
+            --data '{}' \
+            --output /tmp/webhook-probe.json \
+            --write-out '%{http_code}' \
+            "$PRODUCTION_URL/api/stripe/webhook" || echo 000)
+          body=$(cat /tmp/webhook-probe.json 2>/dev/null || true)
+          echo "webhook readiness -> $code $body"
+          if [[ "$code" == "503" && "$body" == *'WEBHOOK_NOT_CONFIGURED'* ]]; then
+            echo "::error::STRIPE_WEBHOOK_SECRET is missing from production."
+            exit 1
+          fi
+          [[ "$code" == "400" ]]
+          [[ "$body" == *'INVALID_STRIPE_SIGNATURE'* ]]
+
+      - name: Verify checkout route without creating a Stripe session
+        shell: bash
+        run: |
+          set -euo pipefail
+          key="phase25-readiness-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          code=$(curl --silent --show-error --max-time 20 \
+            --request POST \
+            --header 'content-type: application/json' \
+            --data "{\"checkoutKey\":\"$key\",\"email\":\"certification@example.com\",\"items\":[{\"productId\":\"phase25-product-does-not-exist\",\"quantity\":1}]}" \
+            --output /tmp/checkout-probe.json \
+            --write-out '%{http_code}' \
+            "$PRODUCTION_URL/api/checkout" || echo 000)
+          body=$(cat /tmp/checkout-probe.json 2>/dev/null || true)
+          echo "checkout readiness -> $code $body"
+          [[ "$code" == "409" ]]
+          [[ "$body" == *'PRODUCT_NOT_FOUND'* ]]
