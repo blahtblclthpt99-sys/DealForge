@@ -13,14 +13,24 @@ permissions:
 jobs:
   snapshot:
     runs-on: ubuntu-latest
-    timeout-minutes: 2
+    timeout-minutes: 3
     steps:
-      - name: Read production build identity
+      - name: Read production and Worker build identities
         shell: bash
         run: |
           set -euo pipefail
-          code=$(curl --silent --show-error --max-time 20 --output /tmp/build.json --write-out '%{http_code}' https://www.deal-forge.sale/api/build || echo 000)
-          echo "http=$code"
-          cat /tmp/build.json 2>/dev/null || true
-          echo
-          [[ "$code" == "200" ]]
+          probe() {
+            local label="$1"
+            local url="$2"
+            local file="/tmp/${label}.json"
+            local code
+            code=$(curl --silent --show-error --max-time 20 --output "$file" --write-out '%{http_code}' "$url" || echo 000)
+            local body
+            body=$(cat "$file" 2>/dev/null || true)
+            echo "$label http=$code body=$body"
+          }
+
+          probe production_www https://www.deal-forge.sale/api/build
+          probe production_apex https://deal-forge.sale/api/build
+          probe workers_dev https://dealforge.blahtblclthpt99.workers.dev/api/build
+          probe managed_fix_preview https://fix-stripe-managed-payments-current-dealforge.blahtblclthpt99.workers.dev/api/build
