@@ -26,10 +26,7 @@ jobs:
       - name: Mark deployment pending
         shell: bash
         run: |
-          gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
-            -f state=pending \
-            -f context=cloudflare-production-deploy \
-            -f description='Cloudflare production deployment in progress'
+          gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=pending -f context=cloudflare-production-deploy -f description='Cloudflare production deployment in progress'
 
       - name: Check deployment credentials
         shell: bash
@@ -37,6 +34,11 @@ jobs:
           set -euo pipefail
           [[ -n "${CLOUDFLARE_API_TOKEN:-}" ]] || { echo '::error::CLOUDFLARE_API_TOKEN missing'; exit 1; }
           [[ -n "${CLOUDFLARE_ACCOUNT_ID:-}" ]] || { echo '::error::CLOUDFLARE_ACCOUNT_ID missing'; exit 1; }
+
+      - name: Mark credentials valid
+        shell: bash
+        run: |
+          gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=success -f context=cloudflare-deploy-credentials -f description='Cloudflare deployment credentials present'
 
       - uses: actions/checkout@v4
         with:
@@ -50,26 +52,35 @@ jobs:
       - name: Install locked dependencies
         run: npm ci --no-fund --no-audit
 
+      - name: Mark build pending
+        shell: bash
+        run: |
+          gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=pending -f context=cloudflare-deploy-build -f description='Cloudflare Worker build in progress'
+
       - name: Build Cloudflare Worker
         run: npm run cf:build
+
+      - name: Mark build successful
+        shell: bash
+        run: |
+          gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=success -f context=cloudflare-deploy-build -f description='Cloudflare Worker build succeeded'
+
+      - name: Mark deploy pending
+        shell: bash
+        run: |
+          gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=pending -f context=cloudflare-deploy-publish -f description='Publishing Worker to Cloudflare'
 
       - name: Deploy exact main revision
         run: npm run cf:deploy
 
-      - name: Mark deployment successful
-        if: success()
+      - name: Mark deploy successful
         shell: bash
         run: |
-          gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
-            -f state=success \
-            -f context=cloudflare-production-deploy \
-            -f description='Cloudflare production deployment succeeded'
+          gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=success -f context=cloudflare-deploy-publish -f description='Cloudflare Worker publish succeeded'
+          gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=success -f context=cloudflare-production-deploy -f description='Cloudflare production deployment succeeded'
 
       - name: Mark deployment failed
         if: failure()
         shell: bash
         run: |
-          gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
-            -f state=failure \
-            -f context=cloudflare-production-deploy \
-            -f description='Cloudflare production deployment failed'
+          gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=failure -f context=cloudflare-production-deploy -f description='Cloudflare production deployment failed'
