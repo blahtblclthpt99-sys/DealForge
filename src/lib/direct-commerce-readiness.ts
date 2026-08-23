@@ -2,6 +2,7 @@ export type DirectCommerceReadinessReason =
   | "READY"
   | "BLOCKED_FINANCIAL_GATE"
   | "COMMERCE_DISABLED"
+  | "ALREADY_ACTIVE"
   | "UNAVAILABLE"
   | "INVALID_CURRENCY"
   | "INVALID_FINANCIALS"
@@ -67,13 +68,12 @@ function isoTime(value: unknown) {
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
 }
 
-export function checkDirectCommerceReadiness(
+function validateFinancialAndSourceState(
   input: DirectCommerceReadinessInput,
 ): DirectCommerceReadinessResult {
   const nowMs = input.nowMs ?? Date.now();
 
   if (!input.financialGateCertified) return blocked("BLOCKED_FINANCIAL_GATE");
-  if (!input.commerceEnabled) return blocked("COMMERCE_DISABLED");
   if (input.availability !== "in_stock") return blocked("UNAVAILABLE");
   if (input.currency.trim().toLowerCase() !== "usd") return blocked("INVALID_CURRENCY");
   if (!positiveSafeInteger(input.landedCostCents) || !positiveSafeInteger(input.sellingPriceCents)) {
@@ -142,4 +142,18 @@ export function checkDirectCommerceReadiness(
     sourceAgeMs,
     maxSourceAgeMs,
   };
+}
+
+export function checkDirectCommerceReadiness(
+  input: DirectCommerceReadinessInput,
+): DirectCommerceReadinessResult {
+  if (!input.commerceEnabled) return blocked("COMMERCE_DISABLED");
+  return validateFinancialAndSourceState(input);
+}
+
+export function checkDirectCommerceActivationReadiness(
+  input: DirectCommerceReadinessInput,
+): DirectCommerceReadinessResult {
+  if (input.commerceEnabled) return blocked("ALREADY_ACTIVE");
+  return validateFinancialAndSourceState(input);
 }
