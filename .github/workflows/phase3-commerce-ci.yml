@@ -203,6 +203,49 @@ jobs:
           }
           NODE
 
+      - name: Manual sourcing and fulfillment guard
+        run: |
+          set -euo pipefail
+          LIST='src/app/api/admin/commerce/orders/route.ts'
+          ACT='src/app/api/admin/commerce/orders/[id]/fulfillment/route.ts'
+          UI='src/components/owner-fulfillment-console.tsx'
+          test -f src/lib/order-fulfillment.ts
+          test -f "$LIST"
+          test -f "$ACT"
+          test -f "$UI"
+          grep -Fq 'isProductOwner' "$LIST"
+          grep -Fq 'private, no-store, max-age=0' "$LIST"
+          grep -Fq '? { status: "paid" }' "$LIST"
+          grep -Fq 'order.status !== "paid"' "$ACT"
+          grep -Fq 'payment.providerPaymentId === order.stripePaymentIntentId' "$ACT"
+          grep -Fq 'manualPurchaseConfirmed: z.literal(true)' "$ACT"
+          grep -Fq 'SUPPLIER_COST_VARIANCE_REQUIRES_ACKNOWLEDGEMENT' "$ACT"
+          grep -Fq 'SUPPLIER_COST_LOSS_RISK_REQUIRES_ACKNOWLEDGEMENT' "$ACT"
+          grep -Fq 'updatedAt: current.updatedAt' "$ACT"
+          grep -Fq 'data: { updatedAt: now }' "$ACT"
+          grep -Fq 'automaticSupplierPurchasingEnabled: false' "$ACT"
+          grep -Fq 'OwnerFulfillmentConsole' src/app/admin/page.tsx
+          grep -Fq 'ownerTools ? <OwnerFulfillmentConsole /> : null' src/app/admin/page.tsx
+          grep -Fq 'Confirm supplier ordered manually' "$UI"
+          grep -Fq 'manualPurchaseConfirmed: true' "$UI"
+          grep -Fq 'MARK_SHIPPED' "$UI"
+          grep -Fq 'MARK_DELIVERED' "$UI"
+          if grep -Fq '@/lib/stripe-commerce' "$ACT"; then
+            echo '::error::Fulfillment operations must not import Stripe commerce'
+            exit 1
+          fi
+          if grep -Eq 'createStripeCheckoutSession|retrieveStripeCheckoutSession|https://api\.stripe\.com' "$ACT"; then
+            echo '::error::Fulfillment operations must not call Stripe APIs'
+            exit 1
+          fi
+          node <<'NODE'
+          const fs = require('node:fs');
+          const source = fs.readFileSync('src/app/api/admin/commerce/orders/[id]/fulfillment/route.ts', 'utf8');
+          if (/data:\s*\{[^}]*\bstatus\s*:/s.test(source)) {
+            throw new Error('Fulfillment operations must not write Order financial status');
+          }
+          NODE
+
       - name: Build for Cloudflare
         run: npm run cf:build
 
