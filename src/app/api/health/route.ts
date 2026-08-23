@@ -46,7 +46,8 @@ function classifyError(error: unknown): Exclude<ErrorClass, null> {
     message.includes("cloudflare") ||
     message.includes("executioncontext") ||
     message.includes("execution context") ||
-    message.includes("websocket")
+    message.includes("websocket") ||
+    message.includes("socket")
   ) {
     return "runtime";
   }
@@ -58,8 +59,10 @@ export async function GET() {
   let database: "ok" | "not_configured" | "unreachable" = "not_configured";
   let neonHttp: ProbeState = "not_tested";
   let prismaAdapter: ProbeState = "not_tested";
+  let prismaTransaction: ProbeState = "not_tested";
   let neonHttpError: ErrorClass = null;
   let prismaAdapterError: ErrorClass = null;
+  let prismaTransactionError: ErrorClass = null;
 
   if (isDatabaseConfigured()) {
     const connectionString = (process.env.DATABASE_URL || "").trim();
@@ -81,7 +84,20 @@ export async function GET() {
       prismaAdapterError = classifyError(error);
     }
 
-    database = neonHttp === "ok" && prismaAdapter === "ok" ? "ok" : "unreachable";
+    try {
+      await prisma.$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT 1`;
+      });
+      prismaTransaction = "ok";
+    } catch (error) {
+      prismaTransaction = "failed";
+      prismaTransactionError = classifyError(error);
+    }
+
+    database =
+      neonHttp === "ok" && prismaAdapter === "ok" && prismaTransaction === "ok"
+        ? "ok"
+        : "unreachable";
   }
 
   const ok = database === "ok";
@@ -96,6 +112,8 @@ export async function GET() {
         neonHttpError,
         prismaAdapter,
         prismaAdapterError,
+        prismaTransaction,
+        prismaTransactionError,
       },
       environment: process.env.NODE_ENV ?? "unknown",
       timestamp: new Date().toISOString(),
