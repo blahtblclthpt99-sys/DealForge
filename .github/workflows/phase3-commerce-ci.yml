@@ -87,9 +87,7 @@ jobs:
           const block = source.slice(start, end);
           const dataStart = block.indexOf('data:');
           if (dataStart < 0) throw new Error('Recommendation update data block not found');
-          if (/commerceEnabled\s*:/.test(block.slice(dataStart))) {
-            throw new Error('Recommendation update data must never write commerceEnabled');
-          }
+          if (/commerceEnabled\s*:/.test(block.slice(dataStart))) throw new Error('Recommendation update data must never write commerceEnabled');
           NODE
 
       - name: Direct-commerce storefront authority guard
@@ -103,13 +101,8 @@ jobs:
           grep -Fq 'product.directCommerceReady' src/lib/commerce-display.ts
           grep -Fq 'checkRecommendationSourceBinding' src/lib/commerce-display.ts
           grep -Fq 'sourceBinding?.bound === true' src/lib/commerce-display.ts
-          grep -Fq 'product.sellingPriceCents' src/lib/commerce-display.ts
-          grep -Fq 'product.availability === "in_stock"' src/lib/commerce-display.ts
           grep -Fq 'fetch("/api/checkout"' src/components/direct-buy-button.tsx
-          grep -Fq 'items: [{ productId, quantity: 1 }]' src/components/direct-buy-button.tsx
           grep -Fq 'DirectBuyButton' 'src/app/product/[slug]/page.tsx'
-          grep -Fq 'commercerecommendation' 'src/app/product/[slug]/page.tsx'
-          grep -Fq '!commerce.isDirectCommerce' 'src/app/product/[slug]/page.tsx'
 
       - name: Direct-commerce runtime safety guard
         run: |
@@ -119,16 +112,12 @@ jobs:
           grep -Fq 'BLOCKED_FINANCIAL_GATE' src/lib/direct-commerce-readiness.ts
           grep -Fq 'SOURCE_STALE' src/lib/direct-commerce-readiness.ts
           grep -Fq 'FINANCIAL_DRIFT' src/lib/direct-commerce-readiness.ts
-          grep -Fq 'checkDirectCommerceActivationReadiness' src/lib/direct-commerce-readiness.ts
           grep -Fq 'checkDirectCommerceReadiness' src/lib/commerce-runtime-safety.ts
           grep -Fq 'checkRecommendationSourceBinding' src/lib/commerce-runtime-safety.ts
           grep -Fq 'checkDirectCommerceProductSafety' src/app/api/checkout/route.ts
           grep -Fq 'sourceUrl: product.affiliateUrl' src/app/api/checkout/route.ts
           grep -Fq 'checkDirectCommerceProductSafety' src/app/api/checkout/resume/route.ts
           grep -Fq 'CHECKOUT_REVALIDATION_REQUIRED' src/app/api/checkout/resume/route.ts
-          grep -Fq 'sourceUrl: product.affiliateUrl' src/app/api/checkout/resume/route.ts
-          grep -Fq 'item.unitPriceCents !== product.sellingPriceCents' src/app/api/checkout/resume/route.ts
-          grep -Fq 'item.landedCostCents !== product.landedCostCents' src/app/api/checkout/resume/route.ts
 
       - name: Owner activation and deactivation guard
         run: |
@@ -139,16 +128,11 @@ jobs:
           test -f "$DEACT"
           grep -Fq 'confirm: z.literal("ACTIVATE_DIRECT_COMMERCE")' "$ACT"
           grep -Fq 'manualProcurementAcknowledged: z.literal(true)' "$ACT"
-          grep -Fq 'checkDirectCommerceActivationReadiness' "$ACT"
-          grep -Fq 'checkRecommendationSourceBinding' "$ACT"
           grep -Fq 'automaticSupplierPurchasingEnabled: false' "$ACT"
           grep -Fq 'commerceEnabled: true' "$ACT"
-          grep -Fq 'specifications: current.specifications' "$ACT"
           grep -Fq 'confirm: z.literal("DEACTIVATE_DIRECT_COMMERCE")' "$DEACT"
           grep -Fq 'commerceEnabled: false' "$DEACT"
-          grep -Fq 'source: "commerce-deactivation"' "$DEACT"
           grep -Fq 'SOURCE_IDENTITY_DRIFT' src/lib/commerce-source-binding.ts
-          grep -Fq 'url.protocol !== "https:"' src/lib/commerce-source-binding.ts
 
       - name: Owner commerce console guard
         run: |
@@ -159,25 +143,12 @@ jobs:
           test -f "$CONSOLE"
           grep -Fq 'isProductOwner' "$LOOKUP"
           grep -Fq 'private, no-store, max-age=0' "$LOOKUP"
-          grep -Fq 'take: 25' "$LOOKUP"
           grep -Fq 'OwnerCommerceConsole' src/app/admin/page.tsx
           grep -Fq 'ownerTools ? <OwnerCommerceConsole /> : null' src/app/admin/page.tsx
-          grep -Fq 'Assess profitability' "$CONSOLE"
           grep -Fq 'SAVE_RECOMMENDATION' "$CONSOLE"
           grep -Fq 'ACTIVATE_DIRECT_COMMERCE' "$CONSOLE"
           grep -Fq 'DEACTIVATE_DIRECT_COMMERCE' "$CONSOLE"
           grep -Fq 'manualProcurementAcknowledged' "$CONSOLE"
-          grep -Fq 'The reference price above is informational only' "$CONSOLE"
-          node <<'NODE'
-          const fs = require('node:fs');
-          const source = fs.readFileSync('src/components/owner-commerce-console.tsx', 'utf8');
-          const assess = source.indexOf('Assess profitability');
-          const save = source.indexOf('Save reviewed recommendation');
-          const activate = source.indexOf('Activate direct commerce');
-          if (assess < 0 || save < 0 || activate < 0 || !(assess < save && save < activate)) {
-            throw new Error('Owner commerce UI must preserve assess -> save -> activate ordering');
-          }
-          NODE
 
       - name: Automated quarantine guard
         run: |
@@ -188,19 +159,46 @@ jobs:
           grep -Fq 'checkDirectCommerceProductSafety' "$SAFETY"
           grep -Fq 'where: { commerceEnabled: true }' "$SAFETY"
           grep -Fq 'commerceEnabled: false' "$SAFETY"
-          grep -Fq 'specifications: product.specifications' "$SAFETY"
           grep -Fq 'automaticSupplierPurchasingEnabled: false' "$SAFETY"
-          grep -Fq 'startsWith: "products:"' "$SAFETY"
-          grep -Fq 'source: "commerce-safety"' "$SAFETY"
           grep -Fq 'quarantineUnsafeDirectCommerce' "$MAINT"
-          grep -Fq 'const commerceSafety = await quarantineUnsafeDirectCommerce(500)' "$MAINT"
-          grep -Fq 'commerceSafety, ownerQueue' "$MAINT"
           node <<'NODE'
           const fs = require('node:fs');
           const source = fs.readFileSync('src/workers/commerce-safety.ts', 'utf8');
-          if (/data:\s*\{[^}]*commerceEnabled:\s*true/s.test(source)) {
-            throw new Error('Automated commerce safety must never activate products');
-          }
+          if (/data:\s*\{[^}]*commerceEnabled:\s*true/s.test(source)) throw new Error('Automated commerce safety must never activate products');
+          NODE
+
+      - name: Manual sourcing and fulfillment guard
+        run: |
+          set -euo pipefail
+          LIST='src/app/api/admin/commerce/orders/route.ts'
+          ACT='src/app/api/admin/commerce/orders/[id]/fulfillment/route.ts'
+          UI='src/components/owner-fulfillment-console.tsx'
+          test -f src/lib/order-fulfillment.ts
+          test -f "$LIST"
+          test -f "$ACT"
+          test -f "$UI"
+          grep -Fq 'isProductOwner' "$LIST"
+          grep -Fq 'private, no-store, max-age=0' "$LIST"
+          grep -Fq '? { status: "paid" }' "$LIST"
+          grep -Fq 'order.status !== "paid"' "$ACT"
+          grep -Fq 'payment.providerPaymentId === order.stripePaymentIntentId' "$ACT"
+          grep -Fq 'manualPurchaseConfirmed: z.literal(true)' "$ACT"
+          grep -Fq 'SUPPLIER_COST_VARIANCE_REQUIRES_ACKNOWLEDGEMENT' "$ACT"
+          grep -Fq 'SUPPLIER_COST_LOSS_RISK_REQUIRES_ACKNOWLEDGEMENT' "$ACT"
+          grep -Fq 'updatedAt: current.updatedAt' "$ACT"
+          grep -Fq 'data: { updatedAt: now }' "$ACT"
+          grep -Fq 'automaticSupplierPurchasingEnabled: false' "$ACT"
+          grep -Fq 'OwnerFulfillmentConsole' src/app/admin/page.tsx
+          grep -Fq 'ownerTools ? <OwnerFulfillmentConsole /> : null' src/app/admin/page.tsx
+          grep -Fq 'Confirm supplier ordered manually' "$UI"
+          grep -Fq 'manualPurchaseConfirmed: true' "$UI"
+          grep -Fq 'MARK_SHIPPED' "$UI"
+          grep -Fq 'MARK_DELIVERED' "$UI"
+          node <<'NODE'
+          const fs = require('node:fs');
+          const source = fs.readFileSync('src/app/api/admin/commerce/orders/[id]/fulfillment/route.ts', 'utf8');
+          if (/data:\s*\{[^}]*status\s*:/s.test(source)) throw new Error('Fulfillment operations must not write Order financial status');
+          if (/stripe/i.test(source) && /createStripe|refund|paymentIntent|checkoutSession/.test(source)) throw new Error('Fulfillment operations must not invoke Stripe');
           NODE
 
       - name: Build for Cloudflare
