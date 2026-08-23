@@ -50,6 +50,15 @@ jobs:
           grep -Fq 'const status = refunded >= order.totalCents ? "refunded" : refunded > 0 ? "partially_refunded" : "paid"' src/app/api/stripe/webhook/route.ts
           grep -Fq '["paid", "partially_refunded", "refunded"].includes(order.status)' src/app/api/stripe/webhook/route.ts
 
+      - name: Checkout provider failure-state regression guard
+        run: |
+          set -euo pipefail
+          grep -Fq 'async function markStripeInitializationFailed(orderId: string)' src/app/api/checkout/route.ts
+          grep -Fq 'stripeCheckoutSessionId: null' src/app/api/checkout/route.ts
+          grep -Fq 'status: { notIn: ["paid", "partially_refunded", "refunded"] }' src/app/api/checkout/route.ts
+          grep -Fq 'data: { status: "payment_failed" }' src/app/api/checkout/route.ts
+          grep -Fq 'order.status === "payment_failed" && !order.stripeCheckoutSessionId' src/app/api/checkout/route.ts
+
       - name: Refund webhook-race regression guard
         run: |
           set -euo pipefail
