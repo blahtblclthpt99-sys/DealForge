@@ -2,7 +2,9 @@ import { randomBytes } from "node:crypto";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { readSession } from "@/lib/auth";
+import { assessProductForActivation } from "@/lib/commerce-activation";
 import { prisma } from "@/lib/db";
+import { isFinancialGateCertified } from "@/lib/financial-gate";
 import { createStripeCheckoutSession } from "@/lib/stripe-commerce";
 
 export const runtime = "nodejs";
@@ -140,9 +142,25 @@ export async function POST(request: Request) {
     if (products.length !== productIds.length) return NextResponse.json({ error: "PRODUCT_NOT_FOUND" }, { status: 409 });
 
     const productById = new Map(products.map((product) => [product.id, product]));
+    const checkoutNowMs = Date.now();
+    const financialGateCertified = isFinancialGateCertified();
     const pricedItems = requestedItems.map((item) => {
       const product = productById.get(item.productId)!;
       if (!product.commerceEnabled || !Number.isSafeInteger(product.sellingPriceCents) || !product.sellingPriceCents || product.sellingPriceCents <= 0 || product.availability !== "in_stock") throw new Error(`PRODUCT_NOT_PURCHASABLE:${product.id}`);
+
+      const activationAssessment = assessProductForActivation({
+        product,
+        financialGateCertified,
+        nowMs: checkoutNowMs,
+      });
+      if (!activationAssessment.eligible) {
+        console.warn("checkout.product.activation_revalidation_failed", {
+          productId: product.id,
+          reason: activationAssessment.reason,
+        });
+        throw new Error(`PRODUCT_NOT_PURCHASABLE:${product.id}`);
+      }
+
       const lineTotalCents = product.sellingPriceCents * item.quantity;
       if (!Number.isSafeInteger(lineTotalCents) || lineTotalCents <= 0) throw new Error("ORDER_AMOUNT_INVALID");
       return { product, quantity: item.quantity, unitPriceCents: product.sellingPriceCents, lineTotalCents };
