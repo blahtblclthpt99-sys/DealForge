@@ -1,0 +1,58 @@
+name: Final Price-backed Live Checkout Certification
+
+on:
+  pull_request:
+    branches:
+      - migration/cloudflare-workers
+    paths:
+      - .github/workflows/live-checkout-price-backed-final.yml
+
+permissions:
+  contents: read
+
+jobs:
+  certify-checkout:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      EXPECTED_SHA: 55ee68beb3c6441d2eabf789362f05b753a4b644
+      PRODUCTION_URL: https://www.deal-forge.sale
+    steps:
+      - name: Verify exact production SHA
+        shell: bash
+        run: |
+          set -euo pipefail
+          code=$(curl --silent --show-error --max-time 20 --output /tmp/build.json --write-out '%{http_code}' "$PRODUCTION_URL/api/build")
+          sha=$(python - <<'PY'
+          import json
+          from pathlib import Path
+          print(json.loads(Path('/tmp/build.json').read_text()).get('sha',''))
+          PY
+          )
+          echo "production=$code:$sha expected=$EXPECTED_SHA"
+          [[ "$code" == "200" && "$sha" == "$EXPECTED_SHA" ]]
+
+      - name: Generate controlled DealForge live Checkout Session
+        shell: bash
+        run: |
+          set -euo pipefail
+          code=$(curl --silent --show-error --max-time 30 \
+            --request POST \
+            --header 'content-type: application/json' \
+            --data '{"checkoutKey":"phase25-live-cert-20260822-pricefinal2","email":"certification@example.com","items":[{"productId":"cert_live_20260822","quantity":1}]}' \
+            --output /tmp/checkout.json \
+            --write-out '%{http_code}' \
+            "$PRODUCTION_URL/api/checkout")
+          body=$(cat /tmp/checkout.json)
+          echo "checkout_http=$code"
+          echo "$body"
+          [[ "$code" == "201" ]]
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          data=json.loads(Path('/tmp/checkout.json').read_text())
+          url=data.get('checkoutUrl','')
+          assert url.startswith('https://checkout.stripe.com/')
+          print('checkout_url=' + url)
+          print('order_number=' + str(data.get('orderNumber','')))
+          PY
