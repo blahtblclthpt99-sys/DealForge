@@ -38,7 +38,35 @@ export async function POST(request: Request) {
   try {
     const stripeRefund = await createStripeRefund({ orderId: order.id, orderNumber: order.orderNumber, paymentIntentId: order.stripePaymentIntentId, amountCents: parsed.data.amountCents, reason: parsed.data.reason, idempotencyKey: `dealforge-refund:${parsed.data.idempotencyKey}` });
     if (!stripeRefund.id) throw new Error("STRIPE_REFUND_ID_MISSING");
-    const refund = await prisma.refund.create({ data: { orderId: order.id, paymentId: payment.id, providerRefundId: stripeRefund.id, idempotencyKey: parsed.data.idempotencyKey, amountCents: stripeRefund.amount, currency: stripeRefund.currency.toLowerCase(), status: stripeRefund.status || "pending", reason: parsed.data.reason, requestedBy: admin.email } });
+    if (stripeRefund.payment_intent && stripeRefund.payment_intent !== order.stripePaymentIntentId) throw new Error("STRIPE_REFUND_PAYMENT_INTENT_MISMATCH");
+    if (stripeRefund.amount !== parsed.data.amountCents) throw new Error("STRIPE_REFUND_AMOUNT_MISMATCH");
+    if (stripeRefund.currency.toLowerCase() !== order.currency.toLowerCase()) throw new Error("STRIPE_REFUND_CURRENCY_MISMATCH");
+
+    // Stripe can deliver refund.created before this request resumes. Upsert by provider
+    // refund ID so webhook-first delivery and API-first delivery converge on one ledger row.
+    const refund = await prisma.refund.upsert({
+      where: { providerRefundId: stripeRefund.id },
+      create: {
+        orderId: order.id,
+        paymentId: payment.id,
+        providerRefundId: stripeRefund.id,
+        idempotencyKey: parsed.data.idempotencyKey,
+        amountCents: stripeRefund.amount,
+        currency: stripeRefund.currency.toLowerCase(),
+        status: stripeRefund.status || "pending",
+        reason: parsed.data.reason,
+        requestedBy: admin.email,
+      },
+      update: {
+        paymentId: payment.id,
+        idempotencyKey: parsed.data.idempotencyKey,
+        amountCents: stripeRefund.amount,
+        currency: stripeRefund.currency.toLowerCase(),
+        status: stripeRefund.status || "pending",
+        reason: parsed.data.reason,
+        requestedBy: admin.email,
+      },
+    });
     return NextResponse.json({ refundId: refund.providerRefundId, status: refund.status, amountCents: refund.amountCents }, { status: 201 });
   } catch (error) {
     console.error("refund.create.failed", { orderId: order.id, error: error instanceof Error ? error.message : "UNKNOWN" });
