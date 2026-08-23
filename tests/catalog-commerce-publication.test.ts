@@ -52,6 +52,13 @@ function pricing() {
   };
 }
 
+function record(value: unknown) {
+  assert.equal(typeof value, "object");
+  assert.notEqual(value, null);
+  assert.equal(Array.isArray(value), false);
+  return value as Record<string, unknown>;
+}
+
 test("derives price, freshness, trust and canonical availability only from stored catalog data", () => {
   const source = deriveCatalogSourceSnapshot(product());
   assert.equal(source.itemCostCents, 1_025);
@@ -152,15 +159,17 @@ test("publication audit metadata records the assessed source and disabling prese
     costs: costs(),
     pricing: pricing(),
   });
-  const publishedJson = JSON.parse(published) as Record<string, any>;
-  assert.equal(publishedJson.commercePublication.state, "published");
-  assert.equal(publishedJson.commercePublication.sourcePriceCents, 1_025);
-  assert.equal(publishedJson.commercePublication.priceSource, "amazon-creators-api");
+  const publishedJson = record(JSON.parse(published) as unknown);
+  const publishedAudit = record(publishedJson.commercePublication);
+  assert.equal(publishedAudit.state, "published");
+  assert.equal(publishedAudit.sourcePriceCents, 1_025);
+  assert.equal(publishedAudit.priceSource, "amazon-creators-api");
 
-  const disabled = JSON.parse(
-    disabledPublicationSpecifications(published, "2026-08-23T02:31:00.000Z"),
-  ) as Record<string, any>;
-  assert.equal(disabled.commercePublication.state, "disabled");
-  assert.equal(disabled.commercePublication.sourcePriceCents, 1_025);
-  assert.equal(disabled.commercePublication.disabledAt, "2026-08-23T02:31:00.000Z");
+  const disabledJson = record(
+    JSON.parse(disabledPublicationSpecifications(published, "2026-08-23T02:31:00.000Z")) as unknown,
+  );
+  const disabledAudit = record(disabledJson.commercePublication);
+  assert.equal(disabledAudit.state, "disabled");
+  assert.equal(disabledAudit.sourcePriceCents, 1_025);
+  assert.equal(disabledAudit.disabledAt, "2026-08-23T02:31:00.000Z");
 });
