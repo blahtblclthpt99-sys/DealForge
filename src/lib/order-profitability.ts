@@ -1,4 +1,5 @@
 export type OrderProfitabilityStatus =
+  | "INVALID_INPUT"
   | "FINANCIAL_UNVERIFIED"
   | "UNSUPPORTED_CURRENCY"
   | "AWAITING_ACTUAL_SUPPLIER_COST"
@@ -38,12 +39,32 @@ function validPositiveCents(value: number | null) {
   return value != null && Number.isSafeInteger(value) && value > 0;
 }
 
+function unavailableResult(
+  status: Exclude<OrderProfitabilityStatus, "POSITIVE_CONTRIBUTION" | "BREAK_EVEN" | "NEGATIVE_CONTRIBUTION">,
+  base: Omit<OrderProfitability, "eligibleForRollup" | "status" | "supplierCostVarianceCents" | "contributionCents" | "contributionMarginBps">,
+): OrderProfitability {
+  return {
+    ...base,
+    eligibleForRollup: false,
+    status,
+    supplierCostVarianceCents: null,
+    contributionCents: null,
+    contributionMarginBps: null,
+  };
+}
+
 export function calculateOrderProfitability(input: OrderProfitabilityInput): OrderProfitability {
   const currency = input.currency.trim().toLowerCase();
-  const totalCents = validNonNegativeCents(input.totalCents) ? input.totalCents : 0;
-  const refundedCents = validNonNegativeCents(input.refundedCents)
-    ? Math.min(input.refundedCents, totalCents)
-    : 0;
+  const moneyInputValid =
+    validNonNegativeCents(input.totalCents) &&
+    input.totalCents > 0 &&
+    validNonNegativeCents(input.refundedCents) &&
+    input.refundedCents <= input.totalCents &&
+    (input.estimatedSupplierCostCents == null || validPositiveCents(input.estimatedSupplierCostCents)) &&
+    (input.actualSupplierCostCents == null || validPositiveCents(input.actualSupplierCostCents));
+
+  const totalCents = moneyInputValid ? input.totalCents : 0;
+  const refundedCents = moneyInputValid ? input.refundedCents : 0;
   const netCustomerRevenueCents = totalCents - refundedCents;
   const estimatedSupplierCostCents = validPositiveCents(input.estimatedSupplierCostCents)
     ? input.estimatedSupplierCostCents
@@ -62,38 +83,10 @@ export function calculateOrderProfitability(input: OrderProfitabilityInput): Ord
     excludesPaymentFeesAndOverhead: true as const,
   };
 
-  if (!input.paymentCertified) {
-    return {
-      ...base,
-      eligibleForRollup: false,
-      status: "FINANCIAL_UNVERIFIED",
-      supplierCostVarianceCents: null,
-      contributionCents: null,
-      contributionMarginBps: null,
-    };
-  }
-
-  if (currency !== "usd") {
-    return {
-      ...base,
-      eligibleForRollup: false,
-      status: "UNSUPPORTED_CURRENCY",
-      supplierCostVarianceCents: null,
-      contributionCents: null,
-      contributionMarginBps: null,
-    };
-  }
-
-  if (actualSupplierCostCents == null) {
-    return {
-      ...base,
-      eligibleForRollup: false,
-      status: "AWAITING_ACTUAL_SUPPLIER_COST",
-      supplierCostVarianceCents: null,
-      contributionCents: null,
-      contributionMarginBps: null,
-    };
-  }
+  if (!moneyInputValid) return unavailableResult("INVALID_INPUT", base);
+  if (!input.paymentCertified) return unavailableResult("FINANCIAL_UNVERIFIED", base);
+  if (currency !== "usd") return unavailableResult("UNSUPPORTED_CURRENCY", base);
+  if (actualSupplierCostCents == null) return unavailableResult("AWAITING_ACTUAL_SUPPLIER_COST", base);
 
   const supplierCostVarianceCents = estimatedSupplierCostCents == null
     ? null
@@ -122,6 +115,7 @@ export type ProfitabilityRollup = {
   orderCount: number;
   realizedOrderCount: number;
   awaitingCostCount: number;
+  excludedCount: number;
   negativeContributionCount: number;
   grossCustomerRevenueCents: number;
   refundedCents: number;
@@ -133,7 +127,9 @@ export type ProfitabilityRollup = {
 };
 
 export function rollupOrderProfitability(rows: OrderProfitability[]): ProfitabilityRollup {
-  const realized = rows.filter((row) => row.eligibleForRollup && row.actualSupplierCostCents != null && row.contributionCents != null);
+  const realized = rows.filter(
+    (row) => row.eligibleForRollup && row.actualSupplierCostCents != null && row.contributionCents != null,
+  );
   const netCustomerRevenueCents = realized.reduce((sum, row) => sum + row.netCustomerRevenueCents, 0);
   const actualSupplierCostCents = realized.reduce((sum, row) => sum + (row.actualSupplierCostCents || 0), 0);
   const contributionCents = realized.reduce((sum, row) => sum + (row.contributionCents || 0), 0);
@@ -142,6 +138,7 @@ export function rollupOrderProfitability(rows: OrderProfitability[]): Profitabil
     orderCount: rows.length,
     realizedOrderCount: realized.length,
     awaitingCostCount: rows.filter((row) => row.status === "AWAITING_ACTUAL_SUPPLIER_COST").length,
+    excludedCount: rows.length - realized.length,
     negativeContributionCount: realized.filter((row) => (row.contributionCents || 0) < 0).length,
     grossCustomerRevenueCents: realized.reduce((sum, row) => sum + row.grossCustomerRevenueCents, 0),
     refundedCents: realized.reduce((sum, row) => sum + row.refundedCents, 0),
@@ -153,4 +150,32 @@ export function rollupOrderProfitability(rows: OrderProfitability[]): Profitabil
       : null,
     excludesPaymentFeesAndOverhead: true,
   };
+}
+
+function parseMeta(value: unknown): Record<string, unknown> | null {
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value) as unknown;
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+        ? parsed as Record<string, unknown>
+        : null;
+    } catch {
+      return null;
+    }
+  }
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+export function actualSupplierCostFromFulfillmentLogs(
+  logs: Array<{ message: string; meta: unknown }>,
+) {
+  for (const log of logs) {
+    if (log.message !== "MARK_SUPPLIER_ORDERED") continue;
+    const meta = parseMeta(log.meta);
+    const value = meta?.actualCostCents;
+    return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : null;
+  }
+  return null;
 }
