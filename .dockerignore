@@ -1,0 +1,14 @@
+node_modules
+.next
+.git
+.github
+coverage
+release
+*.zip
+.env
+.env.*
+!.env.example
+!.env.production.example
+prisma/*.db
+prisma/*.db-journal
+*.log
