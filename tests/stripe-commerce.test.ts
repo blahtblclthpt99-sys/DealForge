@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   assertPositiveCents,
   createStripeCheckoutSession,
+  expireStripeCheckoutSession,
   payloadSha256,
   retrieveStripeCheckoutSession,
   verifyStripeSignature,
@@ -149,6 +150,42 @@ test("Checkout resume retrieves the exact Stripe session server-side", async () 
     assert.equal(session.id, "cs_test_resume_123");
     assert.equal(session.status, "open");
     assert.equal(session.payment_status, "unpaid");
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousSecretKey === undefined) delete process.env.STRIPE_SECRET_KEY;
+    else process.env.STRIPE_SECRET_KEY = previousSecretKey;
+  }
+});
+
+test("Checkout revocation expires the exact Stripe session with an idempotency key", async () => {
+  const previousSecretKey = process.env.STRIPE_SECRET_KEY;
+  const previousFetch = globalThis.fetch;
+  process.env.STRIPE_SECRET_KEY = "sk_test_dealforge_expire";
+
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+    assert.equal(url, "https://api.stripe.com/v1/checkout/sessions/cs_test_expire_123/expire");
+    assert.equal(init?.method, "POST");
+    const headers = new Headers(init?.headers);
+    assert.match(headers.get("idempotency-key") || "", /^dealforge-expire:[a-f0-9]{64}$/);
+    return new Response(JSON.stringify({
+      id: "cs_test_expire_123",
+      url: null,
+      status: "expired",
+      payment_status: "unpaid",
+      client_reference_id: "order_expire_1",
+      metadata: { order_id: "order_expire_1", order_number: "DF-EXPIRE-1" },
+    }), { status: 200, headers: { "content-type": "application/json" } });
+  }) as typeof fetch;
+
+  try {
+    const session = await expireStripeCheckoutSession({
+      checkoutSessionId: "cs_test_expire_123",
+      orderId: "order_expire_1",
+      reason: "PRODUCT_UNSAFE:SOURCE_STALE",
+    });
+    assert.equal(session.id, "cs_test_expire_123");
+    assert.equal(session.status, "expired");
   } finally {
     globalThis.fetch = previousFetch;
     if (previousSecretKey === undefined) delete process.env.STRIPE_SECRET_KEY;
