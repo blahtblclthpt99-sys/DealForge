@@ -1,0 +1,28 @@
+name: Cloudflare Workers Dry Run
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  workers-dry-run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      DATABASE_URL: postgresql://dealforge:ci-only@db.invalid/dealforge?sslmode=require
+      AUTH_SECRET: ci-only-not-for-production-00000000000000000000000000000000
+      NEXT_PUBLIC_APP_URL: https://www.deal-forge.sale
+      NEXT_PUBLIC_APP_NAME: DealForge
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Install locked application dependencies
+        run: npm ci --no-fund --no-audit
+      - name: Reproduce Workers automatic configuration and bundle
+        run: npx --yes wrangler@latest deploy --dry-run --x-autoconfig --outdir .wrangler-dry-run
