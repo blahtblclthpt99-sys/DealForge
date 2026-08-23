@@ -146,6 +146,35 @@ jobs:
           grep -Fq 'SOURCE_IDENTITY_DRIFT' src/lib/commerce-source-binding.ts
           grep -Fq 'url.protocol !== "https:"' src/lib/commerce-source-binding.ts
 
+      - name: Owner commerce console guard
+        run: |
+          set -euo pipefail
+          LOOKUP='src/app/api/admin/commerce/products/route.ts'
+          CONSOLE='src/components/owner-commerce-console.tsx'
+          test -f "$LOOKUP"
+          test -f "$CONSOLE"
+          grep -Fq 'isProductOwner' "$LOOKUP"
+          grep -Fq 'private, no-store, max-age=0' "$LOOKUP"
+          grep -Fq 'take: 25' "$LOOKUP"
+          grep -Fq 'OwnerCommerceConsole' src/app/admin/page.tsx
+          grep -Fq 'ownerTools ? <OwnerCommerceConsole /> : null' src/app/admin/page.tsx
+          grep -Fq 'Assess profitability' "$CONSOLE"
+          grep -Fq 'SAVE_RECOMMENDATION' "$CONSOLE"
+          grep -Fq 'ACTIVATE_DIRECT_COMMERCE' "$CONSOLE"
+          grep -Fq 'DEACTIVATE_DIRECT_COMMERCE' "$CONSOLE"
+          grep -Fq 'manualProcurementAcknowledged' "$CONSOLE"
+          grep -Fq 'The reference price above is informational only' "$CONSOLE"
+          node <<'NODE'
+          const fs = require('node:fs');
+          const source = fs.readFileSync('src/components/owner-commerce-console.tsx', 'utf8');
+          const assess = source.indexOf('Assess profitability');
+          const save = source.indexOf('Save reviewed recommendation');
+          const activate = source.indexOf('Activate direct commerce');
+          if (assess < 0 || save < 0 || activate < 0 || !(assess < save && save < activate)) {
+            throw new Error('Owner commerce UI must preserve assess -> save -> activate ordering');
+          }
+          NODE
+
       - name: Build for Cloudflare
         run: npm run cf:build
 
