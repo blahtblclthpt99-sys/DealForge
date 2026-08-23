@@ -1,0 +1,85 @@
+name: Phase 2.5 Managed Payments Production Probe
+
+on:
+  pull_request:
+    branches:
+      - migration/cloudflare-workers
+    paths:
+      - .github/workflows/phase25-managed-payments-production-probe.yml
+
+permissions:
+  contents: read
+
+jobs:
+  verify-production:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    env:
+      PRODUCTION_URL: https://www.deal-forge.sale
+      REQUIRED_FIX_SHA: cecd97fc49a4a53f8d95a696cf6e6baa4f6cd603
+      REPOSITORY: blahtblclthpt99-sys/DealForge
+    steps:
+      - name: Wait until production contains Managed Payments fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          ready=0
+          for attempt in $(seq 1 42); do
+            code=$(curl --silent --show-error --max-time 20 --output /tmp/build.json --write-out '%{http_code}' "$PRODUCTION_URL/api/build" || echo 000)
+            production_sha=$(python - <<'PY'
+          import json
+          from pathlib import Path
+          try:
+              print(json.loads(Path('/tmp/build.json').read_text()).get('sha',''))
+          except Exception:
+              print('')
+          PY
+            )
+            relation="unknown"
+            if [[ "$code" == "200" && "$production_sha" =~ ^[0-9a-f]{40}$ ]]; then
+              if [[ "$production_sha" == "$REQUIRED_FIX_SHA" ]]; then
+                relation="identical"
+              else
+                compare_code=$(curl --silent --show-error --max-time 20 \
+                  --header 'Accept: application/vnd.github+json' \
+                  --output /tmp/compare.json \
+                  --write-out '%{http_code}' \
+                  "https://api.github.com/repos/$REPOSITORY/compare/$REQUIRED_FIX_SHA...$production_sha" || echo 000)
+                if [[ "$compare_code" == "200" ]]; then
+                  relation=$(python - <<'PY'
+          import json
+          from pathlib import Path
+          try:
+              print(json.loads(Path('/tmp/compare.json').read_text()).get('status','unknown'))
+          except Exception:
+              print('unknown')
+          PY
+                  )
+                fi
+              fi
+            fi
+            echo "attempt=$attempt http=$code production_sha=$production_sha relation=$relation required=$REQUIRED_FIX_SHA"
+            if [[ "$code" == "200" && ( "$relation" == "identical" || "$relation" == "ahead" ) ]]; then
+              ready=1
+              break
+            fi
+            sleep 10
+          done
+          [[ "$ready" == "1" ]]
+
+      - name: Verify webhook signature gate remains active
+        shell: bash
+        run: |
+          set -euo pipefail
+          code=$(curl --silent --show-error --max-time 20 \
+            --request POST \
+            --header 'content-type: application/json' \
+            --header 'stripe-signature: t=1,v1=deadbeef' \
+            --data '{}' \
+            --output /tmp/webhook.json \
+            --write-out '%{http_code}' \
+            "$PRODUCTION_URL/api/stripe/webhook" || echo 000)
+          body=$(cat /tmp/webhook.json 2>/dev/null || true)
+          echo "webhook_http=$code"
+          [[ "$code" == "400" ]]
+          [[ "$body" == *'INVALID_STRIPE_SIGNATURE'* ]]
