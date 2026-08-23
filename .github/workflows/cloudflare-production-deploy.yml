@@ -105,6 +105,23 @@ jobs:
               ;;
           esac
 
+          neon_state=$(node -e "const fs=require('fs');try{const j=JSON.parse(fs.readFileSync('/tmp/health-body','utf8'));process.stdout.write(String(j.diagnostics?.neonHttp||'unknown'))}catch{process.stdout.write('unknown')}")
+          neon_error=$(node -e "const fs=require('fs');try{const j=JSON.parse(fs.readFileSync('/tmp/health-body','utf8'));process.stdout.write(String(j.diagnostics?.neonHttpError||'none'))}catch{process.stdout.write('unknown')}")
+          prisma_state=$(node -e "const fs=require('fs');try{const j=JSON.parse(fs.readFileSync('/tmp/health-body','utf8'));process.stdout.write(String(j.diagnostics?.prismaAdapter||'unknown'))}catch{process.stdout.write('unknown')}")
+          prisma_error=$(node -e "const fs=require('fs');try{const j=JSON.parse(fs.readFileSync('/tmp/health-body','utf8'));process.stdout.write(String(j.diagnostics?.prismaAdapterError||'none'))}catch{process.stdout.write('unknown')}")
+
+          if [[ "$neon_state" == 'ok' ]]; then
+            gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=success -f context=cloudflare-neon-http -f description='Direct Neon serverless HTTP query succeeded'
+          else
+            gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=failure -f context=cloudflare-neon-http -f description="Direct Neon HTTP failed (${neon_error})"
+          fi
+
+          if [[ "$prisma_state" == 'ok' ]]; then
+            gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=success -f context=cloudflare-prisma-adapter -f description='Prisma Neon adapter query succeeded'
+          else
+            gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=failure -f context=cloudflare-prisma-adapter -f description="Prisma Neon adapter failed (${prisma_error})"
+          fi
+
           if [[ "$health_code" == '200' ]]; then
             gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=success -f context=cloudflare-live-health -f description='Live /api/health returned HTTP 200'
           else
@@ -153,5 +170,3 @@ jobs:
         shell: bash
         run: |
           gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=failure -f context=cloudflare-production-deploy -f description='Cloudflare production deployment failed'
-
-# forced redeploy after DATABASE_URL raw-string correction: 2026-08-23T18:07-05:00
