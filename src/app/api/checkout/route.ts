@@ -63,6 +63,19 @@ function commerceEnabled() {
   return process.env.COMMERCE_ENABLED === "true";
 }
 
+function stripeTestMode() {
+  return (process.env.STRIPE_SECRET_KEY || "").trim().startsWith("sk_test_");
+}
+
+function isInternalCertificationProduct(specifications: string) {
+  try {
+    const parsed = JSON.parse(specifications) as { internalCertification?: unknown };
+    return parsed.internalCertification === true;
+  } catch {
+    return false;
+  }
+}
+
 export async function POST(request: Request) {
   try {
     if (!commerceEnabled()) {
@@ -107,6 +120,9 @@ export async function POST(request: Request) {
     const productById = new Map(products.map((product) => [product.id, product]));
     const pricedItems = requestedItems.map((item) => {
       const product = productById.get(item.productId)!;
+      if (isInternalCertificationProduct(product.specifications) && !stripeTestMode()) {
+        throw new Error("CERTIFICATION_REQUIRES_TEST_MODE");
+      }
       if (
         !product.commerceEnabled ||
         !Number.isSafeInteger(product.sellingPriceCents) ||
@@ -169,8 +185,6 @@ export async function POST(request: Request) {
         include: { items: true },
       }));
 
-    // Repricing is intentionally authoritative. If a pending retry's current cart no longer
-    // matches the frozen order snapshot, reject it rather than silently charging stale/new totals.
     if (
       order.currency !== currency ||
       order.totalCents !== subtotalCents ||
@@ -216,7 +230,11 @@ export async function POST(request: Request) {
     );
   } catch (error) {
     const message = error instanceof Error ? error.message : "UNKNOWN";
-    if (message.startsWith("PRODUCT_NOT_PURCHASABLE") || message === "QUANTITY_LIMIT_EXCEEDED") {
+    if (
+      message.startsWith("PRODUCT_NOT_PURCHASABLE") ||
+      message === "QUANTITY_LIMIT_EXCEEDED" ||
+      message === "CERTIFICATION_REQUIRES_TEST_MODE"
+    ) {
       return NextResponse.json({ error: message.split(":")[0] }, { status: 409 });
     }
     console.error("checkout.create.failed", { error: message });
