@@ -39,7 +39,7 @@
     "ebay:enable": "tsx scripts/enable-ebay.ts",
     "test:price-alert-transitions": "tsx scripts/test-price-alert-transitions.ts",
     "test:pricing": "tsx --test tests/dynamic-pricing.test.ts",
-    "test:commerce-core": "tsx --test tests/dynamic-pricing.test.ts tests/landed-cost.test.ts",
+    "test:commerce-core": "tsx --test tests/dynamic-pricing.test.ts tests/landed-cost.test.ts tests/commerce-eligibility.test.ts",
     "worker": "tsx src/workers/index.ts",
     "website:package": "powershell -ExecutionPolicy Bypass -File scripts/package-website.ps1",
     "postinstall": "node scripts/prisma-generate.mjs"
