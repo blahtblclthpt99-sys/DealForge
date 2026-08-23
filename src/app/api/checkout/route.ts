@@ -3,6 +3,8 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { readSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
+import { checkDirectCommerceReadiness } from "@/lib/direct-commerce-readiness";
+import { isFinancialGateCertified } from "@/lib/financial-gate";
 import { createStripeCheckoutSession } from "@/lib/stripe-commerce";
 
 export const runtime = "nodejs";
@@ -139,19 +141,31 @@ export async function POST(request: Request) {
     const products = await prisma.product.findMany({ where: { id: { in: productIds } } });
     if (products.length !== productIds.length) return NextResponse.json({ error: "PRODUCT_NOT_FOUND" }, { status: 409 });
 
+    const financialGateCertified = isFinancialGateCertified();
+    const readinessNowMs = Date.now();
     const productById = new Map(products.map((product) => [product.id, product]));
     const pricedItems = requestedItems.map((item) => {
       const product = productById.get(item.productId)!;
-      if (!product.commerceEnabled || !Number.isSafeInteger(product.sellingPriceCents) || !product.sellingPriceCents || product.sellingPriceCents <= 0 || product.availability !== "in_stock") throw new Error(`PRODUCT_NOT_PURCHASABLE:${product.id}`);
-      const lineTotalCents = product.sellingPriceCents * item.quantity;
+      const readiness = checkDirectCommerceReadiness({
+        financialGateCertified,
+        commerceEnabled: product.commerceEnabled,
+        availability: product.availability,
+        currency: product.currency,
+        landedCostCents: product.landedCostCents,
+        sellingPriceCents: product.sellingPriceCents,
+        specifications: product.specifications,
+        nowMs: readinessNowMs,
+      });
+      if (!readiness.ready) throw new Error(`PRODUCT_NOT_PURCHASABLE:${product.id}:${readiness.reason}`);
+      const lineTotalCents = product.sellingPriceCents! * item.quantity;
       if (!Number.isSafeInteger(lineTotalCents) || lineTotalCents <= 0) throw new Error("ORDER_AMOUNT_INVALID");
-      return { product, quantity: item.quantity, unitPriceCents: product.sellingPriceCents, lineTotalCents };
+      return { product, quantity: item.quantity, unitPriceCents: product.sellingPriceCents!, lineTotalCents };
     });
 
     const currencies = new Set(pricedItems.map(({ product }) => product.currency.toLowerCase()));
     if (currencies.size !== 1) return NextResponse.json({ error: "MIXED_CURRENCY_CART" }, { status: 409 });
     const currency = [...currencies][0];
-    if (!/^[a-z]{3}$/.test(currency)) return NextResponse.json({ error: "PRODUCT_CURRENCY_INVALID" }, { status: 409 });
+    if (currency !== "usd") return NextResponse.json({ error: "PRODUCT_CURRENCY_INVALID" }, { status: 409 });
     const subtotalCents = pricedItems.reduce((sum, item) => sum + item.lineTotalCents, 0);
     if (!Number.isSafeInteger(subtotalCents) || subtotalCents <= 0) return NextResponse.json({ error: "ORDER_AMOUNT_INVALID" }, { status: 409 });
 
