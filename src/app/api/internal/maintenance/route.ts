@@ -85,13 +85,7 @@ export async function POST(req: Request) {
       cleanCache: true,
       processPriceAlerts: true,
     });
-    return NextResponse.json({
-      ok: true,
-      commerceSafety,
-      orderOperations,
-      ownerQueue,
-      ...result,
-    });
+    return NextResponse.json({ ok: true, commerceSafety, ownerQueue, orderOperations, ...result });
   } catch (error) {
     console.error("DealForge maintenance route failed", error);
     return NextResponse.json({ error: "Maintenance failed" }, { status: 500 });
