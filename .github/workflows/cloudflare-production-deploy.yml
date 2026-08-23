@@ -73,6 +73,42 @@ jobs:
       - name: Deploy exact main revision
         run: npm run cf:deploy
 
+      - name: Mark smoke test pending
+        shell: bash
+        run: |
+          gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=pending -f context=cloudflare-live-smoke -f description='Testing deployed DealForge routes'
+
+      - name: Smoke-test live DealForge routes
+        shell: bash
+        run: |
+          set -euo pipefail
+          base='https://www.deal-forge.sale'
+
+          health_code=$(curl --retry 5 --retry-all-errors --retry-delay 2 -sS -o /tmp/health-body -w '%{http_code}' "$base/api/health")
+          echo "health HTTP $health_code"
+          cat /tmp/health-body
+          echo
+          [[ "$health_code" == '200' ]] || { echo '::error::Live /api/health is not healthy'; exit 1; }
+
+          cert_code=$(curl --retry 5 --retry-all-errors --retry-delay 2 -sS -o /tmp/cert-body -w '%{http_code}' "$base/stripe-certification")
+          echo "stripe-certification HTTP $cert_code"
+          [[ "$cert_code" == '200' ]] || { cat /tmp/cert-body; echo; echo '::error::Live /stripe-certification route is unavailable'; exit 1; }
+
+          webhook_code=$(curl --retry 5 --retry-all-errors --retry-delay 2 -sS -o /tmp/webhook-body -w '%{http_code}' -X POST "$base/api/stripe/webhook" -H 'content-type: application/json' -H 'stripe-signature: t=1,v1=deadbeef' --data '{}')
+          echo "webhook bogus-signature HTTP $webhook_code"
+          cat /tmp/webhook-body
+          echo
+          if [[ "$webhook_code" == '503' ]]; then
+            echo '::error::Live webhook route exists but STRIPE_WEBHOOK_SECRET is not configured in Cloudflare runtime'
+            exit 1
+          fi
+          [[ "$webhook_code" == '400' ]] || { echo '::error::Live webhook route did not reject invalid Stripe signature as expected'; exit 1; }
+
+      - name: Mark smoke test successful
+        shell: bash
+        run: |
+          gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=success -f context=cloudflare-live-smoke -f description='Live DealForge routes and webhook secret verified'
+
       - name: Mark deploy successful
         shell: bash
         run: |
@@ -84,5 +120,3 @@ jobs:
         shell: bash
         run: |
           gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=failure -f context=cloudflare-production-deploy -f description='Cloudflare production deployment failed'
-
-# deployment retrigger: 2026-08-23T17:15-05:00
