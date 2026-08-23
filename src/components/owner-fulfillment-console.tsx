@@ -204,7 +204,28 @@ export function OwnerFulfillmentConsole() {
     }
   }, []);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    let active = true;
+    void (async () => {
+      try {
+        const response = await fetch("/api/admin/commerce/orders?mode=actionable", { cache: "no-store" });
+        const data = await readJson(response) as { items?: CommerceOrder[]; error?: string };
+        if (!active) return;
+        if (!response.ok) {
+          setError(data.error || "Could not load fulfillment queue.");
+          return;
+        }
+        setOrders(data.items || []);
+      } catch {
+        if (active) setError("Could not reach the fulfillment queue.");
+      } finally {
+        if (active) setBusy(false);
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, []);
 
   return (
     <section className="dn-card mt-8 p-5 sm:p-6" aria-labelledby="owner-fulfillment-title">
