@@ -50,10 +50,10 @@ export async function GET(request: Request) {
   const since = new Date(Date.now() - periodDays * 24 * 60 * 60 * 1000);
   const orders = await prisma.order.findMany({
     where: {
-      createdAt: { gte: since },
+      paidAt: { gte: since },
       status: { in: ["paid", "partially_refunded", "refunded"] },
     },
-    orderBy: { createdAt: "desc" },
+    orderBy: { paidAt: "desc" },
     take: MAX_ORDERS,
     include: {
       items: true,
@@ -129,6 +129,8 @@ export async function GET(request: Request) {
   return noStore(NextResponse.json({
     ok: true,
     periodDays,
+    periodBasis: "ORDER_PAID_AT",
+    refundBasis: "CURRENT_SUCCEEDED_REFUNDS_FOR_SELECTED_ORDERS",
     limitedToMostRecentOrders: MAX_ORDERS,
     accountingBasis: "REALIZED_CONTRIBUTION_BEFORE_PROCESSOR_FEES_AND_OVERHEAD",
     summary,
