@@ -41,9 +41,11 @@ export async function POST(request: Request) {
     if (stripeRefund.payment_intent && stripeRefund.payment_intent !== order.stripePaymentIntentId) throw new Error("STRIPE_REFUND_PAYMENT_INTENT_MISMATCH");
     if (stripeRefund.amount !== parsed.data.amountCents) throw new Error("STRIPE_REFUND_AMOUNT_MISMATCH");
     if (stripeRefund.currency.toLowerCase() !== order.currency.toLowerCase()) throw new Error("STRIPE_REFUND_CURRENCY_MISMATCH");
+    const stripeRefundStatus = stripeRefund.status || "pending";
 
-    // Stripe can deliver refund.created before this request resumes. Upsert by provider
-    // refund ID so webhook-first delivery and API-first delivery converge on one ledger row.
+    // Stripe can deliver refund.created/refund.updated before this request resumes.
+    // Upsert by provider refund ID so both paths converge on one ledger row. If the
+    // API response is merely pending, do not overwrite a terminal webhook status.
     const refund = await prisma.refund.upsert({
       where: { providerRefundId: stripeRefund.id },
       create: {
@@ -53,7 +55,7 @@ export async function POST(request: Request) {
         idempotencyKey: parsed.data.idempotencyKey,
         amountCents: stripeRefund.amount,
         currency: stripeRefund.currency.toLowerCase(),
-        status: stripeRefund.status || "pending",
+        status: stripeRefundStatus,
         reason: parsed.data.reason,
         requestedBy: admin.email,
       },
@@ -62,7 +64,7 @@ export async function POST(request: Request) {
         idempotencyKey: parsed.data.idempotencyKey,
         amountCents: stripeRefund.amount,
         currency: stripeRefund.currency.toLowerCase(),
-        status: stripeRefund.status || "pending",
+        ...(stripeRefundStatus !== "pending" ? { status: stripeRefundStatus } : {}),
         reason: parsed.data.reason,
         requestedBy: admin.email,
       },
