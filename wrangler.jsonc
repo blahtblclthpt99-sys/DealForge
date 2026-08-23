@@ -33,6 +33,7 @@
     "CLOUDFLARE_WORKERS": "1",
     "NEXT_PUBLIC_APP_URL": "https://www.deal-forge.sale",
     "NEXT_PUBLIC_APP_NAME": "DealForge",
+    "DEALFORGE_FINANCIAL_GATE_CERTIFIED": "true",
     "AMAZON_ASSOCIATE_TAG": "titanfieldos-20",
     "AMAZON_PARTNER_TAG": "titanfieldos-20"
   },
