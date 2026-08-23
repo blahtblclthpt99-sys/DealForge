@@ -77,8 +77,6 @@ export async function POST(req: Request, context: { params: Promise<{ id: string
     return NextResponse.json({ error: "Product not found" }, { status: 404 });
   }
 
-  // Fast-fail before assessment. The transaction repeats this condition at write time
-  // so a concurrent activation cannot be modified by this recommendation route.
   if (product.commerceEnabled) {
     return NextResponse.json({ error: "Active products require the live-commerce update workflow" }, { status: 409 });
   }
@@ -101,47 +99,65 @@ export async function POST(req: Request, context: { params: Promise<{ id: string
     }, { status: 422 });
   }
 
-  const recommendationAudit = {
-    status: "owner_reviewed_recommendation",
-    assessedAt: assessedAt.toISOString(),
-    savedByUserId: auth.user.id,
-    sourceCheckedAt: new Date(parsed.data.landedCost.sourceCheckedAtMs).toISOString(),
-    sourceVerified: parsed.data.landedCost.sourceVerified,
-    sourceAvailable: parsed.data.landedCost.sourceAvailable,
-    maxSourceAgeMs: parsed.data.landedCost.maxSourceAgeMs,
-    costComponentsCents: {
-      item: parsed.data.landedCost.itemCostCents,
-      shipping: parsed.data.landedCost.shippingCents,
-      estimatedTax: parsed.data.landedCost.estimatedTaxCents,
-      handling: parsed.data.landedCost.handlingCents,
-      procurementBuffer: parsed.data.landedCost.procurementBufferCents,
-      other: parsed.data.landedCost.otherCostCents,
-    },
-    pricingPolicy: parsed.data.pricing,
-    result: {
-      landedCostCents: assessment.landedCostCents,
-      recommendedSellingPriceCents: assessment.recommendedSellingPriceCents,
-      estimatedPaymentFeeCents: assessment.estimatedPaymentFeeCents,
-      estimatedProfitCents: assessment.estimatedProfitCents,
-      grossMarginBps: assessment.grossMarginBps,
-      profitabilityScore: assessment.profitabilityScore,
-      profitabilityTier: assessment.profitabilityTier,
-    },
-  };
-
   try {
     const updated = await prisma.$transaction(async (tx) => {
       const current = await tx.product.findUnique({
         where: { id: product.id },
-        select: { specifications: true, commerceEnabled: true },
+        select: {
+          specifications: true,
+          commerceEnabled: true,
+          retailer: true,
+          affiliateUrl: true,
+          asin: true,
+        },
       });
       if (!current || current.commerceEnabled) {
         throw new Error("RECOMMENDATION_ROUTE_PRODUCT_BECAME_ACTIVE");
       }
 
       const specifications = parseJson<Record<string, unknown>>(current.specifications, {});
+      const recommendationAudit = {
+        status: "owner_reviewed_recommendation",
+        assessedAt: assessedAt.toISOString(),
+        savedByUserId: auth.user.id,
+        sourceCheckedAt: new Date(parsed.data.landedCost.sourceCheckedAtMs).toISOString(),
+        sourceVerified: parsed.data.landedCost.sourceVerified,
+        sourceAvailable: parsed.data.landedCost.sourceAvailable,
+        maxSourceAgeMs: parsed.data.landedCost.maxSourceAgeMs,
+        sourceIdentity: {
+          retailer: current.retailer.trim().toLowerCase(),
+          sourceUrl: current.affiliateUrl.trim(),
+          asin: current.asin?.trim().toUpperCase() ?? null,
+        },
+        costComponentsCents: {
+          item: parsed.data.landedCost.itemCostCents,
+          shipping: parsed.data.landedCost.shippingCents,
+          estimatedTax: parsed.data.landedCost.estimatedTaxCents,
+          handling: parsed.data.landedCost.handlingCents,
+          procurementBuffer: parsed.data.landedCost.procurementBufferCents,
+          other: parsed.data.landedCost.otherCostCents,
+        },
+        pricingPolicy: parsed.data.pricing,
+        result: {
+          landedCostCents: assessment.landedCostCents,
+          recommendedSellingPriceCents: assessment.recommendedSellingPriceCents,
+          estimatedPaymentFeeCents: assessment.estimatedPaymentFeeCents,
+          estimatedProfitCents: assessment.estimatedProfitCents,
+          grossMarginBps: assessment.grossMarginBps,
+          profitabilityScore: assessment.profitabilityScore,
+          profitabilityTier: assessment.profitabilityTier,
+        },
+      };
+
       const write = await tx.product.updateMany({
-        where: { id: product.id, commerceEnabled: false },
+        where: {
+          id: product.id,
+          commerceEnabled: false,
+          retailer: current.retailer,
+          affiliateUrl: current.affiliateUrl,
+          asin: current.asin,
+          specifications: current.specifications,
+        },
         data: {
           landedCostCents: assessment.landedCostCents,
           sellingPriceCents: assessment.recommendedSellingPriceCents,
@@ -153,7 +169,7 @@ export async function POST(req: Request, context: { params: Promise<{ id: string
         },
       });
       if (write.count !== 1) {
-        throw new Error("RECOMMENDATION_ROUTE_PRODUCT_BECAME_ACTIVE");
+        throw new Error("RECOMMENDATION_ROUTE_PRODUCT_CHANGED");
       }
 
       const saved = await tx.product.findUnique({
@@ -180,6 +196,7 @@ export async function POST(req: Request, context: { params: Promise<{ id: string
           meta: JSON.stringify({
             productId: product.id,
             savedByUserId: auth.user.id,
+            sourceIdentity: recommendationAudit.sourceIdentity,
             landedCostCents: assessment.landedCostCents,
             sellingPriceCents: assessment.recommendedSellingPriceCents,
             profitabilityScore: assessment.profitabilityScore,
@@ -199,8 +216,8 @@ export async function POST(req: Request, context: { params: Promise<{ id: string
       assessment,
     });
   } catch (error) {
-    if (error instanceof Error && error.message === "RECOMMENDATION_ROUTE_PRODUCT_BECAME_ACTIVE") {
-      return NextResponse.json({ error: "Product became active during review; recommendation was not saved" }, { status: 409 });
+    if (error instanceof Error && ["RECOMMENDATION_ROUTE_PRODUCT_BECAME_ACTIVE", "RECOMMENDATION_ROUTE_PRODUCT_CHANGED"].includes(error.message)) {
+      return NextResponse.json({ error: "Product changed during review; recommendation was not saved" }, { status: 409 });
     }
     throw error;
   }
