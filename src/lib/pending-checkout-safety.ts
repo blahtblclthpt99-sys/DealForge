@@ -1,4 +1,4 @@
-import { checkCheckoutExposure, type CheckoutExposureReason } from "./checkout-exposure";
+import { checkCheckoutExposure } from "./checkout-exposure";
 import { checkDirectCommerceProductSafety } from "./commerce-runtime-safety";
 
 export type PendingCheckoutSafetyReason =
@@ -104,9 +104,7 @@ export function checkPendingCheckoutSafety(input: PendingCheckoutSafetyInput): P
   }
 
   const exposure = checkCheckoutExposure(exposureLines);
-  if (!exposure.eligible) {
-    return blocked("EXPOSURE_LIMIT", exposure.reason satisfies CheckoutExposureReason);
-  }
+  if (!exposure.eligible) return blocked("EXPOSURE_LIMIT", exposure.reason);
   if (exposure.customerTotalCents !== input.totalCents) return blocked("ORDER_TOTAL_DRIFT");
 
   return { safe: true, reason: "SAFE", detail: null };
