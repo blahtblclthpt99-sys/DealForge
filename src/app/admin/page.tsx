@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { AdminPanels } from "@/components/admin-panels";
+import { OwnerCommerceConsole } from "@/components/owner-commerce-console";
 import { OwnerProductIntake } from "@/components/owner-product-intake";
 import { readSession } from "@/lib/auth";
 import { cacheStatus } from "@/lib/cache";
@@ -34,6 +35,8 @@ export default async function AdminPage() {
     products,
     cache,
     viewSum,
+    liveCommerceCount,
+    reviewedCommerceCount,
   ] = await Promise.all([
     prisma.product.count(),
     prisma.user.count(),
@@ -64,6 +67,13 @@ export default async function AdminPage() {
     }),
     cacheStatus(),
     prisma.product.aggregate({ _sum: { viewCount: true } }),
+    ownerTools ? prisma.product.count({ where: { commerceEnabled: true } }) : Promise.resolve(0),
+    ownerTools ? prisma.product.count({
+      where: {
+        commerceEnabled: false,
+        specifications: { contains: '"status":"owner_reviewed_recommendation"' },
+      },
+    }) : Promise.resolve(0),
   ]);
 
   const views = viewSum._sum.viewCount || 0;
@@ -82,7 +92,7 @@ export default async function AdminPage() {
             Operations dashboard
           </h1>
           <p className="mt-2 text-forest-muted">
-            Affiliate readiness, imports, cache, users, and product database controls.
+            Commerce controls, catalog operations, imports, system health, users, and legacy provider readiness.
           </p>
         </div>
         <Link href="/" className="text-sm text-forest hover:underline">
@@ -90,13 +100,14 @@ export default async function AdminPage() {
         </Link>
       </div>
 
-      <div className="mt-8 grid grid-cols-2 gap-3 md:grid-cols-5">
+      <div className={`mt-8 grid grid-cols-2 gap-3 ${ownerTools ? "md:grid-cols-7" : "md:grid-cols-5"}`}>
         {[
           ["Products", productCount],
           ["Users", userCount],
           ["Clicks", clickCount],
           ["CTR %", ctr],
           ["Cache keys", cache.dbKeys + cache.memoryKeys],
+          ...(ownerTools ? [["Reviewed", reviewedCommerceCount], ["Direct live", liveCommerceCount]] : []),
         ].map(([label, value]) => (
           <div key={label as string} className="dn-card p-4">
             <p className="text-xs uppercase tracking-wide text-forest-muted">{label}</p>
@@ -105,6 +116,7 @@ export default async function AdminPage() {
         ))}
       </div>
 
+      {ownerTools ? <OwnerCommerceConsole /> : null}
       {ownerTools ? <OwnerProductIntake /> : null}
 
       <AdminPanels
