@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { AdminPanels } from "@/components/admin-panels";
 import { OwnerCommerceConsole } from "@/components/owner-commerce-console";
 import { OwnerFulfillmentConsole } from "@/components/owner-fulfillment-console";
+import { OwnerProfitabilityPanel } from "@/components/owner-profitability-panel";
 import { OwnerProductIntake } from "@/components/owner-product-intake";
 import { readSession } from "@/lib/auth";
 import { cacheStatus } from "@/lib/cache";
@@ -95,7 +96,7 @@ export default async function AdminPage() {
             Operations dashboard
           </h1>
           <p className="mt-2 text-forest-muted">
-            Commerce controls, paid-order fulfillment, catalog operations, imports, system health, users, and legacy provider readiness.
+            Commerce controls, paid-order fulfillment, contribution analytics, catalog operations, imports, system health, users, and legacy provider readiness.
           </p>
         </div>
         <Link href="/" className="text-sm text-forest hover:underline">
@@ -121,6 +122,7 @@ export default async function AdminPage() {
 
       {ownerTools ? <OwnerCommerceConsole /> : null}
       {ownerTools ? <OwnerFulfillmentConsole /> : null}
+      {ownerTools ? <OwnerProfitabilityPanel /> : null}
       {ownerTools ? <OwnerProductIntake /> : null}
 
       <AdminPanels
