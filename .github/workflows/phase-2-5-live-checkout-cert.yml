@@ -17,7 +17,7 @@ jobs:
     timeout-minutes: 8
     env:
       PRODUCTION_URL: https://www.deal-forge.sale
-      EXPECTED_PRODUCTION_SHA: b2ae4f9ca45abe123ac75df404b0ada619338f43
+      EXPECTED_PRODUCTION_SHA: 55ee68beb3c6441d2eabf789362f05b753a4b644
       PRODUCT_ID: cert_live_20260822
       CERT_EMAIL: phase25-cert@deal-forge.sale
     steps:
