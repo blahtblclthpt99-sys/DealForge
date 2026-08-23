@@ -91,6 +91,21 @@ jobs:
           }
           NODE
 
+      - name: Direct-commerce storefront authority guard
+        run: |
+          set -euo pipefail
+          grep -Fq 'commerceEnabled: boolean' src/lib/products.ts
+          grep -Fq 'sellingPriceCents: number | null' src/lib/products.ts
+          grep -Fq 'specifications: Record<string, unknown>' src/lib/products.ts
+          grep -Fq 'sellerLabel: "DealForge"' src/lib/commerce-display.ts
+          grep -Fq 'product.sellingPriceCents' src/lib/commerce-display.ts
+          grep -Fq 'product.availability === "in_stock"' src/lib/commerce-display.ts
+          grep -Fq 'fetch("/api/checkout"' src/components/direct-buy-button.tsx
+          grep -Fq 'items: [{ productId, quantity: 1 }]' src/components/direct-buy-button.tsx
+          grep -Fq 'DirectBuyButton' 'src/app/product/[slug]/page.tsx'
+          grep -Fq 'commercerecommendation' 'src/app/product/[slug]/page.tsx'
+          grep -Fq '!commerce.isDirectCommerce' 'src/app/product/[slug]/page.tsx'
+
       - name: Build for Cloudflare
         run: npm run cf:build
 
