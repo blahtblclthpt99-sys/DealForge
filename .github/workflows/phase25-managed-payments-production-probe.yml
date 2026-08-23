@@ -83,3 +83,39 @@ jobs:
           echo "webhook_http=$code"
           [[ "$code" == "400" ]]
           [[ "$body" == *'INVALID_STRIPE_SIGNATURE'* ]]
+
+      - name: Certify live Checkout creation and idempotency
+        shell: bash
+        run: |
+          set -euo pipefail
+          checkout_key="phase25-managedfix-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          request=$(printf '{"checkoutKey":"%s","email":"certification@example.com","items":[{"productId":"cert_live_20260822","quantity":1}]}' "$checkout_key")
+
+          first_code=$(curl --silent --show-error --max-time 30 \
+            --request POST \
+            --header 'content-type: application/json' \
+            --data "$request" \
+            --output /tmp/checkout-first.json \
+            --write-out '%{http_code}' \
+            "$PRODUCTION_URL/api/checkout" || echo 000)
+          second_code=$(curl --silent --show-error --max-time 30 \
+            --request POST \
+            --header 'content-type: application/json' \
+            --data "$request" \
+            --output /tmp/checkout-second.json \
+            --write-out '%{http_code}' \
+            "$PRODUCTION_URL/api/checkout" || echo 000)
+
+          python - "$first_code" "$second_code" "$checkout_key" <<'PY'
+          import json, sys
+          from pathlib import Path
+          first_code, second_code, checkout_key = sys.argv[1:]
+          first = json.loads(Path('/tmp/checkout-first.json').read_text())
+          second = json.loads(Path('/tmp/checkout-second.json').read_text())
+          assert first_code == '201', (first_code, first.get('error'), first.get('stage'), first.get('stripe'))
+          assert second_code == '201', (second_code, second.get('error'), second.get('stage'), second.get('stripe'))
+          assert first.get('orderNumber') and first.get('orderNumber') == second.get('orderNumber')
+          assert first.get('checkoutUrl') and first.get('checkoutUrl') == second.get('checkoutUrl')
+          assert first['checkoutUrl'].startswith('https://checkout.stripe.com/')
+          print(f"checkout certification passed key={checkout_key} order={first['orderNumber']} first=201 second=201 same_session=yes")
+          PY
