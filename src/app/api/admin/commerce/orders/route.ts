@@ -40,7 +40,7 @@ export async function GET(request: Request) {
   const orders = await prisma.order.findMany({
     where: {
       ...(mode === "actionable"
-        ? { status: { in: ["paid", "partially_refunded"] } }
+        ? { status: "paid" }
         : { status: { in: ["paid", "partially_refunded", "refunded"] } }),
       ...(q
         ? {
