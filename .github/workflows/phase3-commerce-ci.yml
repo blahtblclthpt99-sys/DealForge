@@ -194,11 +194,18 @@ jobs:
           grep -Fq 'manualPurchaseConfirmed: true' "$UI"
           grep -Fq 'MARK_SHIPPED' "$UI"
           grep -Fq 'MARK_DELIVERED' "$UI"
+          if grep -Fq '@/lib/stripe-commerce' "$ACT"; then
+            echo '::error::Fulfillment operations must not import Stripe commerce'
+            exit 1
+          fi
+          if grep -Eq 'createStripeCheckoutSession|retrieveStripeCheckoutSession|https://api\.stripe\.com' "$ACT"; then
+            echo '::error::Fulfillment operations must not call Stripe APIs'
+            exit 1
+          fi
           node <<'NODE'
           const fs = require('node:fs');
           const source = fs.readFileSync('src/app/api/admin/commerce/orders/[id]/fulfillment/route.ts', 'utf8');
-          if (/data:\s*\{[^}]*status\s*:/s.test(source)) throw new Error('Fulfillment operations must not write Order financial status');
-          if (/stripe/i.test(source) && /createStripe|refund|paymentIntent|checkoutSession/.test(source)) throw new Error('Fulfillment operations must not invoke Stripe');
+          if (/data:\s*\{[^}]*\bstatus\s*:/s.test(source)) throw new Error('Fulfillment operations must not write Order financial status');
           NODE
 
       - name: Build for Cloudflare
