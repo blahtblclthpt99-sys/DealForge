@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { runMaintenanceOnce } from "@/workers/maintenance";
+import { quarantineUnsafeDirectCommerce } from "@/workers/commerce-safety";
 import { refreshOwnerIntakeQueue } from "@/lib/owner-product-intake";
 
 export const runtime = "nodejs";
@@ -56,6 +57,10 @@ export async function POST(req: Request) {
   }
 
   try {
+    // Commerce safety is release-critical: run it before lower-priority catalog
+    // maintenance so stale/drifted active products fail closed as quickly as possible.
+    const commerceSafety = await quarantineUnsafeDirectCommerce(500);
+
     let ownerQueue:
       | Awaited<ReturnType<typeof refreshOwnerIntakeQueue>>
       | { status: "error"; queued: number; updated: number };
@@ -75,7 +80,7 @@ export async function POST(req: Request) {
       cleanCache: true,
       processPriceAlerts: true,
     });
-    return NextResponse.json({ ok: true, ownerQueue, ...result });
+    return NextResponse.json({ ok: true, commerceSafety, ownerQueue, ...result });
   } catch (error) {
     console.error("DealForge maintenance route failed", error);
     return NextResponse.json({ error: "Maintenance failed" }, { status: 500 });
