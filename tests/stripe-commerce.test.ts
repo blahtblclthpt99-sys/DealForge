@@ -3,6 +3,7 @@ import { createHmac } from "node:crypto";
 import test from "node:test";
 import {
   assertPositiveCents,
+  createStripeCheckoutSession,
   payloadSha256,
   verifyStripeSignature,
 } from "../src/lib/stripe-commerce";
@@ -68,4 +69,57 @@ test("money helper only accepts positive safe integer cents", () => {
   assert.throws(() => assertPositiveCents(-1, "amount"), /AMOUNT_INVALID/);
   assert.throws(() => assertPositiveCents(1.5, "amount"), /AMOUNT_INVALID/);
   assert.throws(() => assertPositiveCents(Number.MAX_SAFE_INTEGER + 1, "amount"), /AMOUNT_INVALID/);
+});
+
+test("Checkout disables Managed Payments and uses immutable Stripe Prices", async () => {
+  const previousSecretKey = process.env.STRIPE_SECRET_KEY;
+  const previousFetch = globalThis.fetch;
+  const requests: Array<{ url: string; body: URLSearchParams }> = [];
+
+  process.env.STRIPE_SECRET_KEY = "sk_test_dealforge_unit";
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+    const body = init?.body instanceof URLSearchParams
+      ? new URLSearchParams(init.body)
+      : new URLSearchParams(typeof init?.body === "string" ? init.body : "");
+    requests.push({ url, body });
+
+    if (url.endsWith("/prices")) {
+      return new Response(JSON.stringify({ id: "price_unit_checkout" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    if (url.endsWith("/checkout/sessions")) {
+      return new Response(JSON.stringify({ id: "cs_unit_checkout", url: "https://checkout.stripe.com/c/pay/cs_unit_checkout" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    throw new Error(`Unexpected Stripe URL: ${url}`);
+  }) as typeof fetch;
+
+  try {
+    const session = await createStripeCheckoutSession({
+      orderId: "order_unit_1",
+      orderNumber: "DF-UNIT-1",
+      customerEmail: "buyer@example.com",
+      currency: "usd",
+      lines: [{ name: "Unit test item", unitAmountCents: 500, quantity: 1 }],
+      successUrl: "https://www.deal-forge.sale/checkout/success",
+      cancelUrl: "https://www.deal-forge.sale/checkout/cancel",
+    });
+
+    assert.equal(session.id, "cs_unit_checkout");
+    const checkoutRequest = requests.find((request) => request.url.endsWith("/checkout/sessions"));
+    assert.ok(checkoutRequest);
+    assert.equal(checkoutRequest.body.get("managed_payments[enabled]"), "false");
+    assert.equal(checkoutRequest.body.get("line_items[0][price]"), "price_unit_checkout");
+    assert.equal(checkoutRequest.body.get("line_items[0][quantity]"), "1");
+    assert.equal(checkoutRequest.body.get("mode"), "payment");
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousSecretKey === undefined) delete process.env.STRIPE_SECRET_KEY;
+    else process.env.STRIPE_SECRET_KEY = previousSecretKey;
+  }
 });
