@@ -246,6 +246,40 @@ jobs:
           }
           NODE
 
+      - name: Signed customer order visibility guard
+        run: |
+          set -euo pipefail
+          ACCESS='src/lib/order-access.ts'
+          STATUS='src/lib/customer-order-status.ts'
+          PAGE='src/app/orders/[orderNumber]/page.tsx'
+          SUCCESS='src/app/checkout/success/page.tsx'
+          CHECKOUT='src/app/api/checkout/route.ts'
+          test -f "$ACCESS"
+          test -f "$STATUS"
+          test -f "$PAGE"
+          grep -Fq 'createHmac("sha256"' "$ACCESS"
+          grep -Fq 'timingSafeEqual' "$ACCESS"
+          grep -Fq 'dealforge-order-access:v1' "$ACCESS"
+          grep -Fq 'createOrderAccessToken' "$CHECKOUT"
+          grep -Fq '&access=${encodeURIComponent(orderAccessToken)}' "$CHECKOUT"
+          grep -Fq 'verifyOrderAccessToken' "$STATUS"
+          grep -Fq 'order.userId === input.sessionUserId' "$STATUS"
+          grep -Fq 'referrer: "no-referrer"' "$PAGE"
+          grep -Fq 'robots: { index: false, follow: false }' "$PAGE"
+          grep -Fq 'referrer: "no-referrer"' "$SUCCESS"
+          grep -Fq 'View order status' "$SUCCESS"
+          grep -Fq 'trackingNumber' "$PAGE"
+          if grep -Fq 'order.email ===' "$STATUS"; then
+            echo '::error::Customer account access must not use email-only ownership matching'
+            exit 1
+          fi
+          for forbidden in supplierOrderReference actualCostCents landedCostCents costVarianceCents performedByUserId savedByUserId; do
+            if grep -Fq "$forbidden" "$STATUS" "$PAGE"; then
+              echo "::error::Customer order projection exposes forbidden internal field: $forbidden"
+              exit 1
+            fi
+          done
+
       - name: Build for Cloudflare
         run: npm run cf:build
 

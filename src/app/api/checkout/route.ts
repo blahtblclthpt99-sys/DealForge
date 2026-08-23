@@ -5,6 +5,7 @@ import { readSession } from "@/lib/auth";
 import { checkDirectCommerceProductSafety } from "@/lib/commerce-runtime-safety";
 import { prisma } from "@/lib/db";
 import { isFinancialGateCertified } from "@/lib/financial-gate";
+import { createOrderAccessToken } from "@/lib/order-access";
 import { createStripeCheckoutSession } from "@/lib/stripe-commerce";
 
 export const runtime = "nodejs";
@@ -189,10 +190,15 @@ export async function POST(request: Request) {
       await prisma.order.update({ where: { id: order.id }, data: { status: "pending_payment" } });
     }
     const base = appUrl(request);
+    const orderAccessToken = createOrderAccessToken({
+      id: order.id,
+      orderNumber: order.orderNumber,
+      createdAt: order.createdAt,
+    });
     const stripeSession = await createStripeCheckoutSession({
       orderId: order.id, orderNumber: order.orderNumber, customerEmail: order.email, currency: order.currency,
       lines: order.items.map((item) => ({ name: item.title, unitAmountCents: item.unitPriceCents, quantity: item.quantity })),
-      successUrl: `${base}/checkout/success?order=${encodeURIComponent(order.orderNumber)}`,
+      successUrl: `${base}/checkout/success?order=${encodeURIComponent(order.orderNumber)}&access=${encodeURIComponent(orderAccessToken)}`,
       cancelUrl: `${base}/checkout/cancel?order=${encodeURIComponent(order.orderNumber)}`,
     });
     if (!stripeSession.id || !stripeSession.url) throw new Error("STRIPE_CHECKOUT_SESSION_INVALID");
