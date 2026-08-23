@@ -50,6 +50,15 @@ jobs:
           grep -Fq 'const status = refunded >= order.totalCents ? "refunded" : refunded > 0 ? "partially_refunded" : "paid"' src/app/api/stripe/webhook/route.ts
           grep -Fq '["paid", "partially_refunded", "refunded"].includes(order.status)' src/app/api/stripe/webhook/route.ts
 
+      - name: Refund webhook-race regression guard
+        run: |
+          set -euo pipefail
+          grep -Fq 'await prisma.refund.upsert({' src/app/api/admin/refunds/route.ts
+          grep -Fq 'where: { providerRefundId: stripeRefund.id }' src/app/api/admin/refunds/route.ts
+          grep -Fq 'STRIPE_REFUND_PAYMENT_INTENT_MISMATCH' src/app/api/admin/refunds/route.ts
+          grep -Fq 'STRIPE_REFUND_AMOUNT_MISMATCH' src/app/api/admin/refunds/route.ts
+          grep -Fq 'STRIPE_REFUND_CURRENCY_MISMATCH' src/app/api/admin/refunds/route.ts
+
       - name: Build for Cloudflare
         run: npm run cf:build
 
