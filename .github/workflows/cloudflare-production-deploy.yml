@@ -98,7 +98,7 @@ jobs:
               gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=failure -f context=cloudflare-db-not-configured -f description='DATABASE_URL missing or invalid in Cloudflare runtime'
               ;;
             unreachable)
-              gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=failure -f context=cloudflare-db-unreachable -f description='DATABASE_URL present but Neon connection failed'
+              gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=failure -f context=cloudflare-db-unreachable -f description='DATABASE_URL present but one database transport failed'
               ;;
             *)
               gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=failure -f context=cloudflare-db-health-invalid -f description='Health response did not expose a valid database state'
@@ -109,17 +109,28 @@ jobs:
           neon_error=$(node -e "const fs=require('fs');try{const j=JSON.parse(fs.readFileSync('/tmp/health-body','utf8'));process.stdout.write(String(j.diagnostics?.neonHttpError||'none'))}catch{process.stdout.write('unknown')}")
           prisma_state=$(node -e "const fs=require('fs');try{const j=JSON.parse(fs.readFileSync('/tmp/health-body','utf8'));process.stdout.write(String(j.diagnostics?.prismaAdapter||'unknown'))}catch{process.stdout.write('unknown')}")
           prisma_error=$(node -e "const fs=require('fs');try{const j=JSON.parse(fs.readFileSync('/tmp/health-body','utf8'));process.stdout.write(String(j.diagnostics?.prismaAdapterError||'none'))}catch{process.stdout.write('unknown')}")
+          tx_state=$(node -e "const fs=require('fs');try{const j=JSON.parse(fs.readFileSync('/tmp/health-body','utf8'));process.stdout.write(String(j.diagnostics?.prismaTransaction||'unknown'))}catch{process.stdout.write('unknown')}")
+          tx_error=$(node -e "const fs=require('fs');try{const j=JSON.parse(fs.readFileSync('/tmp/health-body','utf8'));process.stdout.write(String(j.diagnostics?.prismaTransactionError||'none'))}catch{process.stdout.write('unknown')}")
 
           if [[ "$neon_state" == 'ok' ]]; then
             gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=success -f context=cloudflare-neon-http -f description='Direct Neon serverless HTTP query succeeded'
           else
             gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=failure -f context=cloudflare-neon-http -f description="Direct Neon HTTP failed (${neon_error})"
+            gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=failure -f context="cloudflare-neon-${neon_error}" -f description='Sanitized Neon HTTP failure class'
           fi
 
           if [[ "$prisma_state" == 'ok' ]]; then
             gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=success -f context=cloudflare-prisma-adapter -f description='Prisma Neon adapter query succeeded'
           else
             gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=failure -f context=cloudflare-prisma-adapter -f description="Prisma Neon adapter failed (${prisma_error})"
+            gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=failure -f context="cloudflare-prisma-${prisma_error}" -f description='Sanitized Prisma adapter failure class'
+          fi
+
+          if [[ "$tx_state" == 'ok' ]]; then
+            gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=success -f context=cloudflare-prisma-transaction -f description='Prisma interactive transaction succeeded'
+          else
+            gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=failure -f context=cloudflare-prisma-transaction -f description="Prisma transaction failed (${tx_error})"
+            gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=failure -f context="cloudflare-prisma-tx-${tx_error}" -f description='Sanitized Prisma transaction failure class'
           fi
 
           if [[ "$health_code" == '200' ]]; then
