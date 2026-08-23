@@ -2,11 +2,16 @@ import { assessCommerceEligibility, type CommerceEligibilityResult } from "@/lib
 import type { PricingInput } from "@/lib/dynamic-pricing";
 
 export const DEFAULT_CATALOG_SOURCE_MAX_AGE_MS = 6 * 60 * 60 * 1000;
+export const MIN_PUBLICATION_MARGIN_BPS = 1_500;
+export const MIN_PUBLICATION_PROFIT_CENTS = 200;
+export const MIN_PUBLICATION_PAYMENT_FEE_BPS = 300;
+export const MIN_PUBLICATION_PAYMENT_FIXED_FEE_CENTS = 30;
 
 const TRUSTED_PRICE_SOURCES = new Set(["amazon-creators-api"]);
 const AVAILABLE_SOURCE_STATES = new Set(["in_stock", "now", "available"]);
 
 type JsonRecord = Record<string, unknown>;
+type PublicationPricingInput = Omit<PricingInput, "landedCostCents">;
 
 export type CatalogPublicationProduct = {
   id: string;
@@ -36,6 +41,7 @@ export type CatalogSourceSnapshot = {
 
 export type CatalogPublicationAssessment = {
   source: CatalogSourceSnapshot;
+  effectivePricing: PublicationPricingInput;
   assessment: CommerceEligibilityResult;
 };
 
@@ -55,6 +61,10 @@ function stringValue(value: unknown) {
 }
 
 function timestampMs(value: unknown) {
+  if (value instanceof Date) {
+    const parsed = value.getTime();
+    return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+  }
   if (typeof value === "number" && Number.isSafeInteger(value) && value > 0) return value;
   if (typeof value !== "string" || !value.trim()) return null;
   const parsed = Date.parse(value);
@@ -67,6 +77,19 @@ function catalogPriceCents(price: number) {
   const rounded = Math.round(scaled);
   if (!Number.isSafeInteger(rounded) || rounded <= 0 || Math.abs(scaled - rounded) > 1e-6) return 0;
   return rounded;
+}
+
+export function publicationPricingPolicy(pricing: PublicationPricingInput): PublicationPricingInput {
+  return {
+    ...pricing,
+    targetGrossMarginBps: Math.max(pricing.targetGrossMarginBps, MIN_PUBLICATION_MARGIN_BPS),
+    minimumProfitCents: Math.max(pricing.minimumProfitCents ?? 0, MIN_PUBLICATION_PROFIT_CENTS),
+    paymentFeeBps: Math.max(pricing.paymentFeeBps ?? 0, MIN_PUBLICATION_PAYMENT_FEE_BPS),
+    paymentFixedFeeCents: Math.max(
+      pricing.paymentFixedFeeCents ?? 0,
+      MIN_PUBLICATION_PAYMENT_FIXED_FEE_CENTS,
+    ),
+  };
 }
 
 export function deriveCatalogSourceSnapshot(
@@ -106,7 +129,7 @@ export function assessCatalogProductForPublication(input: {
   financialGateCertified: boolean;
   product: CatalogPublicationProduct;
   costs: PublicationCostPolicy;
-  pricing: Omit<PricingInput, "landedCostCents">;
+  pricing: PublicationPricingInput;
   nowMs?: number;
   maxSourceAgeMs?: number;
 }): CatalogPublicationAssessment {
@@ -114,6 +137,7 @@ export function assessCatalogProductForPublication(input: {
     input.product,
     input.maxSourceAgeMs ?? DEFAULT_CATALOG_SOURCE_MAX_AGE_MS,
   );
+  const effectivePricing = publicationPricingPolicy(input.pricing);
   const assessment = assessCommerceEligibility({
     financialGateCertified: input.financialGateCertified,
     landedCost: {
@@ -129,9 +153,9 @@ export function assessCatalogProductForPublication(input: {
       maxSourceAgeMs: source.maxSourceAgeMs,
       nowMs: input.nowMs,
     },
-    pricing: input.pricing,
+    pricing: effectivePricing,
   });
-  return { source, assessment };
+  return { source, effectivePricing, assessment };
 }
 
 export function publicationAuditSpecifications(input: {
@@ -140,7 +164,7 @@ export function publicationAuditSpecifications(input: {
   source: CatalogSourceSnapshot;
   assessment: CommerceEligibilityResult;
   costs: PublicationCostPolicy;
-  pricing: Omit<PricingInput, "landedCostCents">;
+  pricing: PublicationPricingInput;
 }) {
   const specs = parseSpecifications(input.existingSpecifications);
   return JSON.stringify({
