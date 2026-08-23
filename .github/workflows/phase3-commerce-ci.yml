@@ -59,6 +59,14 @@ jobs:
           grep -Fq 'isFinancialGateCertified' src/app/api/admin/commerce/assess/route.ts
           grep -Fq 'mutatesCatalog: false' src/app/api/admin/commerce/assess/route.ts
           grep -Fq 'DEALFORGE_FINANCIAL_GATE_CERTIFIED' wrangler.jsonc
+          grep -Fq 'TRUSTED_PRICE_SOURCES' src/lib/catalog-commerce-publication.ts
+          grep -Fq 'amazon-creators-api' src/lib/catalog-commerce-publication.ts
+          grep -Fq 'assessCatalogProductForPublication' src/app/api/admin/commerce/publish/route.ts
+          grep -Fq 'isProductOwner' src/app/api/admin/commerce/publish/route.ts
+          grep -Fq 'isFinancialGateCertified' src/app/api/admin/commerce/publish/route.ts
+          grep -Fq 'commerceEnabled: true' src/app/api/admin/commerce/publish/route.ts
+          grep -Fq 'PRODUCT_CHANGED_REASSESS' src/app/api/admin/commerce/publish/route.ts
+          grep -Fq '!product.commerceEnabled' src/app/api/checkout/route.ts
 
       - name: Build for Cloudflare
         run: npm run cf:build
