@@ -102,6 +102,20 @@ function safeStripeErrorToken(value: unknown) {
   return /^[A-Za-z0-9_.\[\]-]{1,120}$/.test(trimmed) ? trimmed : "unknown";
 }
 
+function safeStripeErrorMessageCode(value: unknown) {
+  if (typeof value !== "string" || !value.trim()) return "unknown";
+  const redacted = value
+    .replace(/(?:sk|rk|pk)_(?:live|test)_[A-Za-z0-9_]+/gi, "stripe_key")
+    .replace(/\b(?:price|prod|cs|pi|ch|req|cus|pm)_[A-Za-z0-9_]+\b/gi, "stripe_id")
+    .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, "email")
+    .replace(/https?:\/\/\S+/gi, "url")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 110);
+  return redacted || "unknown";
+}
+
 export function verifyStripeSignature(rawBody: string, signatureHeader: string, secret: string, options?: { nowSeconds?: number; toleranceSeconds?: number }) {
   const parts = signatureHeader.split(",").map((part) => part.trim());
   const timestampRaw = parts.find((part) => part.startsWith("t="))?.slice(2);
@@ -125,7 +139,8 @@ async function stripeRequest<T>(path: string, init: { method?: "GET" | "POST"; b
   if (!response.ok) {
     const provider = data.error;
     const type = safeStripeErrorToken(provider?.type);
-    const code = safeStripeErrorToken(provider?.code);
+    const providerCode = safeStripeErrorToken(provider?.code);
+    const code = providerCode === "unknown" ? safeStripeErrorMessageCode(provider?.message) : providerCode;
     const param = safeStripeErrorToken(provider?.param);
     const message = typeof provider?.message === "string" ? provider.message : String(response.status);
     throw new Error(`STRIPE_API_ERROR:${type}:${code}:${param}:${message}`);
