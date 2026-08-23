@@ -89,7 +89,7 @@ jobs:
           cat /tmp/health-body
           echo
 
-          db_state=$(node -e "try{const j=require('/tmp/health-body');process.stdout.write(String(j.database||'unknown'))}catch{process.stdout.write('invalid_response')}")
+          db_state=$(node -e "const fs=require('fs');try{const j=JSON.parse(fs.readFileSync('/tmp/health-body','utf8'));process.stdout.write(String(j.database||'unknown'))}catch{process.stdout.write('invalid_response')}")
           case "$db_state" in
             ok)
               gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=success -f context=cloudflare-db-ok -f description='Cloudflare Worker connected to Neon'
@@ -153,5 +153,3 @@ jobs:
         shell: bash
         run: |
           gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=failure -f context=cloudflare-production-deploy -f description='Cloudflare production deployment failed'
-
-# forced redeploy after Cloudflare database secret update: 2026-08-23T17:53-05:00
