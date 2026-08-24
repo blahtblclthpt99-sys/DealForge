@@ -7,6 +7,8 @@ import { createStripeCheckoutSession } from "@/lib/stripe-commerce";
 
 export const runtime = "nodejs";
 
+const CERTIFICATION_PRODUCT_ID = "cert_test_75c_20260822_v2";
+
 const CheckoutSchema = z.object({
   checkoutKey: z.string().trim().min(8).max(128).regex(/^[A-Za-z0-9:_-]+$/),
   email: z.string().trim().email().max(320),
@@ -77,6 +79,9 @@ function isInternalCertificationProduct(specifications: string) {
 }
 
 export async function POST(request: Request) {
+  let stage = "parse";
+  let certificationAttempt = false;
+
   try {
     const parsed = CheckoutSchema.safeParse(await request.json());
     if (!parsed.success) {
@@ -86,10 +91,16 @@ export async function POST(request: Request) {
       );
     }
 
+    certificationAttempt =
+      parsed.data.items.length > 0 &&
+      parsed.data.items.every((item) => item.productId === CERTIFICATION_PRODUCT_ID);
+
+    stage = "session";
     const sessionUser = await readSession();
     const email = (sessionUser?.email || parsed.data.email).trim().toLowerCase();
     const requestedItems = normalizeRequestedItems(parsed.data.items);
 
+    stage = "existing_order_lookup";
     const existing = await prisma.order.findUnique({
       where: { checkoutKey: parsed.data.checkoutKey },
       include: { items: true },
@@ -107,10 +118,8 @@ export async function POST(request: Request) {
       }
     }
 
+    stage = "product_lookup";
     const productIds = requestedItems.map((item) => item.productId);
-    // Checkout intentionally selects only fields it needs. The production catalog
-    // can be upgraded independently without making financial checkout depend on
-    // optional enrichment columns being present in every environment.
     const products = await prisma.product.findMany({
       where: { id: { in: productIds } },
       select: {
@@ -129,6 +138,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "PRODUCT_NOT_FOUND" }, { status: 409 });
     }
 
+    stage = "commerce_gate";
     const certificationOnly =
       products.length > 0 && products.every((product) => isInternalCertificationProduct(product.specifications));
     const certificationBypass = certificationOnly && stripeTestMode();
@@ -136,6 +146,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "COMMERCE_DISABLED" }, { status: 503 });
     }
 
+    stage = "pricing";
     const productById = new Map(products.map((product) => [product.id, product]));
     const pricedItems = requestedItems.map((item) => {
       const product = productById.get(item.productId)!;
@@ -177,6 +188,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "ORDER_AMOUNT_INVALID" }, { status: 409 });
     }
 
+    stage = "order_create";
     const order =
       existing ||
       (await prisma.order.create({
@@ -204,6 +216,7 @@ export async function POST(request: Request) {
         include: { items: true },
       }));
 
+    stage = "order_integrity";
     if (
       order.currency !== currency ||
       order.totalCents !== subtotalCents ||
@@ -212,6 +225,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "ORDER_PRICE_CHANGED_RESTART_CHECKOUT" }, { status: 409 });
     }
 
+    stage = "stripe_session";
     const base = appUrl(request);
     const stripeSession = await createStripeCheckoutSession({
       orderId: order.id,
@@ -231,6 +245,7 @@ export async function POST(request: Request) {
       throw new Error("STRIPE_CHECKOUT_SESSION_INVALID");
     }
 
+    stage = "session_binding";
     if (order.stripeCheckoutSessionId && order.stripeCheckoutSessionId !== stripeSession.id) {
       throw new Error("STRIPE_SESSION_MISMATCH");
     }
@@ -256,7 +271,10 @@ export async function POST(request: Request) {
     ) {
       return NextResponse.json({ error: message.split(":")[0] }, { status: 409 });
     }
-    console.error("checkout.create.failed", { error: message });
-    return NextResponse.json({ error: "CHECKOUT_UNAVAILABLE" }, { status: 503 });
+    console.error("checkout.create.failed", { error: message, stage });
+    return NextResponse.json(
+      certificationAttempt ? { error: "CHECKOUT_UNAVAILABLE", stage } : { error: "CHECKOUT_UNAVAILABLE" },
+      { status: 503 },
+    );
   }
 }
