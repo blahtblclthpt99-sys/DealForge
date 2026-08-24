@@ -2,8 +2,22 @@
 
 import { ExternalLink } from "lucide-react";
 
+function actionLabel(retailer?: string) {
+  switch (retailer) {
+    case "amazon":
+      return "Check on Amazon";
+    case "ebay":
+      return "Check on eBay";
+    case "aliexpress":
+      return "Check on AliExpress";
+    default:
+      return "View retailer";
+  }
+}
+
 export function BuyButton({
   productId,
+  retailer,
 }: {
   productId: string;
   retailer?: string;
@@ -19,7 +33,7 @@ export function BuyButton({
       rel="noopener noreferrer sponsored nofollow"
       className="inline-flex items-center gap-2 rounded-full bg-forest px-6 py-3 text-sm font-semibold text-white shadow-md transition hover:bg-forest-dark"
     >
-      Buy Now <ExternalLink className="h-4 w-4" />
+      {actionLabel(retailer)} <ExternalLink className="h-4 w-4" />
     </a>
   );
 }
