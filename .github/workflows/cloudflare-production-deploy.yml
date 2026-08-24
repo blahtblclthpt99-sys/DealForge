@@ -181,3 +181,5 @@ jobs:
         shell: bash
         run: |
           gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=failure -f context=cloudflare-production-deploy -f description='Cloudflare production deployment failed'
+
+# redeploy original Stripe secret test: 2026-08-23T19:38-05:00
