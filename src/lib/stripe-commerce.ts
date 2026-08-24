@@ -60,16 +60,29 @@ function stripeSecretKey() {
   return key;
 }
 
-export function stripeWebhookSecret() {
-  const secret = (process.env.STRIPE_WEBHOOK_SECRET || "").trim();
-  if (!secret) throw new Error("STRIPE_WEBHOOK_SECRET_MISSING");
-  return secret;
-}
-
 export function expectedStripeLivemode(secretKey = (process.env.STRIPE_SECRET_KEY || "").trim()) {
   if (secretKey.startsWith("sk_live_")) return true;
   if (secretKey.startsWith("sk_test_")) return false;
   throw new Error("STRIPE_SECRET_KEY_MODE_UNKNOWN");
+}
+
+export function stripeWebhookSecret() {
+  const livemode = expectedStripeLivemode();
+  const modeSpecific = (
+    livemode
+      ? process.env.STRIPE_WEBHOOK_SECRET_LIVE
+      : process.env.STRIPE_WEBHOOK_SECRET_TEST
+  )?.trim();
+  const legacy = (process.env.STRIPE_WEBHOOK_SECRET || "").trim();
+  const secret = modeSpecific || legacy;
+  if (!secret) {
+    throw new Error(
+      livemode
+        ? "STRIPE_WEBHOOK_SECRET_LIVE_MISSING"
+        : "STRIPE_WEBHOOK_SECRET_TEST_MISSING",
+    );
+  }
+  return secret;
 }
 
 export function assertStripeEventMode(event: Pick<StripeEvent, "livemode">, expected: boolean) {
