@@ -22,6 +22,7 @@ type CommercePolicyV1 = {
   sourceClass: string;
   resaleAllowed: boolean;
   sourceVerifiedAt: string;
+  supplierPriceVerifiedAt: string | null;
   maxSourceAgeDays: number;
   maxPriceAgeMinutes: number;
   inventoryConfidenceBps: number;
@@ -36,7 +37,7 @@ export type CommerceGateInput = {
   availability: string;
   sellingPriceCents: number | null;
   landedCostCents: number | null;
-  priceVerifiedAt: Date | null;
+  priceVerifiedAt?: Date | null;
   specifications: string;
 };
 
@@ -67,9 +68,16 @@ function parseTimestamp(value: unknown) {
   return Number.isFinite(timestamp) ? timestamp : null;
 }
 
+function supplierPriceVerifiedAt(root: Record<string, unknown>) {
+  const offer = root.supplierOfferV1;
+  if (!offer || typeof offer !== "object" || Array.isArray(offer)) return null;
+  const raw = (offer as Record<string, unknown>).priceVerifiedAt;
+  return typeof raw === "string" && parseTimestamp(raw) !== null ? raw : null;
+}
+
 function parsePolicy(specifications: string): CommercePolicyV1 | null {
   try {
-    const root = JSON.parse(specifications) as { commerceV1?: unknown };
+    const root = JSON.parse(specifications) as Record<string, unknown>;
     const raw = root?.commerceV1;
     if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
     const policy = raw as Record<string, unknown>;
@@ -79,12 +87,14 @@ function parsePolicy(specifications: string): CommercePolicyV1 | null {
 
     const sourceClass = typeof policy.sourceClass === "string" ? policy.sourceClass.trim() : "";
     const sourceVerifiedAt = typeof policy.sourceVerifiedAt === "string" ? policy.sourceVerifiedAt : "";
+    const persistedPriceVerifiedAt = supplierPriceVerifiedAt(root);
     if (!sourceClass || parseTimestamp(sourceVerifiedAt) === null) return null;
     if (policy.resaleAllowed !== true) {
       return {
         sourceClass,
         resaleAllowed: false,
         sourceVerifiedAt,
+        supplierPriceVerifiedAt: persistedPriceVerifiedAt,
         maxSourceAgeDays: isSafePositiveInteger(policy.maxSourceAgeDays) ? policy.maxSourceAgeDays : 0,
         maxPriceAgeMinutes: isSafePositiveInteger(policy.maxPriceAgeMinutes) ? policy.maxPriceAgeMinutes : 0,
         inventoryConfidenceBps: isBasisPoints(policy.inventoryConfidenceBps) ? policy.inventoryConfidenceBps : 0,
@@ -114,6 +124,7 @@ function parsePolicy(specifications: string): CommercePolicyV1 | null {
       sourceClass,
       resaleAllowed: true,
       sourceVerifiedAt,
+      supplierPriceVerifiedAt: persistedPriceVerifiedAt,
       maxSourceAgeDays: policy.maxSourceAgeDays,
       maxPriceAgeMinutes: policy.maxPriceAgeMinutes,
       inventoryConfidenceBps: policy.inventoryConfidenceBps,
@@ -157,7 +168,9 @@ export function evaluateCommerceGate(input: CommerceGateInput, nowMs = Date.now(
     reasons.push("source_verification_stale");
   }
 
-  const priceVerifiedAt = input.priceVerifiedAt?.getTime() ?? null;
+  const columnPriceVerifiedAt = input.priceVerifiedAt?.getTime() ?? null;
+  const persistedPriceVerifiedAt = parseTimestamp(policy.supplierPriceVerifiedAt);
+  const priceVerifiedAt = columnPriceVerifiedAt ?? persistedPriceVerifiedAt;
   if (priceVerifiedAt === null || !Number.isFinite(priceVerifiedAt) || priceVerifiedAt > nowMs + 5 * 60_000) {
     reasons.push("supplier_cost_verification_invalid");
   } else if (nowMs - priceVerifiedAt > policy.maxPriceAgeMinutes * 60_000) {
