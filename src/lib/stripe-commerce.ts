@@ -111,6 +111,35 @@ function constantTimeHexEqual(a: string, b: string) {
   return left.length === right.length && timingSafeEqual(left, right);
 }
 
+export function verifyStripeSignature(
+  rawBody: string,
+  signatureHeader: string,
+  secret: string,
+  options?: { nowSeconds?: number; toleranceSeconds?: number },
+) {
+  if (!secret || !signatureHeader) return false;
+  const parts = signatureHeader.split(",").map((part) => part.trim());
+  const timestampRaw = parts.find((part) => part.startsWith("t="))?.slice(2);
+  const signatures = parts
+    .filter((part) => part.startsWith("v1="))
+    .map((part) => part.slice(3));
+
+  if (!timestampRaw || signatures.length === 0) return false;
+  const timestamp = Number(timestampRaw);
+  if (!Number.isSafeInteger(timestamp) || timestamp <= 0) return false;
+
+  const now = options?.nowSeconds ?? Math.floor(Date.now() / 1000);
+  const tolerance = options?.toleranceSeconds ?? DEFAULT_WEBHOOK_TOLERANCE_SECONDS;
+  if (!Number.isSafeInteger(tolerance) || tolerance < 0) return false;
+  if (Math.abs(now - timestamp) > tolerance) return false;
+
+  const expected = createHmac("sha256", secret)
+    .update(`${timestamp}.${rawBody}`, "utf8")
+    .digest("hex");
+
+  return signatures.some((candidate) => constantTimeHexEqual(candidate, expected));
+}
+
 async function stripeRequest<T>(
   path: string,
   init: {
