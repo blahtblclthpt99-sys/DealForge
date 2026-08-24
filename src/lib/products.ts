@@ -9,6 +9,7 @@ import { parseJson } from "./utils";
 import { normalizeProductImage } from "./product-image";
 import { parseQuantityFromTitle } from "./quantity";
 import { evaluateCommerceGate } from "./commerce-gate";
+import { recommendCommercialPrice } from "./commercialization";
 import type { Prisma } from "@prisma/client";
 
 export type ProductDTO = {
@@ -27,6 +28,7 @@ export type ProductDTO = {
   price: number;
   originalPrice: number;
   discountPercent: number;
+  priceEstimated: boolean;
   rating: number;
   reviewCount: number;
   affiliateUrl: string;
@@ -172,12 +174,33 @@ function directCommerceDecision(p: ProductWithCategory) {
   });
 }
 
+/**
+ * Storefront-only DealForge estimate. A historical catalog price is treated
+ * conservatively as the estimated acquisition basis and passed through the
+ * same reserve/profit/margin pricing model used by DealForge commercialization.
+ * This value is never accepted by checkout; checkout uses only the persisted,
+ * server-verified sellingPriceCents after the commerce gate passes.
+ */
+function dealForgeEstimatedPrice(referencePrice: number) {
+  const referenceCents = Math.round(referencePrice * 100);
+  if (!Number.isSafeInteger(referenceCents) || referenceCents <= 0) return 0;
+  try {
+    return recommendCommercialPrice({
+      itemCostCents: referenceCents,
+      shippingCents: 0,
+      taxCents: 0,
+      supplierFeeCents: 0,
+      handlingCents: 0,
+      acquisitionReserveCents: 0,
+    }).recommendedPriceCents / 100;
+  } catch {
+    return 0;
+  }
+}
+
 export function toProductDTO(p: ProductWithCategory): ProductDTO {
   const images = cleanImages(p.images);
   const specs = publicSpecifications(p.specifications);
-  // Amazon affiliate claims are shown only when backed by an authorized source.
-  // Direct sales display DealForge's own selling price, but still use the actual
-  // supplier verification timestamp for the runtime commercial gate.
   const integrity = amazonClaimIntegrity({
     retailer: p.retailer,
     priceSource: p.priceSource,
@@ -188,12 +211,16 @@ export function toProductDTO(p: ProductWithCategory): ProductDTO {
   const commerce = directCommerceDecision(p);
   const direct = commerce.allowed && Number.isSafeInteger(p.sellingPriceCents) && (p.sellingPriceCents ?? 0) > 0;
   const rawPricing = sanitizePricing(p.price, p.originalPrice, p.discountPercent);
-  const directPrice = direct ? (p.sellingPriceCents as number) / 100 : 0;
+  const configuredPrice = Number.isSafeInteger(p.sellingPriceCents) && (p.sellingPriceCents ?? 0) > 0
+    ? (p.sellingPriceCents as number) / 100
+    : 0;
+  const estimatedPrice = direct ? 0 : configuredPrice || dealForgeEstimatedPrice(rawPricing.price);
   const pricing = direct
-    ? { price: directPrice, originalPrice: directPrice, discountPercent: 0 }
-    : integrity.priceVerified
-      ? rawPricing
+    ? { price: configuredPrice, originalPrice: configuredPrice, discountPercent: 0 }
+    : estimatedPrice > 0
+      ? { price: estimatedPrice, originalPrice: estimatedPrice, discountPercent: 0 }
       : { price: 0, originalPrice: 0, discountPercent: 0 };
+  const priceEstimated = !direct && estimatedPrice > 0;
   const rating = integrity.metadataVerified ? p.rating : 0;
   const reviewCount = integrity.metadataVerified ? p.reviewCount : 0;
   const availability = direct ? p.availability : integrity.metadataVerified ? p.availability : "unknown";
@@ -203,15 +230,15 @@ export function toProductDTO(p: ProductWithCategory): ProductDTO {
     categoryId: p.categoryId, categorySlug: p.category?.slug, categoryName: p.category?.name,
     subcategory: p.subcategory ?? null, images,
     quantity: p.quantity != null && p.quantity >= 1 ? p.quantity : parseQuantityFromTitle(p.title),
-    price: pricing.price, originalPrice: pricing.originalPrice, discountPercent: pricing.discountPercent,
+    price: pricing.price, originalPrice: pricing.originalPrice, discountPercent: pricing.discountPercent, priceEstimated,
     rating, reviewCount,
     affiliateUrl: generateAffiliateLink(p.retailer, { asin: p.asin, url: p.affiliateUrl }),
     retailer: p.retailer, availability,
     availabilityVerified: direct || integrity.metadataVerified,
     priceVerified: direct || integrity.priceVerified,
     metadataVerified: integrity.metadataVerified,
-    priceSource: direct ? "dealforge" : p.priceSource,
-    priceVerifiedAt: p.priceVerifiedAt?.toISOString() ?? null,
+    priceSource: direct ? "dealforge" : priceEstimated ? "dealforge_estimate" : p.priceSource,
+    priceVerifiedAt: direct ? p.priceVerifiedAt?.toISOString() ?? null : null,
     metadataSource: direct ? null : p.metadataSource,
     metadataVerifiedAt: direct ? null : p.metadataVerifiedAt?.toISOString() ?? null,
     specifications: specs, trendingScore: p.trendingScore, clickCount: p.clickCount, viewCount: p.viewCount,
@@ -272,7 +299,7 @@ function buildOrderBy(params: ProductQuery): Prisma.ProductOrderByWithRelationIn
 export async function queryProducts(params: ProductQuery) {
   const page = Math.max(1, params.page ?? 1);
   const limit = Math.min(48, Math.max(1, params.limit ?? 24));
-  const cacheKey = `products:v10:${JSON.stringify(params)}`;
+  const cacheKey = `products:v11:${JSON.stringify(params)}`;
   const cached = await cacheGet<{ items: ProductDTO[]; total: number; page: number; hasMore: boolean }>(cacheKey);
   if (cached) return cached;
   const where = buildWhere(params); const orderBy = buildOrderBy(params); const skip = (page - 1) * limit;
