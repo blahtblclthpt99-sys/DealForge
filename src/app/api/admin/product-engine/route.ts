@@ -71,8 +71,6 @@ async function requireOwner() {
   });
   if (!user || user.role !== "admin") throw new Error("FORBIDDEN");
 
-  // Owner-only must fail closed. A missing owner setting must never broaden
-  // access to every administrator account.
   const ownerEmail = process.env.PRODUCT_ENGINE_OWNER_EMAIL?.trim().toLowerCase();
   if (!ownerEmail || user.email.toLowerCase() !== ownerEmail) throw new Error("FORBIDDEN");
   return user;
@@ -143,6 +141,7 @@ export async function POST(req: Request) {
       }, owner.email);
       return NextResponse.json(result, { status: result.duplicate ? 200 : 201 });
     }
+
     if (input.action === "commercialize") {
       const product = await prisma.product.findUnique({
         where: { id: input.productId },
@@ -173,10 +172,6 @@ export async function POST(req: Request) {
         data: {
           sellingPriceCents: prepared.sellingPriceCents,
           landedCostCents: prepared.landedCostCents,
-          priceSource: `supplier:${input.supplierName.trim()}`.slice(0, 255),
-          priceVerifiedAt: prepared.priceVerifiedAt,
-          metadataSource: `supplier:${input.sourceClass}`,
-          metadataVerifiedAt: new Date(input.sourceVerifiedAt),
           availability: prepared.availability,
           specifications: prepared.specifications,
           commerceEnabled: prepared.commerceEnabled,
@@ -187,9 +182,8 @@ export async function POST(req: Request) {
           commerceEnabled: true,
           sellingPriceCents: true,
           landedCostCents: true,
-          priceSource: true,
-          priceVerifiedAt: true,
           availability: true,
+          specifications: true,
         },
       });
 
@@ -214,9 +208,14 @@ export async function POST(req: Request) {
         ok: true,
         commerceReady: prepared.decision.allowed,
         decision: prepared.decision,
-        product: updated,
+        product: {
+          ...updated,
+          priceSource: `supplier:${input.supplierName.trim()}`,
+          priceVerifiedAt: prepared.priceVerifiedAt.toISOString(),
+        },
       });
     }
+
     if (input.action === "run") return NextResponse.json(await runProductEngine(owner.email));
     if (input.action === "pause") return NextResponse.json(await setEnginePaused(true, owner.email));
     if (input.action === "resume") return NextResponse.json(await setEnginePaused(false, owner.email));
