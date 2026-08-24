@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
 import test from "node:test";
 import {
+  assertCardOnlyCheckoutSession,
   assertPositiveCents,
   assertStripeEventMode,
   expectedStripeLivemode,
@@ -109,6 +110,18 @@ test("Stripe webhook event mode must be explicit and match the configured enviro
   assert.doesNotThrow(() => assertStripeEventMode({ livemode: false }, false));
   assert.throws(() => assertStripeEventMode({ livemode: false }, true), /STRIPE_EVENT_MODE_MISMATCH/);
   assert.throws(() => assertStripeEventMode({}, false), /STRIPE_EVENT_LIVEMODE_MISSING/);
+});
+
+test("card-only certification rejects any Stripe session that exposes another method", () => {
+  assert.doesNotThrow(() => assertCardOnlyCheckoutSession({ payment_method_types: ["card"] }));
+  assert.throws(
+    () => assertCardOnlyCheckoutSession({ payment_method_types: ["card", "link"] }),
+    /STRIPE_CARD_ONLY_SESSION_NOT_ENFORCED/,
+  );
+  assert.throws(
+    () => assertCardOnlyCheckoutSession({}),
+    /STRIPE_CARD_ONLY_SESSION_NOT_ENFORCED/,
+  );
 });
 
 test("money helper only accepts positive safe integer cents", () => {
