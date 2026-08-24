@@ -13,13 +13,13 @@ permissions:
 jobs:
   checkout-certification:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 15
     env:
       GH_TOKEN: ${{ github.token }}
-      CERT_EMAIL: phase25-e2e-v2-20260823-1946@example.com
+      CERT_EMAIL: phase25-e2e-v3-20260823-1946@example.com
     steps:
-      - name: Mark browser certification pending
-        run: gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=pending -f context=stripe-phase25-browser -f description='Preparing browser certification'
+      - name: Mark setup pending
+        run: gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=pending -f context=stripe-phase25-setup -f description='Installing browser test dependencies'
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
@@ -27,10 +27,12 @@ jobs:
           cache: npm
       - name: Install dependencies
         run: npm ci --no-fund --no-audit
-      - name: Install Chromium
-        run: npx playwright install --with-deps chromium
-      - name: Mark browser ready
-        run: gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=pending -f context=stripe-phase25-browser -f description='Browser ready; starting DealForge Checkout'
+      - name: Install Chromium only
+        run: npx playwright install chromium
+      - name: Mark setup ready
+        run: |
+          gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=success -f context=stripe-phase25-setup -f description='Chromium ready'
+          gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=pending -f context=stripe-phase25-checkout -f description='Running 75-cent Stripe Checkout'
       - name: Complete live DealForge 75-cent test Checkout
         id: checkout
         continue-on-error: true
@@ -38,84 +40,56 @@ jobs:
           node <<'NODE'
           const { chromium } = require('playwright');
           const fs = require('fs');
-
-          async function fillAcrossFrames(page, selectors, value) {
-            for (const frame of page.frames()) {
-              for (const selector of selectors) {
-                try {
-                  const el = frame.locator(selector).first();
-                  if (await el.count() && await el.isVisible()) {
-                    await el.fill(value, { timeout: 3000 });
-                    return true;
-                  }
-                } catch {}
-              }
+          async function fill(page, selectors, value) {
+            for (const frame of page.frames()) for (const selector of selectors) {
+              try {
+                const el = frame.locator(selector).first();
+                if (await el.count() && await el.isVisible()) { await el.fill(value, {timeout:3000}); return true; }
+              } catch {}
             }
             return false;
           }
-
-          (async () => {
-            const browser = await chromium.launch({ headless: true });
-            const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
-            let stage = 'open_certification';
+          (async()=>{
+            const browser=await chromium.launch({headless:true});
+            const page=await browser.newPage({viewport:{width:1440,height:1000}});
+            let stage='open_certification';
             try {
-              await page.goto('https://www.deal-forge.sale/stripe-certification', { waitUntil: 'networkidle', timeout: 60000 });
+              await page.goto('https://www.deal-forge.sale/stripe-certification',{waitUntil:'networkidle',timeout:60000});
               await page.locator('#cert-email').fill(process.env.CERT_EMAIL);
-              stage = 'create_checkout';
-              await Promise.all([
-                page.waitForURL(/checkout\.stripe\.com/, { timeout: 60000 }),
-                page.getByRole('button', { name: /Start 75¢ Stripe Test Checkout/i }).click(),
-              ]);
-              stage = 'stripe_card_entry';
-              await page.waitForLoadState('domcontentloaded');
-              await page.waitForTimeout(3000);
-
-              const cardOk = await fillAcrossFrames(page, ['input[name="cardNumber"]','input[autocomplete="cc-number"]','input[aria-label*="Card number" i]'], '4242424242424242');
-              const expOk = await fillAcrossFrames(page, ['input[name="cardExpiry"]','input[autocomplete="cc-exp"]','input[aria-label*="expiration" i]'], '1230');
-              const cvcOk = await fillAcrossFrames(page, ['input[name="cardCvc"]','input[autocomplete="cc-csc"]','input[aria-label*="CVC" i]'], '123');
-              await fillAcrossFrames(page, ['input[name="billingName"]','input[autocomplete="cc-name"]','input[autocomplete="name"]'], 'DealForge Certification');
-              await fillAcrossFrames(page, ['input[name="billingPostalCode"]','input[autocomplete="postal-code"]'], '73160');
-              if (!cardOk || !expOk || !cvcOk) throw new Error(`card_fields card=${cardOk} exp=${expOk} cvc=${cvcOk}`);
-
-              stage = 'stripe_submit';
-              let clicked = false;
-              for (const frame of page.frames()) {
-                for (const button of [frame.getByRole('button', { name: /Pay/i }).last(), frame.locator('button[type="submit"]').last()]) {
-                  try {
-                    if (await button.count() && await button.isVisible()) {
-                      await button.click({ timeout: 5000 });
-                      clicked = true;
-                      break;
-                    }
-                  } catch {}
-                }
-                if (clicked) break;
+              stage='create_checkout';
+              await Promise.all([page.waitForURL(/checkout\.stripe\.com/,{timeout:60000}),page.getByRole('button',{name:/Start 75¢ Stripe Test Checkout/i}).click()]);
+              stage='stripe_card_entry';
+              await page.waitForLoadState('domcontentloaded'); await page.waitForTimeout(2500);
+              const card=await fill(page,['input[name="cardNumber"]','input[autocomplete="cc-number"]'],'4242424242424242');
+              const exp=await fill(page,['input[name="cardExpiry"]','input[autocomplete="cc-exp"]'],'1230');
+              const cvc=await fill(page,['input[name="cardCvc"]','input[autocomplete="cc-csc"]'],'123');
+              await fill(page,['input[name="billingName"]','input[autocomplete="cc-name"]'],'DealForge Certification');
+              await fill(page,['input[name="billingPostalCode"]','input[autocomplete="postal-code"]'],'73160');
+              if(!card||!exp||!cvc) throw new Error(`card_fields card=${card} exp=${exp} cvc=${cvc}`);
+              stage='stripe_submit';
+              let clicked=false;
+              for(const frame of page.frames()) for(const button of [frame.getByRole('button',{name:/Pay/i}).last(),frame.locator('button[type="submit"]').last()]) {
+                try { if(await button.count()&&await button.isVisible()){await button.click({timeout:5000});clicked=true;break;} } catch {}
               }
-              if (!clicked) throw new Error('pay_button_missing');
-
-              stage = 'dealforge_redirect';
-              await page.waitForURL(/deal-forge\.sale/, { timeout: 90000 });
-              fs.writeFileSync('stripe-phase25-result.txt', `PASS|${stage}|${page.url()}`);
-              console.log(`CHECKOUT_COMPLETE email=${process.env.CERT_EMAIL}`);
-            } catch (error) {
-              const message = error instanceof Error ? error.message : String(error);
-              fs.writeFileSync('stripe-phase25-result.txt', `FAIL|${stage}|${message}`);
-              await page.screenshot({ path: 'stripe-phase25-failure.png', fullPage: true }).catch(() => {});
-              console.error(`PHASE25_FAIL stage=${stage} message=${message}`);
-              process.exitCode = 1;
-            } finally {
-              await browser.close();
-            }
+              if(!clicked) throw new Error('pay_button_missing');
+              stage='dealforge_redirect';
+              await page.waitForURL(/deal-forge\.sale/,{timeout:90000});
+              fs.writeFileSync('stripe-phase25-result.txt',`PASS|${stage}`);
+            } catch(e) {
+              const m=e instanceof Error?e.message:String(e);
+              fs.writeFileSync('stripe-phase25-result.txt',`FAIL|${stage}|${m}`);
+              await page.screenshot({path:'stripe-phase25-failure.png',fullPage:true}).catch(()=>{});
+              process.exitCode=1;
+            } finally { await browser.close(); }
           })();
           NODE
-      - name: Report browser result
+      - name: Report checkout result
         if: always()
         run: |
-          result=$(cat stripe-phase25-result.txt 2>/dev/null || echo 'FAIL|setup|no result file')
-          state=failure
-          [[ "$result" == PASS* ]] && state=success
+          result=$(cat stripe-phase25-result.txt 2>/dev/null || echo 'FAIL|setup|no result')
+          state=failure; [[ "$result" == PASS* ]] && state=success
           desc=$(printf '%s' "$result" | cut -c1-130)
-          gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state="$state" -f context=stripe-phase25-browser -f description="$desc"
+          gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state="$state" -f context=stripe-phase25-checkout -f description="$desc"
           [[ "$state" == success ]]
       - name: Upload failure diagnostics
         if: failure()
