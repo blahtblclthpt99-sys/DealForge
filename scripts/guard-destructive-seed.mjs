@@ -23,11 +23,11 @@ if ((production || !localSqlite) && confirmation !== CONFIRMATION) {
   );
 }
 
-if (!localSqlite) {
+if (production || !localSqlite) {
   const adminEmail = (process.env.ADMIN_EMAIL || "").trim();
   const adminPassword = process.env.ADMIN_PASSWORD || "";
   if (!adminEmail || !adminEmail.includes("@")) {
-    fail("ADMIN_EMAIL must be explicitly configured for a non-local destructive seed.");
+    fail("ADMIN_EMAIL must be explicitly configured for a production or non-local destructive seed.");
   }
   if (adminPassword.length < 16 || BLOCKED_ADMIN_PASSWORDS.has(adminPassword)) {
     fail(
@@ -37,7 +37,7 @@ if (!localSqlite) {
 }
 
 console.log(
-  localSqlite
+  localSqlite && !production
     ? "[DealForge seed guard] local SQLite destructive seed allowed."
-    : "[DealForge seed guard] explicit destructive reset confirmed for non-local database.",
+    : "[DealForge seed guard] explicit destructive reset confirmed for protected database.",
 );

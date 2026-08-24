@@ -34,15 +34,25 @@ test("destructive seed guard blocks production and non-local databases by defaul
   assert.match(postgres.stderr, /Refusing destructive seed/);
 });
 
-test("non-local destructive seed requires explicit non-default admin credentials", () => {
-  const defaultPassword = runGuard({
+test("protected destructive seeds require explicit non-default admin credentials", () => {
+  const postgresDefault = runGuard({
     DATABASE_URL: "postgresql://example.invalid/dealforge",
     ALLOW_DESTRUCTIVE_SEED: confirmation,
     ADMIN_EMAIL: "admin@dealforge.com",
     ADMIN_PASSWORD: "AdminDealForge2026!",
   });
-  assert.notEqual(defaultPassword.status, 0);
-  assert.match(defaultPassword.stderr, /ADMIN_PASSWORD/);
+  assert.notEqual(postgresDefault.status, 0);
+  assert.match(postgresDefault.stderr, /ADMIN_PASSWORD/);
+
+  const productionSqliteDefault = runGuard({
+    DATABASE_URL: "file:./prod.db",
+    NODE_ENV: "production",
+    ALLOW_DESTRUCTIVE_SEED: confirmation,
+    ADMIN_EMAIL: "admin@dealforge.com",
+    ADMIN_PASSWORD: "ChangeMeAdmin123!",
+  });
+  assert.notEqual(productionSqliteDefault.status, 0);
+  assert.match(productionSqliteDefault.stderr, /ADMIN_PASSWORD/);
 
   const approved = runGuard({
     DATABASE_URL: "postgresql://example.invalid/dealforge",
