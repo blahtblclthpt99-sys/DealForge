@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { readSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
+import { evaluateCommerceGate } from "@/lib/commerce-gate";
 import { createStripeCheckoutSession } from "@/lib/stripe-commerce";
 
 export const runtime = "nodejs";
@@ -130,6 +131,7 @@ export async function POST(request: Request) {
         commerceEnabled: true,
         sellingPriceCents: true,
         landedCostCents: true,
+        priceVerifiedAt: true,
         currency: true,
         availability: true,
       },
@@ -144,6 +146,28 @@ export async function POST(request: Request) {
     const certificationBypass = certificationOnly && stripeTestMode();
     if (!commerceEnabled() && !certificationBypass) {
       return NextResponse.json({ error: "COMMERCE_DISABLED" }, { status: 503 });
+    }
+
+    stage = "commercial_gate";
+    for (const product of products) {
+      if (isInternalCertificationProduct(product.specifications) && stripeTestMode()) continue;
+      const decision = evaluateCommerceGate({
+        commerceEnabled: product.commerceEnabled,
+        availability: product.availability,
+        sellingPriceCents: product.sellingPriceCents,
+        landedCostCents: product.landedCostCents,
+        priceVerifiedAt: product.priceVerifiedAt,
+        specifications: product.specifications,
+      });
+      if (!decision.allowed) {
+        console.warn("checkout.commercial_gate.blocked", {
+          productId: product.id,
+          reasons: decision.reasons,
+          contributionProfitCents: decision.contributionProfitCents,
+          contributionMarginBps: decision.contributionMarginBps,
+        });
+        return NextResponse.json({ error: "PRODUCT_COMMERCE_GATE_FAILED" }, { status: 409 });
+      }
     }
 
     stage = "pricing";
