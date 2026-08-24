@@ -12,6 +12,7 @@
 import { prisma } from "../lib/db";
 import { parseJson } from "../lib/utils";
 import { runProductEngine } from "../lib/product-engine";
+import { pauseUnsafeCommerceProducts } from "../lib/commerce-monitor";
 
 type PriceAlert = { id: string; productId: string; targetPrice: number };
 
@@ -42,7 +43,7 @@ async function cleanCache() {
 function amazonPriceIsAuthoritative(product: { retailer: string; priceSource: string | null; priceVerifiedAt: Date | null }) {
   if (product.retailer !== "amazon") return true;
   if (!product.priceSource || !product.priceVerifiedAt) return false;
-  const allowed = new Set(["amazon_creators_api", "amazon_pa_api", "amazon_authorized_feed"]);
+  const allowed = new Set(["amazon_creators_api", "amazon_authorized_api", "amazon_owner_verified"]);
   return allowed.has(product.priceSource) && Date.now() - product.priceVerifiedAt.getTime() <= 24 * 60 * 60 * 1000;
 }
 
@@ -78,9 +79,10 @@ async function runOnce() {
   await refreshTrending();
   await expireFlashDeals();
   await cleanCache();
+  const commerce = await pauseUnsafeCommerceProducts("maintenance-worker");
   const engine = await runProductEngine("maintenance-worker");
   const alerts = await processPriceAlerts();
-  console.log(`[worker] done — product-engine ${engine.processed} candidates, ${alerts} verified price-alert hits`);
+  console.log(`[worker] done — commerce checked ${commerce.checked}, paused ${commerce.paused}; product-engine ${engine.processed} candidates; ${alerts} verified price-alert hits`);
 }
 
 const once = process.argv.includes("--once");
