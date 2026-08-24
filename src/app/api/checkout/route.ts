@@ -5,6 +5,7 @@ import { readSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { evaluateCommerceGate } from "@/lib/commerce-gate";
 import { createStripeCheckoutSession } from "@/lib/stripe-commerce";
+import { resolvePublicAppOrigin } from "@/lib/url-security";
 
 export const runtime = "nodejs";
 
@@ -55,12 +56,6 @@ function sameOrderItems(
     (item, index) =>
       item.productId === requested[index].productId && item.quantity === requested[index].quantity,
   );
-}
-
-function appUrl(request: Request) {
-  const configured = (process.env.NEXT_PUBLIC_APP_URL || "").trim().replace(/\/$/, "");
-  if (configured) return configured;
-  return new URL(request.url).origin;
 }
 
 function commerceEnabled() {
@@ -253,7 +248,7 @@ export async function POST(request: Request) {
     }
 
     stage = "stripe_session";
-    const base = appUrl(request);
+    const base = resolvePublicAppOrigin(request.url);
     const stripeSession = await createStripeCheckoutSession({
       orderId: order.id,
       orderNumber: order.orderNumber,
