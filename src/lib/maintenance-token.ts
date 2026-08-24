@@ -16,15 +16,19 @@ const DERIVATION_CONTEXT = "dealforge:maintenance:v1";
  * one yet, derive a one-way, domain-separated credential from the validated
  * production auth secret rather than transmitting the JWT signing key itself.
  */
-export function resolveMaintenanceToken(env: MaintenanceEnv = process.env) {
-  const dedicated = (env.MAINTENANCE_TOKEN || "").trim();
+export function resolveMaintenanceToken(env?: MaintenanceEnv) {
+  const source: MaintenanceEnv = env ?? {
+    MAINTENANCE_TOKEN: process.env.MAINTENANCE_TOKEN,
+    AUTH_SECRET: process.env.AUTH_SECRET,
+  };
+  const dedicated = (source.MAINTENANCE_TOKEN || "").trim();
   if (dedicated) {
     return dedicated.length >= MIN_MAINTENANCE_TOKEN_LENGTH ? dedicated : "";
   }
 
   try {
     const authSecret = resolveAuthSecret({
-      AUTH_SECRET: env.AUTH_SECRET,
+      AUTH_SECRET: source.AUTH_SECRET,
       NODE_ENV: "production",
     });
     return createHmac("sha256", authSecret).update(DERIVATION_CONTEXT).digest("hex");

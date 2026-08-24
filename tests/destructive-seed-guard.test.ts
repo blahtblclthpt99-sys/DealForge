@@ -10,7 +10,7 @@ function runGuard(env: Record<string, string>) {
   return spawnSync(process.execPath, [guard], {
     encoding: "utf8",
     env: {
-      PATH: process.env.PATH || "",
+      ...process.env,
       ...env,
     },
   });
