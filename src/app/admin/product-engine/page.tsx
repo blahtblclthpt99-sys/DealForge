@@ -6,6 +6,8 @@ import { ProductEngineControls } from "@/components/product-engine-controls";
 
 export const dynamic = "force-dynamic";
 
+const CERTIFICATION_PRODUCT_ID = "cert_test_75c_20260822_v2";
+
 export default async function ProductEnginePage() {
   const session = await readSession();
   if (!session) redirect("/login?next=/admin/product-engine");
@@ -21,7 +23,25 @@ export default async function ProductEnginePage() {
     redirect("/dashboard");
   }
 
-  const data = await productEngineDashboard();
+  const [data, products] = await Promise.all([
+    productEngineDashboard(),
+    prisma.product.findMany({
+      where: { id: { not: CERTIFICATION_PRODUCT_ID } },
+      orderBy: { lastUpdated: "desc" },
+      take: 100,
+      select: {
+        id: true,
+        title: true,
+        slug: true,
+        commerceEnabled: true,
+        sellingPriceCents: true,
+        landedCostCents: true,
+        availability: true,
+        priceSource: true,
+        priceVerifiedAt: true,
+      },
+    }),
+  ]);
   const states = new Map(data.workers.map((worker) => [worker.worker, worker]));
   const stageNames = ["scout-a", "scout-b", "validator", "classifier", "publisher"];
   const metric = (state: string) => data.counts[state] ?? 0;
@@ -32,7 +52,7 @@ export default async function ProductEnginePage() {
         <p className="text-sm font-medium uppercase tracking-wide text-forest">Owner tools</p>
         <h1 className="mt-1 font-display text-3xl font-semibold text-forest-ink sm:text-4xl">Product Engine</h1>
         <p className="mt-2 max-w-3xl text-sm text-forest-muted">
-          Compliant candidate intake. Amazon pages are not scraped; unverified Amazon price and review data are suppressed.
+          Compliant candidate intake, supplier verification, landed-cost analysis, and profit gating. Amazon pages are not scraped; unverified Amazon price and review data are suppressed.
         </p>
       </div>
 
@@ -79,6 +99,17 @@ export default async function ProductEnginePage() {
           score: candidate.score,
           category: candidate.normalizedCategory,
           rejectionReason: candidate.rejectionReason,
+        }))}
+        products={products.map((product) => ({
+          id: product.id,
+          title: product.title,
+          slug: product.slug,
+          commerceEnabled: product.commerceEnabled,
+          sellingPriceCents: product.sellingPriceCents,
+          landedCostCents: product.landedCostCents,
+          availability: product.availability,
+          priceSource: product.priceSource,
+          priceVerifiedAt: product.priceVerifiedAt?.toISOString() ?? null,
         }))}
       />
 
