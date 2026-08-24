@@ -1,3 +1,4 @@
+import { isBroadCatalogCommerceEnabled } from "./commerce-switch";
 import { isDirectResaleSourceClass } from "./source-policy";
 
 const RESERVE_KEYS = [
@@ -136,6 +137,9 @@ export function evaluateCommerceGate(input: CommerceGateInput, nowMs = Date.now(
   const reasons: string[] = [];
   const policy = parsePolicy(input.specifications);
 
+  if (process.env.NODE_ENV === "production" && !isBroadCatalogCommerceEnabled()) {
+    reasons.push("broad_catalog_commerce_locked");
+  }
   if (!input.commerceEnabled) reasons.push("commerce_disabled");
   if (input.availability !== "in_stock") reasons.push("inventory_not_in_stock");
   if (!isSafePositiveInteger(input.sellingPriceCents)) reasons.push("selling_price_invalid");
