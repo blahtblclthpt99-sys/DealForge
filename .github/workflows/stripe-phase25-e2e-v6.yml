@@ -7,11 +7,14 @@ on:
       - 'docs/stripe-phase25-certification-2026-08-24.md'
       - 'src/lib/stripe-commerce.ts'
       - 'src/lib/commerce-gate.ts'
+      - 'src/lib/commercialization.ts'
       - 'src/app/api/checkout/route.ts'
       - 'src/app/api/stripe/webhook/route.ts'
       - 'src/app/api/admin/refunds/route.ts'
+      - 'src/app/api/admin/product-engine/route.ts'
       - 'tests/stripe-commerce.test.ts'
       - 'tests/commerce-gate.test.ts'
+      - 'tests/commercialization.test.ts'
 permissions:
   contents: read
   statuses: write
