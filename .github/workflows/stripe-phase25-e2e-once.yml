@@ -1,0 +1,132 @@
+name: Stripe Phase 2.5 E2E Once
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/stripe-phase25-e2e-once.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  checkout-certification:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Install dependencies
+        run: npm ci --no-fund --no-audit
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Complete live DealForge 75-cent test Checkout
+        env:
+          CERT_EMAIL: phase25-e2e-20260823-1946@example.com
+        run: |
+          node <<'NODE'
+          const { chromium } = require('playwright');
+          const fs = require('fs');
+
+          async function fillAcrossFrames(page, selectors, value) {
+            for (const frame of page.frames()) {
+              for (const selector of selectors) {
+                try {
+                  const el = frame.locator(selector).first();
+                  if (await el.count()) {
+                    await el.fill(value, { timeout: 3000 });
+                    return true;
+                  }
+                } catch {}
+              }
+            }
+            return false;
+          }
+
+          (async () => {
+            const browser = await chromium.launch({ headless: true });
+            const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+            try {
+              await page.goto('https://www.deal-forge.sale/stripe-certification', { waitUntil: 'networkidle', timeout: 60000 });
+              await page.locator('#cert-email').fill(process.env.CERT_EMAIL);
+              await Promise.all([
+                page.waitForURL(/checkout\.stripe\.com/, { timeout: 60000 }),
+                page.getByRole('button', { name: /Start 75¢ Stripe Test Checkout/i }).click(),
+              ]);
+
+              await page.waitForLoadState('domcontentloaded');
+              await page.waitForTimeout(2500);
+
+              const cardOk = await fillAcrossFrames(page, [
+                'input[name="cardNumber"]',
+                'input[autocomplete="cc-number"]',
+                'input[aria-label*="Card number" i]'
+              ], '4242424242424242');
+              const expOk = await fillAcrossFrames(page, [
+                'input[name="cardExpiry"]',
+                'input[autocomplete="cc-exp"]',
+                'input[aria-label*="expiration" i]'
+              ], '1230');
+              const cvcOk = await fillAcrossFrames(page, [
+                'input[name="cardCvc"]',
+                'input[autocomplete="cc-csc"]',
+                'input[aria-label*="CVC" i]'
+              ], '123');
+
+              await fillAcrossFrames(page, [
+                'input[name="billingName"]',
+                'input[autocomplete="cc-name"]',
+                'input[autocomplete="name"]'
+              ], 'DealForge Certification');
+              await fillAcrossFrames(page, [
+                'input[name="billingPostalCode"]',
+                'input[autocomplete="postal-code"]'
+              ], '73160');
+
+              if (!cardOk || !expOk || !cvcOk) {
+                throw new Error(`Stripe card fields missing card=${cardOk} exp=${expOk} cvc=${cvcOk}`);
+              }
+
+              let clicked = false;
+              for (const frame of page.frames()) {
+                const buttons = [
+                  frame.getByRole('button', { name: /Pay/i }).last(),
+                  frame.locator('button[type="submit"]').last(),
+                ];
+                for (const button of buttons) {
+                  try {
+                    if (await button.count() && await button.isVisible()) {
+                      await button.click({ timeout: 5000 });
+                      clicked = true;
+                      break;
+                    }
+                  } catch {}
+                }
+                if (clicked) break;
+              }
+              if (!clicked) throw new Error('Stripe Pay button not found');
+
+              await page.waitForURL(/deal-forge\.sale/, { timeout: 90000 });
+              console.log(`CHECKOUT_COMPLETE final_url=${page.url()} email=${process.env.CERT_EMAIL}`);
+            } catch (error) {
+              console.error(error);
+              await page.screenshot({ path: 'stripe-phase25-failure.png', fullPage: true }).catch(() => {});
+              fs.writeFileSync('stripe-phase25-url.txt', page.url());
+              process.exitCode = 1;
+            } finally {
+              await browser.close();
+            }
+          })();
+          NODE
+      - name: Upload failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stripe-phase25-e2e-failure
+          path: |
+            stripe-phase25-failure.png
+            stripe-phase25-url.txt
+          if-no-files-found: ignore
