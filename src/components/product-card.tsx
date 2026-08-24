@@ -66,7 +66,7 @@ export function ProductCard({ product, wishlisted = false, onToggleWishlist }: {
         <div className="mt-auto flex items-end justify-between gap-2 pt-2">
           <div>
             {amazonUnverified ? (
-              <p className="text-sm font-bold leading-snug text-forest">Check price & availability</p>
+              <p className="text-sm font-bold leading-snug text-forest">Check current price on Amazon</p>
             ) : (
               <>
                 <p className="text-lg font-bold text-forest">{formatPrice(product.price)}</p>
