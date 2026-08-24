@@ -13,6 +13,11 @@ import { prisma } from "../lib/db";
 import { parseJson } from "../lib/utils";
 import { runProductEngine } from "../lib/product-engine";
 import { pauseUnsafeCommerceProducts } from "../lib/commerce-monitor";
+import {
+  AMAZON_PRICE_MAX_AGE_MS,
+  isAuthorizedAmazonPriceSource,
+  isFreshVerification,
+} from "../lib/source-policy";
 
 type PriceAlert = { id: string; productId: string; targetPrice: number };
 
@@ -42,9 +47,8 @@ async function cleanCache() {
 
 function amazonPriceIsAuthoritative(product: { retailer: string; priceSource: string | null; priceVerifiedAt: Date | null }) {
   if (product.retailer !== "amazon") return true;
-  if (!product.priceSource || !product.priceVerifiedAt) return false;
-  const allowed = new Set(["amazon_creators_api", "amazon_authorized_api", "amazon_owner_verified"]);
-  return allowed.has(product.priceSource) && Date.now() - product.priceVerifiedAt.getTime() <= 24 * 60 * 60 * 1000;
+  return isAuthorizedAmazonPriceSource(product.priceSource)
+    && isFreshVerification(product.priceVerifiedAt, AMAZON_PRICE_MAX_AGE_MS);
 }
 
 async function processPriceAlerts() {
