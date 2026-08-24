@@ -132,7 +132,6 @@ export async function POST(request: Request) {
         commerceEnabled: true,
         sellingPriceCents: true,
         landedCostCents: true,
-        priceVerifiedAt: true,
         currency: true,
         availability: true,
       },
@@ -159,7 +158,6 @@ export async function POST(request: Request) {
         availability: product.availability,
         sellingPriceCents: product.sellingPriceCents,
         landedCostCents: product.landedCostCents,
-        priceVerifiedAt: product.priceVerifiedAt,
         specifications: product.specifications,
       });
       if (!decision.allowed) {
