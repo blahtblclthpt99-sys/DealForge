@@ -239,6 +239,7 @@ export async function POST(request: Request) {
       })),
       successUrl: `${base}/checkout/success?order=${encodeURIComponent(order.orderNumber)}`,
       cancelUrl: `${base}/checkout/cancel?order=${encodeURIComponent(order.orderNumber)}`,
+      cardOnly: certificationOnly && stripeTestMode(),
     });
 
     if (!stripeSession.id || !stripeSession.url) {
