@@ -1,11 +1,11 @@
 import type { Metadata } from "next";
 import { Suspense } from "react";
-import { SearchClient } from "@/components/search-client";
+import { SearchClientV2 } from "@/components/search-client-v2";
 import { getCategories, getTopBrands, queryProducts } from "@/lib/products";
 
 export const metadata: Metadata = {
-  title: "Search",
-  description: "Live search DealForge products with filters for price, rating, brand, and savings.",
+  title: "Shop & Search",
+  description: "Search DealForge products by category and brand with clear price and availability confidence.",
 };
 
 type Props = {
@@ -14,9 +14,9 @@ type Props = {
 
 export default async function SearchPage({ searchParams }: Props) {
   const sp = await searchParams;
-  const get = (k: string) => {
-    const v = sp[k];
-    return Array.isArray(v) ? v[0] : v;
+  const get = (key: string) => {
+    const value = sp[key];
+    return Array.isArray(value) ? value[0] : value;
   };
 
   const [result, categories, brands] = await Promise.all([
@@ -24,10 +24,6 @@ export default async function SearchPage({ searchParams }: Props) {
       q: get("q"),
       category: get("category"),
       brand: get("brand"),
-      minPrice: get("minPrice") ? Number(get("minPrice")) : undefined,
-      maxPrice: get("maxPrice") ? Number(get("maxPrice")) : undefined,
-      minRating: get("minRating") ? Number(get("minRating")) : undefined,
-      minDiscount: get("minDiscount") ? Number(get("minDiscount")) : undefined,
       sort: get("sort") || "rank",
       featured: get("featured") === "1",
       page: 1,
@@ -38,15 +34,20 @@ export default async function SearchPage({ searchParams }: Props) {
   ]);
 
   return (
-    <div className="dn-container py-12">
-      <h1 className="font-display text-4xl font-semibold text-forest-ink">Search</h1>
-      <p className="mt-2 text-forest-muted">Filter by category, price, rating, brand, and discount.</p>
-      <div className="mt-8">
+    <div className="dn-container py-8 md:py-12">
+      <div className="max-w-2xl">
+        <p className="text-sm font-semibold uppercase tracking-[0.16em] text-forest">Shop DealForge</p>
+        <h1 className="mt-2 font-display text-3xl font-semibold text-forest-ink md:text-4xl">Find what you need faster</h1>
+        <p className="mt-2 text-sm text-forest-muted md:text-base">
+          Search by product, brand, or category. Price and stock claims are shown only when DealForge has enough current verification to support them.
+        </p>
+      </div>
+      <div className="mt-6 md:mt-8">
         <Suspense fallback={<div className="skeleton h-96 rounded-2xl" />}>
-          <SearchClient
+          <SearchClientV2
             initialItems={result.items}
             initialTotal={result.total}
-            categories={categories.map((c) => ({ slug: c.slug, name: c.name }))}
+            categories={categories.map((category) => ({ slug: category.slug, name: category.name }))}
             brands={brands}
           />
         </Suspense>
