@@ -3,6 +3,7 @@ import { readSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { productEngineDashboard } from "@/lib/product-engine";
 import { ProductEngineControls } from "@/components/product-engine-controls";
+import { CommercialPriceRecommender } from "@/components/commercial-price-recommender";
 
 export const dynamic = "force-dynamic";
 
@@ -75,7 +76,7 @@ export default async function ProductEnginePage() {
         <p className="text-sm font-medium uppercase tracking-wide text-forest">Owner tools</p>
         <h1 className="mt-1 font-display text-3xl font-semibold text-forest-ink sm:text-4xl">Product Engine</h1>
         <p className="mt-2 max-w-3xl text-sm text-forest-muted">
-          Compliant candidate intake, supplier verification, landed-cost analysis, and profit gating. Amazon pages are not scraped; unverified Amazon price and review data are suppressed.
+          Compliant candidate intake, supplier verification, landed-cost analysis, dynamic pricing, and profit gating. Amazon pages are not scraped; unverified Amazon price and review data are suppressed.
         </p>
       </div>
 
@@ -111,6 +112,8 @@ export default async function ProductEnginePage() {
           </article>
         ))}
       </section>
+
+      <CommercialPriceRecommender />
 
       <ProductEngineControls
         paused={data.config.paused}
