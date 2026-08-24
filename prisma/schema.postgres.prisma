@@ -71,7 +71,8 @@ model Product {
   lastUpdated        DateTime @default(now())
   createdAt          DateTime @default(now())
 
-  clicks ClickEvent[]
+  clicks         ClickEvent[]
+  supplierOffers SupplierOffer[]
 
   @@index([categoryId])
   @@index([subcategory])
@@ -85,6 +86,57 @@ model Product {
   @@index([isFeatured])
   @@index([isFlashDeal])
   @@index([commerceEnabled])
+}
+
+model Supplier {
+  id                 String   @id @default(cuid())
+  key                String   @unique
+  name               String
+  sourceClass        String
+  websiteUrl         String?
+  active             Boolean  @default(false)
+  resaleAllowed      Boolean  @default(false)
+  sourceVerifiedAt   DateTime?
+  verificationSource String?
+  metadata           String   @default("{}")
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+  offers             SupplierOffer[]
+
+  @@index([active])
+  @@index([sourceClass])
+  @@index([sourceVerifiedAt])
+}
+
+model SupplierOffer {
+  id                     String   @id @default(cuid())
+  offerKey               String   @unique
+  supplierId             String
+  supplier               Supplier @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  productId              String
+  product                Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  externalOfferId        String?
+  sourceUrl              String?
+  active                 Boolean  @default(false)
+  availability           String   @default("unknown")
+  currency               String   @default("usd")
+  itemCostCents          Int
+  shippingCents          Int      @default(0)
+  taxCents               Int      @default(0)
+  supplierFeeCents       Int      @default(0)
+  handlingCents          Int      @default(0)
+  priceVerifiedAt        DateTime?
+  inventoryConfidenceBps Int      @default(0)
+  priority               Int      @default(100)
+  metadata               String   @default("{}")
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  @@index([productId, active])
+  @@index([supplierId, active])
+  @@index([availability])
+  @@index([priceVerifiedAt])
+  @@index([priority])
 }
 
 model AffiliateProvider {
