@@ -10,6 +10,7 @@ const BLOCKED_PRODUCTION_SECRETS = new Set([
   "dev-insecure-secret",
   "change-me-to-a-long-random-string",
   "generate-a-long-random-string",
+  "CHANGE-ME-generate-a-long-random-string",
   DEVELOPMENT_FALLBACK,
 ]);
 
