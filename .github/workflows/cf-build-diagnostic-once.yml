@@ -30,9 +30,9 @@ jobs:
             gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=success -f context=cf-build-diagnostic-pass -f description='Cloudflare build passed'
             exit 0
           fi
-          line=$(grep -Ei 'Type error|Module not found|Error:|Failed to compile|Prisma|OpenNext|Build failed|SyntaxError|ReferenceError' cf-build.log | tail -n 1)
-          [[ -n "$line" ]] || line=$(tail -n 1 cf-build.log)
-          slug=$(printf '%s' "$line" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g;s/^-+|-+$//g' | cut -c1-85)
+          line=$(grep -Ei 'Type error|Module not found|Error:|Failed to compile|Prisma|OpenNext|Build failed|SyntaxError|ReferenceError|Cannot find|not assignable|Property .* does not exist' cf-build.log | grep -Ev '^[[:space:]]*at ' | tail -n 1)
+          [[ -n "$line" ]] || line=$(grep -Ev '^[[:space:]]*at ' cf-build.log | tail -n 1)
+          slug=$(printf '%s' "$line" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g;s/^-+|-+$//g' | cut -c1-95)
           [[ -n "$slug" ]] || slug=unknown
           gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=failure -f context="cf-build-fail-${slug}" -f description='Sanitized Cloudflare build failure fingerprint'
           exit $code
