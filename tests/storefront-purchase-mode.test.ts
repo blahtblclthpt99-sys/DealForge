@@ -1,6 +1,17 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import test from "node:test";
+
+async function runtimeSourceFiles(root = "src"): Promise<string[]> {
+  const entries = await readdir(root, { withFileTypes: true });
+  const files: string[] = [];
+  for (const entry of entries) {
+    const path = `${root}/${entry.name}`;
+    if (entry.isDirectory()) files.push(...await runtimeSourceFiles(path));
+    else if (/\.(?:ts|tsx|js|jsx)$/.test(entry.name)) files.push(path);
+  }
+  return files;
+}
 
 test("direct purchase button uses DealForge checkout while affiliate mode uses outbound route", async () => {
   const source = await readFile("src/components/buy-button.tsx", "utf8");
@@ -24,8 +35,13 @@ test("product page separates verified direct sales from DealForge estimates", as
   assert.match(page, /affiliateLabel="View source listing"/);
   assert.match(page, /Your payment is processed through DealForge secure checkout/);
   assert.match(card, /DealForge estimate/);
-  assert.doesNotMatch(page, /Check current price on Amazon/i);
-  assert.doesNotMatch(card, /Check current price on Amazon/i);
+});
+
+test("runtime UI never tells customers to check Amazon for a price", async () => {
+  for (const path of await runtimeSourceFiles()) {
+    const source = await readFile(path, "utf8");
+    assert.doesNotMatch(source, /Check current price on Amazon/i, path);
+  }
 });
 
 test("public product DTO calculates estimates but checkout authority remains separate", async () => {
