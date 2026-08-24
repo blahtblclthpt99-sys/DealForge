@@ -16,8 +16,8 @@ jobs:
     timeout-minutes: 15
     env:
       GH_TOKEN: ${{ github.token }}
-      CERT_EMAIL: phase25-final-20260823-2027@example.com
-      CHECKOUT_KEY: phase25-final-20260823-2027
+      CERT_EMAIL: phase25-final-v2-20260823-2027@example.com
+      CHECKOUT_KEY: phase25-final-v2-20260823-2027
     steps:
       - uses: actions/checkout@v4
 
@@ -29,7 +29,7 @@ jobs:
           code=$(curl --retry 3 --retry-all-errors --retry-delay 2 -sS -o checkout.json -w '%{http_code}' \
             -X POST 'https://www.deal-forge.sale/api/checkout' \
             -H 'content-type: application/json' \
-            --data "{\"checkoutKey\":\"${CHECKOUT_KEY}\",\"email\":\"${CERT_EMAIL}\",\"items\":[{\"productId\":\"cert_test_75c_20260822_v2\",\"quantity\":1}]}"
+            --data "{\"checkoutKey\":\"${CHECKOUT_KEY}\",\"email\":\"${CERT_EMAIL}\",\"items\":[{\"productId\":\"cert_test_75c_20260822_v2\",\"quantity\":1}]}")
           error=$(node -e "const j=require('./checkout.json');process.stdout.write(String(j.error||''))")
           safe=$(printf '%s' "${error:-none}" | tr '[:upper:]_' '[:lower:]-' | tr -cd 'a-z0-9-' | cut -c1-40)
           state=failure; [[ "$code" == 201 ]] && state=success
