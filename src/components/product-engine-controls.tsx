@@ -13,7 +13,20 @@ type CandidateRow = {
   rejectionReason: string | null;
 };
 
+type ProductRow = {
+  id: string;
+  title: string;
+  slug: string;
+  commerceEnabled: boolean;
+  sellingPriceCents: number | null;
+  landedCostCents: number | null;
+  availability: string;
+  priceSource: string | null;
+  priceVerifiedAt: string | null;
+};
+
 type SourceType = "owner_asin" | "owner_special_link" | "public_reference";
+type DirectSourceClass = "manufacturer" | "wholesale" | "distributor" | "authorized_dropshipper" | "retailer_permitting_resale";
 
 async function engineAction(body: Record<string, unknown>) {
   const res = await fetch("/api/admin/product-engine", {
@@ -26,7 +39,19 @@ async function engineAction(body: Record<string, unknown>) {
   return payload;
 }
 
-export function ProductEngineControls({ paused, candidates }: { paused: boolean; candidates: CandidateRow[] }) {
+function dollarsToCents(value: string, field: string, allowZero = false) {
+  const trimmed = value.trim();
+  if (!/^\d+(?:\.\d{1,2})?$/.test(trimmed)) throw new Error(`${field} must be a valid dollar amount`);
+  const cents = Math.round(Number(trimmed) * 100);
+  if (!Number.isSafeInteger(cents) || cents < 0 || (!allowZero && cents === 0)) throw new Error(`${field} is invalid`);
+  return cents;
+}
+
+function formatMoney(cents: number | null) {
+  return cents === null ? "—" : `$${(cents / 100).toFixed(2)}`;
+}
+
+export function ProductEngineControls({ paused, candidates, products }: { paused: boolean; candidates: CandidateRow[]; products: ProductRow[] }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
@@ -39,12 +64,36 @@ export function ProductEngineControls({ paused, candidates }: { paused: boolean;
   const [sourceType, setSourceType] = useState<SourceType>("owner_asin");
   const [scout, setScout] = useState<"scout-a" | "scout-b">("scout-a");
 
+  const [productId, setProductId] = useState(products[0]?.id ?? "");
+  const [supplierName, setSupplierName] = useState("");
+  const [sourceClass, setSourceClass] = useState<DirectSourceClass>("authorized_dropshipper");
+  const [supplierUrl, setSupplierUrl] = useState("");
+  const [itemCost, setItemCost] = useState("");
+  const [shippingCost, setShippingCost] = useState("0");
+  const [taxCost, setTaxCost] = useState("0");
+  const [supplierFee, setSupplierFee] = useState("0");
+  const [handlingCost, setHandlingCost] = useState("0");
+  const [sellingPrice, setSellingPrice] = useState("");
+  const [inventoryConfidence, setInventoryConfidence] = useState("95");
+  const [acquisitionReserve, setAcquisitionReserve] = useState("0");
+  const [availability, setAvailability] = useState<"in_stock" | "out_of_stock" | "unknown">("in_stock");
+
   async function act(body: Record<string, unknown>, success: string) {
     setBusy(true);
     setMessage("");
     try {
-      await engineAction(body);
-      setMessage(success);
+      const payload = await engineAction(body);
+      const decision = payload?.decision as { reasons?: string[]; contributionProfitCents?: number | null; contributionMarginBps?: number | null } | undefined;
+      if (body.action === "commercialize" && payload?.commerceReady === false) {
+        const reasons = Array.isArray(decision?.reasons) ? decision.reasons.join(", ") : "commercial gate blocked";
+        setMessage(`Saved supplier evidence, but commerce remains blocked: ${reasons}.`);
+      } else if (body.action === "commercialize" && payload?.commerceReady === true) {
+        const profit = typeof decision?.contributionProfitCents === "number" ? formatMoney(decision.contributionProfitCents) : "verified";
+        const margin = typeof decision?.contributionMarginBps === "number" ? `${(decision.contributionMarginBps / 100).toFixed(1)}%` : "verified";
+        setMessage(`Commercial gate passed. Estimated contribution profit ${profit}; margin ${margin}.`);
+      } else {
+        setMessage(success);
+      }
       router.refresh();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Action failed");
@@ -74,6 +123,40 @@ export function ProductEngineControls({ paused, candidates }: { paused: boolean;
     setSourceUrl("");
   }
 
+  async function commercialize(e: React.FormEvent) {
+    e.preventDefault();
+    if (!productId) {
+      setMessage("Choose a product before running the commercial gate.");
+      return;
+    }
+    try {
+      const confidence = Number(inventoryConfidence);
+      if (!Number.isFinite(confidence) || confidence < 0 || confidence > 100) throw new Error("Inventory confidence must be 0–100%.");
+      const now = new Date().toISOString();
+      await act({
+        action: "commercialize",
+        productId,
+        supplierName,
+        sourceClass,
+        sourceUrl: supplierUrl || undefined,
+        resaleAllowed: true,
+        sourceVerifiedAt: now,
+        priceVerifiedAt: now,
+        itemCostCents: dollarsToCents(itemCost, "Item cost"),
+        shippingCents: dollarsToCents(shippingCost, "Shipping", true),
+        taxCents: dollarsToCents(taxCost, "Tax", true),
+        supplierFeeCents: dollarsToCents(supplierFee, "Supplier fee", true),
+        handlingCents: dollarsToCents(handlingCost, "Handling", true),
+        sellingPriceCents: dollarsToCents(sellingPrice, "Selling price"),
+        inventoryConfidenceBps: Math.round(confidence * 100),
+        acquisitionReserveCents: dollarsToCents(acquisitionReserve, "Acquisition reserve", true),
+        availability,
+      }, "Commercial gate evaluated.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Commercial gate input is invalid");
+    }
+  }
+
   return (
     <>
       <section className="dn-card mt-8 min-w-0 overflow-hidden p-5">
@@ -85,8 +168,9 @@ export function ProductEngineControls({ paused, candidates }: { paused: boolean;
             <button disabled={busy} onClick={() => act({ action: "pause" }, "Product Engine paused.")} className="rounded-xl border border-card-border px-4 py-2 text-sm font-semibold text-forest-ink disabled:opacity-50">Pause</button>
           )}
           <a href="#review-queue" className="rounded-xl border border-card-border px-4 py-2 text-sm font-semibold text-forest-ink">Review</a>
+          <a href="#commercial-gate" className="rounded-xl border border-card-border px-4 py-2 text-sm font-semibold text-forest-ink">Profit Gate</a>
         </div>
-        <p className="mt-3 text-xs text-forest-muted">Discovery means processing candidates supplied by the owner or recorded from permissible public references. It does not crawl or scrape Amazon.</p>
+        <p className="mt-3 text-xs text-forest-muted">Discovery processes owner-supplied candidates and permissible public references. It does not crawl or scrape Amazon.</p>
         {message ? <p role="status" className="mt-3 break-words text-sm text-forest-muted">{message}</p> : null}
       </section>
 
@@ -108,6 +192,48 @@ export function ProductEngineControls({ paused, candidates }: { paused: boolean;
           {sourceType === "public_reference" ? <input required value={sourceUrl} onChange={(e) => setSourceUrl(e.target.value)} placeholder="Public source URL" maxLength={2000} className="min-w-0 rounded-xl border border-card-border bg-card px-3 py-2 text-sm sm:col-span-2" /> : null}
           <button disabled={busy} type="submit" className="rounded-xl bg-forest px-4 py-2 text-sm font-semibold text-white disabled:opacity-50 sm:col-span-2">Add candidate</button>
         </form>
+      </section>
+
+      <section id="commercial-gate" className="dn-card mt-6 min-w-0 scroll-mt-6 overflow-hidden p-5">
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <h2 className="font-display text-xl font-semibold text-forest-ink">Supplier & profit gate</h2>
+            <p className="mt-1 max-w-3xl text-sm text-forest-muted">Record verified resale permission and supplier economics. A product is commerce-enabled only when landed cost, reserves, inventory confidence, minimum profit, and minimum margin all pass.</p>
+          </div>
+          <span className="rounded-full border border-card-border px-3 py-1 text-xs font-semibold text-forest-muted">Owner only</span>
+        </div>
+
+        {products.length ? (
+          <form onSubmit={commercialize} className="mt-5 grid min-w-0 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            <label className="min-w-0 text-xs font-medium text-forest-muted sm:col-span-2 lg:col-span-3">Product
+              <select required value={productId} onChange={(e) => setProductId(e.target.value)} className="mt-1 w-full min-w-0 rounded-xl border border-card-border bg-card px-3 py-2 text-sm text-forest-ink">
+                {products.map((product) => <option key={product.id} value={product.id}>{product.title} · {product.commerceEnabled ? "commerce ready" : "blocked"}</option>)}
+              </select>
+            </label>
+            <label className="text-xs font-medium text-forest-muted">Supplier name<input required value={supplierName} onChange={(e) => setSupplierName(e.target.value)} maxLength={160} className="mt-1 w-full rounded-xl border border-card-border bg-card px-3 py-2 text-sm text-forest-ink" /></label>
+            <label className="text-xs font-medium text-forest-muted">Source class<select value={sourceClass} onChange={(e) => setSourceClass(e.target.value as DirectSourceClass)} className="mt-1 w-full rounded-xl border border-card-border bg-card px-3 py-2 text-sm text-forest-ink"><option value="authorized_dropshipper">Authorized dropshipper</option><option value="manufacturer">Manufacturer</option><option value="wholesale">Wholesale</option><option value="distributor">Distributor</option><option value="retailer_permitting_resale">Retailer permitting resale</option></select></label>
+            <label className="text-xs font-medium text-forest-muted">Verified supplier URL<input value={supplierUrl} onChange={(e) => setSupplierUrl(e.target.value)} placeholder="https://…" maxLength={2000} className="mt-1 w-full rounded-xl border border-card-border bg-card px-3 py-2 text-sm text-forest-ink" /></label>
+            <label className="text-xs font-medium text-forest-muted">Item cost ($)<input required inputMode="decimal" value={itemCost} onChange={(e) => setItemCost(e.target.value)} placeholder="25.00" className="mt-1 w-full rounded-xl border border-card-border bg-card px-3 py-2 text-sm text-forest-ink" /></label>
+            <label className="text-xs font-medium text-forest-muted">Shipping ($)<input required inputMode="decimal" value={shippingCost} onChange={(e) => setShippingCost(e.target.value)} className="mt-1 w-full rounded-xl border border-card-border bg-card px-3 py-2 text-sm text-forest-ink" /></label>
+            <label className="text-xs font-medium text-forest-muted">Tax ($)<input required inputMode="decimal" value={taxCost} onChange={(e) => setTaxCost(e.target.value)} className="mt-1 w-full rounded-xl border border-card-border bg-card px-3 py-2 text-sm text-forest-ink" /></label>
+            <label className="text-xs font-medium text-forest-muted">Supplier fee ($)<input required inputMode="decimal" value={supplierFee} onChange={(e) => setSupplierFee(e.target.value)} className="mt-1 w-full rounded-xl border border-card-border bg-card px-3 py-2 text-sm text-forest-ink" /></label>
+            <label className="text-xs font-medium text-forest-muted">Handling ($)<input required inputMode="decimal" value={handlingCost} onChange={(e) => setHandlingCost(e.target.value)} className="mt-1 w-full rounded-xl border border-card-border bg-card px-3 py-2 text-sm text-forest-ink" /></label>
+            <label className="text-xs font-medium text-forest-muted">Selling price ($)<input required inputMode="decimal" value={sellingPrice} onChange={(e) => setSellingPrice(e.target.value)} placeholder="39.99" className="mt-1 w-full rounded-xl border border-card-border bg-card px-3 py-2 text-sm text-forest-ink" /></label>
+            <label className="text-xs font-medium text-forest-muted">Inventory confidence (%)<input required inputMode="decimal" value={inventoryConfidence} onChange={(e) => setInventoryConfidence(e.target.value)} className="mt-1 w-full rounded-xl border border-card-border bg-card px-3 py-2 text-sm text-forest-ink" /></label>
+            <label className="text-xs font-medium text-forest-muted">Acquisition reserve ($)<input required inputMode="decimal" value={acquisitionReserve} onChange={(e) => setAcquisitionReserve(e.target.value)} className="mt-1 w-full rounded-xl border border-card-border bg-card px-3 py-2 text-sm text-forest-ink" /></label>
+            <label className="text-xs font-medium text-forest-muted">Availability<select value={availability} onChange={(e) => setAvailability(e.target.value as typeof availability)} className="mt-1 w-full rounded-xl border border-card-border bg-card px-3 py-2 text-sm text-forest-ink"><option value="in_stock">In stock</option><option value="out_of_stock">Out of stock</option><option value="unknown">Unknown</option></select></label>
+            <div className="flex items-end sm:col-span-2 lg:col-span-3"><button disabled={busy} type="submit" className="w-full rounded-xl bg-forest px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50">Verify source, calculate landed cost & run profit gate</button></div>
+          </form>
+        ) : <p className="mt-4 text-sm text-forest-muted">No normal catalog products are available for commercialization yet.</p>}
+
+        {products.length ? (
+          <div className="mt-6 overflow-x-auto">
+            <table className="w-full min-w-[760px] text-left text-xs">
+              <thead><tr className="border-b border-card-border text-forest-muted"><th className="p-2">Product</th><th className="p-2">Commerce</th><th className="p-2">Sell</th><th className="p-2">Landed</th><th className="p-2">Availability</th><th className="p-2">Source</th><th className="p-2">Verified</th></tr></thead>
+              <tbody>{products.map((product) => <tr key={product.id} className="border-b border-card-border/70"><td className="max-w-[18rem] break-words p-2"><a className="underline" href={`/product/${product.slug}`}>{product.title}</a></td><td className="p-2 font-semibold">{product.commerceEnabled ? "READY" : "BLOCKED"}</td><td className="p-2">{formatMoney(product.sellingPriceCents)}</td><td className="p-2">{formatMoney(product.landedCostCents)}</td><td className="p-2">{product.availability}</td><td className="max-w-[12rem] break-words p-2">{product.priceSource ?? "—"}</td><td className="p-2">{product.priceVerifiedAt ? new Date(product.priceVerifiedAt).toLocaleString() : "—"}</td></tr>)}</tbody>
+            </table>
+          </div>
+        ) : null}
       </section>
 
       <section id="review-queue" className="dn-card mt-6 min-w-0 scroll-mt-6 overflow-hidden p-5">
