@@ -16,8 +16,8 @@ jobs:
     timeout-minutes: 15
     env:
       GH_TOKEN: ${{ github.token }}
-      CERT_EMAIL: phase25-final-v3-20260823-2027@example.com
-      CHECKOUT_KEY: phase25-final-v3-20260823-2027
+      CERT_EMAIL: phase25-final-v4-20260823-2058@example.com
+      CHECKOUT_KEY: phase25-final-v4-20260823-2058
     steps:
       - uses: actions/checkout@v4
 
