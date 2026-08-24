@@ -1,0 +1,49 @@
+name: Cloudflare Build Diagnostic
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  statuses: write
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+      WORKERS_CI_COMMIT_SHA: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci --no-fund --no-audit
+      - name: Build with failure fingerprint
+        shell: bash
+        run: |
+          set +e
+          npm run cf:build 2>&1 | tee /tmp/cf-build.log
+          code=${PIPESTATUS[0]}
+          if [[ "$code" == 0 ]]; then
+            gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
+              -f state=success \
+              -f context=cloudflare-build-diagnostic \
+              -f description='Cloudflare diagnostic build succeeded'
+            exit 0
+          fi
+
+          fingerprint=$(grep -E 'Type error:|error TS[0-9]+:|Error:|Failed to compile|Build failed|Module not found|Cannot find|is not assignable|Property .* does not exist' /tmp/cf-build.log | tail -n 1 | tr '\n\r' '  ' | sed -E 's/[[:space:]]+/ /g' | cut -c1-115)
+          [[ -n "$fingerprint" ]] || fingerprint=$(tail -n 1 /tmp/cf-build.log | tr '\n\r' '  ' | sed -E 's/[[:space:]]+/ /g' | cut -c1-115)
+          [[ -n "$fingerprint" ]] || fingerprint="build exited ${code} without diagnostic text"
+          gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
+            -f state=failure \
+            -f context=cloudflare-build-diagnostic \
+            -f description="$fingerprint"
+          exit "$code"
