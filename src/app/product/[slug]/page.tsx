@@ -81,7 +81,7 @@ export default async function ProductPage({ params }: Props) {
           </div>
 
           {amazonUnverified ? (
-            <div className="mt-6 rounded-2xl border border-card-border bg-card p-4"><p className="text-xl font-bold text-forest">Check price & availability on Amazon</p><p className="mt-1 text-xs leading-relaxed text-forest-muted">DealForge does not present Amazon price, discount, rating, reviews, or stock as current without an authorized fresh source.</p></div>
+            <div className="mt-6 rounded-2xl border border-card-border bg-card p-4"><p className="text-xl font-bold text-forest">Check current price on Amazon</p><p className="mt-1 text-xs leading-relaxed text-forest-muted">Check current availability on the retailer listing. DealForge does not present Amazon price, discount, rating, reviews, or stock as current without an authorized fresh source.</p></div>
           ) : (
             <>
               <div className="mt-6 flex items-end gap-3"><p className="text-4xl font-bold text-forest">{formatPrice(product.price)}</p>{product.originalPrice > product.price && <p className="pb-1 text-lg text-forest-muted line-through">{formatPrice(product.originalPrice)}</p>}{save && <span className="mb-1 rounded-full bg-forest px-2.5 py-1 text-xs font-semibold text-white">{save}</span>}</div>
@@ -93,10 +93,10 @@ export default async function ProductPage({ params }: Props) {
           <p className="mt-6 text-sm leading-relaxed text-forest-muted">{product.description}</p>
 
           <div className="mt-8 flex flex-wrap gap-3">
-            {!unavailable && <BuyButton productId={product.id} retailer={product.retailer} purchaseMode={product.purchaseMode} customerEmail={session?.email ?? ""} affiliateLabel={amazonUnverified ? "Check price & availability on Amazon" : "View retailer listing"} />}
+            {!unavailable && <BuyButton productId={product.id} retailer={product.retailer} purchaseMode={product.purchaseMode} customerEmail={session?.email ?? ""} affiliateLabel={amazonUnverified ? "Check current price on Amazon" : "View retailer listing"} />}
             <WishlistButton productId={product.id} initial={wishlist.includes(product.id)} />
           </div>
-          {!unavailable && <p className="mt-3 text-[11px] leading-relaxed text-forest-muted/70">{direct ? "Payment is processed through DealForge secure checkout. Order state is confirmed from verified payment events." : product.retailer === "amazon" ? "The Amazon button opens the retailer listing; DealForge may earn a commission from qualifying purchases." : "The retailer button opens the current source in a new tab."}</p>}
+          {!unavailable && <p className="mt-3 text-[11px] leading-relaxed text-forest-muted/70">{direct ? "Your payment is processed through DealForge secure checkout. Order state is confirmed from verified payment events." : product.retailer === "amazon" ? "The Amazon button opens the retailer listing; DealForge may earn a commission from qualifying purchases." : "The retailer button opens the current source in a new tab."}</p>}
 
           {Object.keys(product.specifications).length > 0 && <div className="mt-10"><h2 className="font-display text-xl font-semibold text-forest-ink">Product details</h2><dl className="mt-4 divide-y divide-card-border rounded-2xl border border-card-border bg-card">{Object.entries(product.specifications).map(([key, value]) => <div key={key} className="grid grid-cols-2 gap-2 px-4 py-3 text-sm"><dt className="break-words text-forest-muted">{key}</dt><dd className="break-words font-medium text-forest-ink">{value}</dd></div>)}</dl></div>}
         </div>
