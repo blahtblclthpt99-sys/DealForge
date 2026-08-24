@@ -1,4 +1,5 @@
 name: Live Storefront Probe Once
+# rerun after Stripe Managed Payments fix
 
 on:
   push:
