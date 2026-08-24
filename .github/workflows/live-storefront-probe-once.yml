@@ -1,5 +1,5 @@
 name: Live Storefront Probe Once
-# rerun apex + www storefront check: 2026-08-23T20:52-05:00
+# rerun storefront + checkout check: 2026-08-23T20:55-05:00
 
 on:
   push:
