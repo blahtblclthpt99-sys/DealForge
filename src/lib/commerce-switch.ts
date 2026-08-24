@@ -12,7 +12,10 @@ type CommerceSwitchEnv = {
  */
 export const BROAD_CATALOG_COMMERCE_LOCKED = true;
 
-export function isBroadCatalogCommerceEnabled(env: CommerceSwitchEnv = process.env) {
+export function isBroadCatalogCommerceEnabled(env?: CommerceSwitchEnv) {
+  const source: CommerceSwitchEnv = env ?? {
+    COMMERCE_ENABLED: process.env.COMMERCE_ENABLED,
+  };
   if (BROAD_CATALOG_COMMERCE_LOCKED) return false;
-  return env.COMMERCE_ENABLED === "true";
+  return source.COMMERCE_ENABLED === "true";
 }
