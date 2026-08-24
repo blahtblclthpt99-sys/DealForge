@@ -1,19 +1,22 @@
 "use client";
 
 import Link from "next/link";
-import { Heart, Star } from "lucide-react";
+import { CheckCircle2, Clock3, Heart, ShieldCheck, Star } from "lucide-react";
 import { useState } from "react";
 import type { ProductDTO } from "@/lib/products";
 import { ProductImage } from "@/components/product-image";
+import { hasFreshVerifiedStock } from "@/lib/public-catalog";
 import { cn, discountLabel, formatPrice } from "@/lib/utils";
 import { formatQuantityLabel } from "@/lib/quantity";
 
 export function ProductCard({ product, wishlisted = false, onToggleWishlist }: { product: ProductDTO; wishlisted?: boolean; onToggleWishlist?: (id: string) => void }) {
   const [liked, setLiked] = useState(wishlisted);
   const image = product.images[0];
-  const amazonUnverified = product.retailer === "amazon" && !product.priceVerified;
+  const direct = product.purchaseMode === "direct" && product.commerceReady;
+  const amazonUnverified = !direct && product.retailer === "amazon" && !product.priceVerified;
   const save = amazonUnverified ? null : discountLabel(product.discountPercent);
   const qnty = formatQuantityLabel(product.quantity);
+  const verifiedInStock = hasFreshVerifiedStock(product);
 
   async function toggleWish(e: React.MouseEvent) {
     e.preventDefault();
@@ -44,10 +47,26 @@ export function ProductCard({ product, wishlisted = false, onToggleWishlist }: {
       <div className="flex flex-1 flex-col gap-2 p-4">
         <p className="text-xs font-medium uppercase tracking-wide text-forest-muted">{product.brand}{qnty ? <span className="text-forest"> · {qnty}</span> : null}</p>
         <h3 className="line-clamp-2 text-sm font-semibold leading-snug text-forest-ink">{product.title}</h3>
+        <div className="flex flex-wrap items-center gap-1.5 text-[11px] font-medium">
+          {direct && (
+            <span className="inline-flex items-center gap-1 rounded-full bg-forest/10 px-2 py-1 text-forest">
+              <ShieldCheck className="h-3 w-3" /> Sold by DealForge
+            </span>
+          )}
+          {verifiedInStock ? (
+            <span className="inline-flex items-center gap-1 rounded-full bg-forest/10 px-2 py-1 text-forest">
+              <CheckCircle2 className="h-3 w-3" /> In stock
+            </span>
+          ) : (
+            <span className="inline-flex items-center gap-1 rounded-full border border-card-border px-2 py-1 text-forest-muted">
+              <Clock3 className="h-3 w-3" /> Check availability
+            </span>
+          )}
+        </div>
         <div className="mt-auto flex items-end justify-between gap-2 pt-2">
           <div>
             {amazonUnverified ? (
-              <p className="text-sm font-bold text-forest">Check current price on Amazon</p>
+              <p className="text-sm font-bold leading-snug text-forest">Check price & availability</p>
             ) : (
               <>
                 <p className="text-lg font-bold text-forest">{formatPrice(product.price)}</p>
