@@ -12,10 +12,13 @@ test("broad catalog commerce remains locked even if COMMERCE_ENABLED is true", (
   assert.equal(isBroadCatalogCommerceEnabled({ COMMERCE_ENABLED: "false" }), false);
 });
 
-test("commercial gate enforces the repository kill switch", async () => {
-  const source = await readFile("src/lib/commerce-gate.ts", "utf8");
-  assert.match(source, /isBroadCatalogCommerceEnabled/);
-  assert.match(source, /broad_catalog_commerce_locked/);
+test("operational lock blocks runtime commerce without becoming a destructive monitor reason", async () => {
+  const gate = await readFile("src/lib/commerce-gate.ts", "utf8");
+  const monitor = await readFile("src/lib/commerce-monitor.ts", "utf8");
+  assert.match(gate, /broad_catalog_commerce_locked/);
+  assert.match(monitor, /NON_MUTATING_OPERATIONAL_REASONS/);
+  assert.match(monitor, /broad_catalog_commerce_locked/);
+  assert.match(monitor, /if \(safetyReasons\.length === 0\) continue/);
 });
 
 test("private Stripe certification bypass remains isolated in checkout", async () => {
