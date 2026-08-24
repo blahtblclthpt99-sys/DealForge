@@ -1,5 +1,5 @@
 name: Live Storefront Probe Once
-# rerun after homepage report: 2026-08-23T20:50-05:00
+# rerun apex + www storefront check: 2026-08-23T20:52-05:00
 
 on:
   push:
@@ -17,18 +17,33 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
-      - name: Probe homepage
+      - name: Probe www homepage
         shell: bash
         run: |
           set -euo pipefail
-          code=$(curl --retry 4 --retry-all-errors --retry-delay 2 -sS -o /tmp/home -w '%{http_code}' 'https://www.deal-forge.sale/')
+          code=$(curl --retry 4 --retry-all-errors --retry-delay 2 -sS -o /tmp/home-www -w '%{http_code}' 'https://www.deal-forge.sale/')
           state=failure
-          desc="Homepage HTTP ${code}"
-          if [[ "$code" == 200 ]] && ! grep -qiE 'Database not connected|Could not load the live catalog' /tmp/home; then
+          desc="www homepage HTTP ${code}"
+          if [[ "$code" == 200 ]] && ! grep -qiE 'Database not connected|Could not load the live catalog' /tmp/home-www; then
             state=success
-            desc='Homepage rendered live catalog shell without setup fallback'
+            desc='www homepage rendered live catalog'
           fi
-          gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state="$state" -f context=dealforge-live-homepage -f description="$desc"
+          gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state="$state" -f context=dealforge-live-homepage-www -f description="$desc"
+          [[ "$state" == success ]]
+
+      - name: Probe apex homepage
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          code=$(curl -L --retry 4 --retry-all-errors --retry-delay 2 -sS -o /tmp/home-apex -w '%{http_code}' 'https://deal-forge.sale/')
+          state=failure
+          desc="apex homepage HTTP ${code}"
+          if [[ "$code" == 200 ]] && ! grep -qiE 'Database not connected|Could not load the live catalog' /tmp/home-apex; then
+            state=success
+            desc='apex homepage resolved to live catalog'
+          fi
+          gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state="$state" -f context=dealforge-live-homepage-apex -f description="$desc"
           [[ "$state" == success ]]
 
       - name: Probe certification checkout
