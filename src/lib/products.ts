@@ -10,6 +10,13 @@ import { normalizeProductImage } from "./product-image";
 import { parseQuantityFromTitle } from "./quantity";
 import { evaluateCommerceGate } from "./commerce-gate";
 import { recommendCommercialPrice } from "./commercialization";
+import {
+  AMAZON_METADATA_MAX_AGE_MS,
+  AMAZON_PRICE_MAX_AGE_MS,
+  isAuthorizedAmazonMetadataSource,
+  isAuthorizedAmazonPriceSource,
+  isFreshVerification,
+} from "./source-policy";
 import type { Prisma } from "@prisma/client";
 
 export type ProductDTO = {
@@ -117,10 +124,6 @@ function sanitizePricing(price: number, originalPrice: number, discountPercent: 
   return { price: p, originalPrice: o, discountPercent: d };
 }
 
-const AMAZON_PRICE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
-const AMAZON_METADATA_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
-const AUTHORIZED_AMAZON_PRICE_SOURCES = new Set(["amazon_creators_api", "amazon_authorized_api", "amazon_owner_verified"]);
-const AUTHORIZED_AMAZON_METADATA_SOURCES = new Set(["amazon_creators_api", "amazon_authorized_api", "amazon_owner_verified"]);
 const PRIVATE_SPECIFICATION_KEYS = new Set([
   "supplierOfferV1",
   "commerceV1",
@@ -129,10 +132,6 @@ const PRIVATE_SPECIFICATION_KEYS = new Set([
   "sourceType",
   "needsEnrichment",
 ]);
-
-function isFresh(date: Date | null, maxAgeMs: number) {
-  return Boolean(date && Date.now() - date.getTime() >= 0 && Date.now() - date.getTime() <= maxAgeMs);
-}
 
 export function amazonClaimIntegrity(input: {
   retailer: string;
@@ -143,8 +142,10 @@ export function amazonClaimIntegrity(input: {
 }) {
   if (input.retailer !== "amazon") return { priceVerified: true, metadataVerified: true };
   return {
-    priceVerified: Boolean(input.priceSource && AUTHORIZED_AMAZON_PRICE_SOURCES.has(input.priceSource) && isFresh(input.priceVerifiedAt, AMAZON_PRICE_MAX_AGE_MS)),
-    metadataVerified: Boolean(input.metadataSource && AUTHORIZED_AMAZON_METADATA_SOURCES.has(input.metadataSource) && isFresh(input.metadataVerifiedAt, AMAZON_METADATA_MAX_AGE_MS)),
+    priceVerified: isAuthorizedAmazonPriceSource(input.priceSource)
+      && isFreshVerification(input.priceVerifiedAt, AMAZON_PRICE_MAX_AGE_MS),
+    metadataVerified: isAuthorizedAmazonMetadataSource(input.metadataSource)
+      && isFreshVerification(input.metadataVerifiedAt, AMAZON_METADATA_MAX_AGE_MS),
   };
 }
 
