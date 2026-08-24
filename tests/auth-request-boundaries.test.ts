@@ -2,18 +2,31 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-test("auth API uses a discriminated action schema with bounded credentials", async () => {
+test("auth API uses a discriminated action schema with bounded new credentials", async () => {
   const source = await readFile("src/app/api/auth/route.ts", "utf8");
   assert.match(source, /z\.discriminatedUnion\("action"/);
   assert.match(source, /emailSchema = z\.string\(\)\.trim\(\)\.email\(\)\.max\(320\)/);
+  assert.match(source, /registrationPasswordSchema/);
   assert.match(source, /\.max\(128\)/);
   assert.match(source, /length <= 72/);
   assert.match(source, /nameSchema = z\.string\(\)\.trim\(\)\.min\(2\)\.max\(100\)/);
 });
 
-test("auth API rejects malformed and oversized request bodies without caching responses", async () => {
+test("login preserves compatibility with previously accepted long bcrypt passwords", async () => {
+  const source = await readFile("src/app/api/auth/route.ts", "utf8");
+  assert.match(source, /const loginPasswordSchema = z\.string\(\)\.min\(8\)/);
+  assert.match(source, /password: loginPasswordSchema/);
+  assert.match(source, /password: registrationPasswordSchema/);
+});
+
+test("auth API enforces its body cap on bytes actually read, not only Content-Length", async () => {
   const source = await readFile("src/app/api/auth/route.ts", "utf8");
   assert.match(source, /MAX_AUTH_BODY_BYTES = 16 \* 1024/);
+  assert.match(source, /req\.body\.getReader\(\)/);
+  assert.match(source, /bytesRead \+= value\.byteLength/);
+  assert.match(source, /bytesRead > MAX_AUTH_BODY_BYTES/);
+  assert.match(source, /reader\.cancel\(\)/);
+  assert.doesNotMatch(source, /await req\.json\(\)/);
   assert.match(source, /AUTH_REQUEST_TOO_LARGE/);
   assert.match(source, /INVALID_AUTH_REQUEST/);
   assert.match(source, /Cache-Control": "no-store"/);
