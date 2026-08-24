@@ -2,6 +2,7 @@ import { prisma } from "./db";
 import { evaluateCommerceGate, type CommerceGateDecision } from "./commerce-gate";
 
 const CERTIFICATION_PRODUCT_ID = "cert_test_75c_20260822_v2";
+const NON_MUTATING_OPERATIONAL_REASONS = new Set(["broad_catalog_commerce_locked"]);
 
 export type CommerceMonitorProduct = {
   id: string;
@@ -26,6 +27,10 @@ function isInternalCertificationProduct(product: Pick<CommerceMonitorProduct, "i
   } catch {
     return false;
   }
+}
+
+export function mutatingSafetyReasons(decision: CommerceGateDecision) {
+  return decision.reasons.filter((reason) => !NON_MUTATING_OPERATIONAL_REASONS.has(reason));
 }
 
 export function evaluateCommerceMonitorProduct(
@@ -55,8 +60,10 @@ export function evaluateCommerceMonitorProduct(
 /**
  * Re-check every product that is currently marked commerce-enabled.
  * This worker is deliberately one-way: it may pause an unsafe product, but it
- * never enables or automatically resumes commerce. Re-enablement requires a
- * fresh owner commercialization action and the complete profit gate.
+ * never enables or automatically resumes commerce. Temporary operational kill
+ * switches block purchase/runtime exposure without rewriting persisted product
+ * eligibility. Re-enablement of a safety-paused product requires a fresh owner
+ * commercialization action and the complete profit gate.
  */
 export async function pauseUnsafeCommerceProducts(actor = "commerce-monitor", nowMs = Date.now()) {
   const products = await prisma.product.findMany({
@@ -84,6 +91,9 @@ export async function pauseUnsafeCommerceProducts(actor = "commerce-monitor", no
     const decision = evaluation.decision;
     if (!decision || decision.allowed) continue;
 
+    const safetyReasons = mutatingSafetyReasons(decision);
+    if (safetyReasons.length === 0) continue;
+
     // Conditional update prevents duplicate pause/audit records if multiple
     // workers race on the same product.
     const result = await prisma.product.updateMany({
@@ -100,7 +110,7 @@ export async function pauseUnsafeCommerceProducts(actor = "commerce-monitor", no
         action: "commerce_auto_paused",
         detail: JSON.stringify({
           productId: product.id,
-          reasons: decision.reasons,
+          reasons: safetyReasons,
           contributionProfitCents: decision.contributionProfitCents,
           contributionMarginBps: decision.contributionMarginBps,
           reserveTotalCents: decision.reserveTotalCents,

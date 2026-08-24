@@ -1,6 +1,19 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { mutatingSafetyReasons } from "../src/lib/commerce-monitor";
+import type { CommerceGateDecision } from "../src/lib/commerce-gate";
+
+function decision(reasons: string[]): CommerceGateDecision {
+  return {
+    allowed: reasons.length === 0,
+    reasons,
+    contributionProfitCents: 500,
+    contributionMarginBps: 2000,
+    reserveTotalCents: 100,
+    sourceClass: "authorized_dropshipper",
+  };
+}
 
 test("commerce monitor is one-way and never auto-enables products", async () => {
   const source = await readFile("src/lib/commerce-monitor.ts", "utf8");
@@ -9,7 +22,15 @@ test("commerce monitor is one-way and never auto-enables products", async () => 
   assert.match(source, /data: \{ commerceEnabled: false \}/);
   assert.doesNotMatch(source, /data: \{ commerceEnabled: true \}/);
   assert.match(source, /commerce_auto_paused/);
-  assert.match(source, /decision\.reasons/);
+  assert.match(source, /safetyReasons/);
+});
+
+test("temporary broad-commerce lock never mutates persisted product eligibility", () => {
+  assert.deepEqual(mutatingSafetyReasons(decision(["broad_catalog_commerce_locked"])), []);
+  assert.deepEqual(
+    mutatingSafetyReasons(decision(["broad_catalog_commerce_locked", "supplier_cost_verification_stale"])),
+    ["supplier_cost_verification_stale"],
+  );
 });
 
 test("commerce monitor preserves the internal Stripe certification product", async () => {
