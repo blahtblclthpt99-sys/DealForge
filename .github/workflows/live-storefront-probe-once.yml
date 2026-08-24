@@ -1,5 +1,5 @@
 name: Live Storefront Probe Once
-# rerun after Stripe Managed Payments fix
+# rerun after homepage report: 2026-08-23T20:50-05:00
 
 on:
   push:
@@ -40,7 +40,7 @@ jobs:
           code=$(curl --retry 3 --retry-all-errors --retry-delay 2 -sS -o /tmp/checkout -w '%{http_code}' \
             -X POST 'https://www.deal-forge.sale/api/checkout' \
             -H 'content-type: application/json' \
-            --data "{\"checkoutKey\":\"${key}\",\"email\":\"phase25-stage-probe@example.com\",\"items\":[{\"productId\":\"cert_test_75c_20260822_v2\",\"quantity\":1}]}")
+            --data "{\"checkoutKey\":\"${key}\",\"email\":\"phase25-stage-probe@example.com\",\"items\":[{\"productId\":\"cert_test_75c_20260822_v2\",\"quantity\":1}]}"
           error=$(node -e "const fs=require('fs');try{const j=JSON.parse(fs.readFileSync('/tmp/checkout','utf8'));process.stdout.write(String(j.error||''))}catch{process.stdout.write('invalid-json')}")
           stage=$(node -e "const fs=require('fs');try{const j=JSON.parse(fs.readFileSync('/tmp/checkout','utf8'));process.stdout.write(String(j.stage||'none'))}catch{process.stdout.write('invalid-json')}")
           safe_error=$(printf '%s' "${error:-none}" | tr '[:upper:]_' '[:lower:]-' | tr -cd 'a-z0-9-' | cut -c1-50)
