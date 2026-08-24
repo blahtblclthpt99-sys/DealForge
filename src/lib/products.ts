@@ -8,6 +8,7 @@ import { computeRankScore } from "./ranking";
 import { parseJson } from "./utils";
 import { normalizeProductImage } from "./product-image";
 import { parseQuantityFromTitle } from "./quantity";
+import { evaluateCommerceGate } from "./commerce-gate";
 import type { Prisma } from "@prisma/client";
 
 export type ProductDTO = {
@@ -31,6 +32,7 @@ export type ProductDTO = {
   affiliateUrl: string;
   retailer: string;
   availability: string;
+  availabilityVerified: boolean;
   priceVerified: boolean;
   metadataVerified: boolean;
   priceSource: string | null;
@@ -47,11 +49,14 @@ export type ProductDTO = {
   lastUpdated: string;
   createdAt: string;
   rankScore: number;
+  purchaseMode: "direct" | "affiliate";
+  commerceReady: boolean;
+  currency: string;
 };
 
-// Keep public catalog reads compatible with the live production table. Optional
-// enrichment/provenance columns are intentionally not selected until the
-// corresponding migration is deployed. Their DTO values remain null/unverified.
+// Live production currently has the commerce columns below, while provenance
+// source/timestamp columns are deliberately stored inside specifications until
+// their separate migration is deployed.
 const productListSelect = {
   id: true,
   asin: true,
@@ -81,6 +86,10 @@ const productListSelect = {
   flashEndsAt: true,
   lastUpdated: true,
   createdAt: true,
+  commerceEnabled: true,
+  sellingPriceCents: true,
+  landedCostCents: true,
+  currency: true,
 } satisfies Prisma.ProductSelect;
 
 type ProductWithCategory = Prisma.ProductGetPayload<{ select: typeof productListSelect }>;
@@ -109,6 +118,14 @@ const AMAZON_PRICE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const AMAZON_METADATA_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const AUTHORIZED_AMAZON_PRICE_SOURCES = new Set(["amazon_creators_api", "amazon_authorized_api", "amazon_owner_verified"]);
 const AUTHORIZED_AMAZON_METADATA_SOURCES = new Set(["amazon_creators_api", "amazon_authorized_api", "amazon_owner_verified"]);
+const PRIVATE_SPECIFICATION_KEYS = new Set([
+  "supplierOfferV1",
+  "commerceV1",
+  "internalCertification",
+  "productEngine",
+  "sourceType",
+  "needsEnrichment",
+]);
 
 function isFresh(date: Date | null, maxAgeMs: number) {
   return Boolean(date && Date.now() - date.getTime() >= 0 && Date.now() - date.getTime() <= maxAgeMs);
@@ -128,21 +145,54 @@ export function amazonClaimIntegrity(input: {
   };
 }
 
+function publicSpecifications(raw: string) {
+  const parsed = parseJson<Record<string, unknown>>(raw, {});
+  const safe: Record<string, string> = {};
+  for (const [key, value] of Object.entries(parsed)) {
+    if (PRIVATE_SPECIFICATION_KEYS.has(key)) continue;
+    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+      const label = key.trim().slice(0, 120);
+      const text = String(value).trim().slice(0, 1000);
+      if (label && text) safe[label] = text;
+    }
+  }
+  return safe;
+}
+
+function directCommerceDecision(p: ProductWithCategory) {
+  if (process.env.COMMERCE_ENABLED !== "true") return { allowed: false } as const;
+  return evaluateCommerceGate({
+    commerceEnabled: p.commerceEnabled,
+    availability: p.availability,
+    sellingPriceCents: p.sellingPriceCents,
+    landedCostCents: p.landedCostCents,
+    specifications: p.specifications,
+  });
+}
+
 export function toProductDTO(p: ProductWithCategory): ProductDTO {
   const images = cleanImages(p.images);
-  const specs = parseJson<Record<string, string>>(p.specifications, {});
-  // Provenance columns are not yet present in the live Product table. Never
-  // fabricate verification: Amazon claims remain unverified until migrated.
+  const specs = publicSpecifications(p.specifications);
+  // The legacy affiliate path still suppresses unverified Amazon claims. For a
+  // DealForge direct sale, the displayed price is DealForge's own selling price
+  // and is only surfaced while the runtime commercial gate remains valid.
   const priceSource = null;
   const priceVerifiedAt = null;
   const metadataSource = null;
   const metadataVerifiedAt = null;
   const integrity = amazonClaimIntegrity({ retailer: p.retailer, priceSource, priceVerifiedAt, metadataSource, metadataVerifiedAt });
+  const commerce = directCommerceDecision(p);
+  const direct = commerce.allowed && Number.isSafeInteger(p.sellingPriceCents) && (p.sellingPriceCents ?? 0) > 0;
   const rawPricing = sanitizePricing(p.price, p.originalPrice, p.discountPercent);
-  const pricing = integrity.priceVerified ? rawPricing : { price: 0, originalPrice: 0, discountPercent: 0 };
+  const directPrice = direct ? (p.sellingPriceCents as number) / 100 : 0;
+  const pricing = direct
+    ? { price: directPrice, originalPrice: directPrice, discountPercent: 0 }
+    : integrity.priceVerified
+      ? rawPricing
+      : { price: 0, originalPrice: 0, discountPercent: 0 };
   const rating = integrity.metadataVerified ? p.rating : 0;
   const reviewCount = integrity.metadataVerified ? p.reviewCount : 0;
-  const availability = integrity.metadataVerified ? p.availability : "unknown";
+  const availability = direct ? p.availability : integrity.metadataVerified ? p.availability : "unknown";
   const dtoBase = { discountPercent: pricing.discountPercent, rating, reviewCount, trendingScore: p.trendingScore, createdAt: p.createdAt, lastUpdated: p.lastUpdated, clickCount: p.clickCount, viewCount: p.viewCount };
   return {
     id: p.id, asin: p.asin, slug: p.slug, title: p.title, description: p.description, brand: p.brand,
@@ -153,12 +203,18 @@ export function toProductDTO(p: ProductWithCategory): ProductDTO {
     rating, reviewCount,
     affiliateUrl: generateAffiliateLink(p.retailer, { asin: p.asin, url: p.affiliateUrl }),
     retailer: p.retailer, availability,
-    priceVerified: integrity.priceVerified, metadataVerified: integrity.metadataVerified,
-    priceSource, priceVerifiedAt: null,
+    availabilityVerified: direct || integrity.metadataVerified,
+    priceVerified: direct || integrity.priceVerified,
+    metadataVerified: integrity.metadataVerified,
+    priceSource: direct ? "dealforge" : priceSource,
+    priceVerifiedAt: direct ? new Date().toISOString() : null,
     metadataSource, metadataVerifiedAt: null,
     specifications: specs, trendingScore: p.trendingScore, clickCount: p.clickCount, viewCount: p.viewCount,
     isFeatured: p.isFeatured, isFlashDeal: p.isFlashDeal, flashEndsAt: p.flashEndsAt?.toISOString() ?? null,
     lastUpdated: p.lastUpdated.toISOString(), createdAt: p.createdAt.toISOString(), rankScore: computeRankScore(dtoBase),
+    purchaseMode: direct ? "direct" : "affiliate",
+    commerceReady: direct,
+    currency: p.currency.toLowerCase(),
   };
 }
 
@@ -211,7 +267,7 @@ function buildOrderBy(params: ProductQuery): Prisma.ProductOrderByWithRelationIn
 export async function queryProducts(params: ProductQuery) {
   const page = Math.max(1, params.page ?? 1);
   const limit = Math.min(48, Math.max(1, params.limit ?? 24));
-  const cacheKey = `products:v8:${JSON.stringify(params)}`;
+  const cacheKey = `products:v9:${JSON.stringify(params)}`;
   const cached = await cacheGet<{ items: ProductDTO[]; total: number; page: number; hasMore: boolean }>(cacheKey);
   if (cached) return cached;
   const where = buildWhere(params); const orderBy = buildOrderBy(params); const skip = (page - 1) * limit;
