@@ -1,4 +1,5 @@
 import { evaluateCommerceGate, type CommerceGateDecision } from "@/lib/commerce-gate";
+import { recommendSellingPrice, type DynamicPricingDecision } from "@/lib/dynamic-pricing";
 
 export const DIRECT_RESALE_SOURCE_CLASSES = [
   "manufacturer",
@@ -10,22 +11,31 @@ export const DIRECT_RESALE_SOURCE_CLASSES = [
 
 export type DirectResaleSourceClass = (typeof DIRECT_RESALE_SOURCE_CLASSES)[number];
 
-export type CommercializationInput = {
+type CostInput = {
+  itemCostCents: number;
+  shippingCents: number;
+  taxCents: number;
+  supplierFeeCents: number;
+  handlingCents: number;
+  acquisitionReserveCents: number;
+};
+
+export type CommercializationInput = CostInput & {
   supplierName: string;
   sourceClass: DirectResaleSourceClass;
   sourceUrl?: string | null;
   resaleAllowed: true;
   sourceVerifiedAt: string;
   priceVerifiedAt: string;
-  itemCostCents: number;
-  shippingCents: number;
-  taxCents: number;
-  supplierFeeCents: number;
-  handlingCents: number;
   sellingPriceCents: number;
   inventoryConfidenceBps: number;
-  acquisitionReserveCents: number;
   availability: "in_stock" | "out_of_stock" | "unknown";
+};
+
+export type CommercialPriceRecommendation = DynamicPricingDecision & {
+  landedCostCents: number;
+  reserveTotalCents: number;
+  reserves: ReturnType<typeof buildReserves>;
 };
 
 export type PreparedCommercialization = {
@@ -38,11 +48,11 @@ export type PreparedCommercialization = {
   decision: CommerceGateDecision;
 };
 
-const MIN_PROFIT_CENTS = 500;
-const MIN_MARGIN_BPS = 1000;
-const MIN_INVENTORY_CONFIDENCE_BPS = 8000;
-const MAX_SOURCE_AGE_DAYS = 30;
-const MAX_PRICE_AGE_MINUTES = 180;
+export const MIN_PROFIT_CENTS = 500;
+export const MIN_MARGIN_BPS = 1000;
+export const MIN_INVENTORY_CONFIDENCE_BPS = 8000;
+export const MAX_SOURCE_AGE_DAYS = 30;
+export const MAX_PRICE_AGE_MINUTES = 180;
 
 function safePositiveInteger(value: number, field: string) {
   if (!Number.isSafeInteger(value) || value <= 0) throw new Error(`${field.toUpperCase()}_INVALID`);
@@ -106,6 +116,97 @@ function parseSpecifications(value: string) {
   return {} as Record<string, unknown>;
 }
 
+function validatedCosts(input: CostInput) {
+  const itemCostCents = safePositiveInteger(input.itemCostCents, "item_cost_cents");
+  const shippingCents = safeNonNegativeInteger(input.shippingCents, "shipping_cents");
+  const taxCents = safeNonNegativeInteger(input.taxCents, "tax_cents");
+  const supplierFeeCents = safeNonNegativeInteger(input.supplierFeeCents, "supplier_fee_cents");
+  const handlingCents = safeNonNegativeInteger(input.handlingCents, "handling_cents");
+  const acquisitionReserveCents = safeNonNegativeInteger(input.acquisitionReserveCents, "acquisition_reserve_cents");
+  const landedCostCents = itemCostCents + shippingCents + taxCents + supplierFeeCents + handlingCents;
+  if (!Number.isSafeInteger(landedCostCents) || landedCostCents <= 0) throw new Error("LANDED_COST_INVALID");
+  return {
+    itemCostCents,
+    shippingCents,
+    taxCents,
+    supplierFeeCents,
+    handlingCents,
+    acquisitionReserveCents,
+    landedCostCents,
+  };
+}
+
+export function buildReserves(sellingPriceCents: number, acquisitionReserveCents: number) {
+  safePositiveInteger(sellingPriceCents, "selling_price_cents");
+  safeNonNegativeInteger(acquisitionReserveCents, "acquisition_reserve_cents");
+  return {
+    paymentCents: percentageReserve(sellingPriceCents, 350) + 30,
+    returnsCents: percentageReserve(sellingPriceCents, 300),
+    chargebackCents: percentageReserve(sellingPriceCents, 100),
+    fraudCents: percentageReserve(sellingPriceCents, 50),
+    supportCents: 50,
+    fulfillmentCents: 100,
+    acquisitionCents: acquisitionReserveCents,
+  };
+}
+
+function reserveTotal(reserves: ReturnType<typeof buildReserves>) {
+  const total = Object.values(reserves).reduce((sum, value) => sum + value, 0);
+  if (!Number.isSafeInteger(total) || total < 0) throw new Error("RESERVE_TOTAL_INVALID");
+  return total;
+}
+
+export function recommendCommercialPrice(
+  input: CostInput & {
+    marketReferenceCents?: number | null;
+    maxMarketPremiumBps?: number;
+  },
+): CommercialPriceRecommendation {
+  const costs = validatedCosts(input);
+  let candidate = costs.landedCostCents + costs.acquisitionReserveCents + 180 + MIN_PROFIT_CENTS;
+  let final: DynamicPricingDecision | null = null;
+  let finalReserves = buildReserves(candidate, costs.acquisitionReserveCents);
+
+  // Percentage-based reserves depend on the selling price. Iterate upward to a
+  // stable price; never solve by reducing profit or margin floors.
+  for (let i = 0; i < 32; i += 1) {
+    finalReserves = buildReserves(candidate, costs.acquisitionReserveCents);
+    const total = reserveTotal(finalReserves);
+    final = recommendSellingPrice({
+      landedCostCents: costs.landedCostCents,
+      reserveTotalCents: total,
+      minContributionProfitCents: MIN_PROFIT_CENTS,
+      minContributionMarginBps: MIN_MARGIN_BPS,
+      marketReferenceCents: input.marketReferenceCents,
+      maxMarketPremiumBps: input.maxMarketPremiumBps,
+      psychologicalEndingCents: 99,
+    });
+    if (final.recommendedPriceCents <= candidate) {
+      const contributionProfitCents = candidate - costs.landedCostCents - total;
+      const contributionMarginBps = Math.floor((contributionProfitCents * 10_000) / candidate);
+      const marketCompatible = final.marketCeilingCents === null || candidate <= final.marketCeilingCents;
+      const reasons = [...final.reasons];
+      if (!marketCompatible && !reasons.includes("safe_price_exceeds_market_ceiling")) {
+        reasons.push("safe_price_exceeds_market_ceiling");
+      }
+      return {
+        ...final,
+        recommendedPriceCents: candidate,
+        contributionProfitCents,
+        contributionMarginBps,
+        marketCompatible,
+        reasons,
+        landedCostCents: costs.landedCostCents,
+        reserveTotalCents: total,
+        reserves: finalReserves,
+      };
+    }
+    candidate = final.recommendedPriceCents;
+  }
+
+  throw new Error("DYNAMIC_PRICE_DID_NOT_CONVERGE");
+}
+
 export function isInternalCertificationSpecifications(specifications: string) {
   const root = parseSpecifications(specifications);
   return root.internalCertification === true;
@@ -128,29 +229,10 @@ export function prepareCommercialization(
   const sourceUrl = safeSourceUrl(input.sourceUrl);
   const sourceVerifiedAt = safeTimestamp(input.sourceVerifiedAt, "source_verified_at", nowMs);
   const priceVerifiedAt = safeTimestamp(input.priceVerifiedAt, "price_verified_at", nowMs);
-  const itemCostCents = safePositiveInteger(input.itemCostCents, "item_cost_cents");
-  const shippingCents = safeNonNegativeInteger(input.shippingCents, "shipping_cents");
-  const taxCents = safeNonNegativeInteger(input.taxCents, "tax_cents");
-  const supplierFeeCents = safeNonNegativeInteger(input.supplierFeeCents, "supplier_fee_cents");
-  const handlingCents = safeNonNegativeInteger(input.handlingCents, "handling_cents");
+  const costs = validatedCosts(input);
   const sellingPriceCents = safePositiveInteger(input.sellingPriceCents, "selling_price_cents");
   const inventoryConfidenceBps = safeBasisPoints(input.inventoryConfidenceBps, "inventory_confidence_bps");
-  const acquisitionReserveCents = safeNonNegativeInteger(input.acquisitionReserveCents, "acquisition_reserve_cents");
-
-  const landedCostCents = itemCostCents + shippingCents + taxCents + supplierFeeCents + handlingCents;
-  if (!Number.isSafeInteger(landedCostCents) || landedCostCents <= 0) throw new Error("LANDED_COST_INVALID");
-
-  // Conservative initial reserves. These are intentionally stronger than a
-  // bare processor-fee estimate and can later be replaced by learned reserves.
-  const reserves = {
-    paymentCents: percentageReserve(sellingPriceCents, 350) + 30,
-    returnsCents: percentageReserve(sellingPriceCents, 300),
-    chargebackCents: percentageReserve(sellingPriceCents, 100),
-    fraudCents: percentageReserve(sellingPriceCents, 50),
-    supportCents: 50,
-    fulfillmentCents: 100,
-    acquisitionCents: acquisitionReserveCents,
-  };
+  const reserves = buildReserves(sellingPriceCents, costs.acquisitionReserveCents);
 
   const root = parseSpecifications(existingSpecifications);
   root.supplierOfferV1 = {
@@ -163,12 +245,12 @@ export function prepareCommercialization(
     inventoryConfidenceBps,
     availability: input.availability,
     costBreakdown: {
-      itemCostCents,
-      shippingCents,
-      taxCents,
-      supplierFeeCents,
-      handlingCents,
-      landedCostCents,
+      itemCostCents: costs.itemCostCents,
+      shippingCents: costs.shippingCents,
+      taxCents: costs.taxCents,
+      supplierFeeCents: costs.supplierFeeCents,
+      handlingCents: costs.handlingCents,
+      landedCostCents: costs.landedCostCents,
     },
   };
   root.commerceV1 = {
@@ -190,7 +272,7 @@ export function prepareCommercialization(
       commerceEnabled: true,
       availability: input.availability,
       sellingPriceCents,
-      landedCostCents,
+      landedCostCents: costs.landedCostCents,
       priceVerifiedAt,
       specifications,
     },
@@ -199,7 +281,7 @@ export function prepareCommercialization(
 
   return {
     sellingPriceCents,
-    landedCostCents,
+    landedCostCents: costs.landedCostCents,
     priceVerifiedAt,
     availability: input.availability,
     specifications,
