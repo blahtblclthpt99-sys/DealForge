@@ -20,7 +20,7 @@ import { cn } from "@/lib/utils";
 const NAV = [
   { href: "/", label: "Home" },
   { href: "/categories", label: "Categories" },
-  { href: "/search", label: "Search" },
+  { href: "/search", label: "Shop" },
   { href: "/deals", label: "Deals" },
 ];
 
@@ -35,8 +35,6 @@ export function Header({
   const [menuPath, setMenuPath] = useState<string | null>(null);
   const [q, setQ] = useState("");
   const open = menuPath === pathname;
-  const showLisaGreeting =
-    !!user?.email && user.email.trim().toLowerCase() === "lisasalas85@icloud.com";
 
   function onSearch(e: React.FormEvent) {
     e.preventDefault();
@@ -47,11 +45,6 @@ export function Header({
 
   return (
     <header className="sticky top-0 z-50 border-b border-card-border/80 bg-background/90 backdrop-blur-md">
-      {showLisaGreeting && (
-        <div className="bg-forest px-4 py-2 text-center text-sm font-semibold tracking-wide text-white">
-          oooooo youre so sexy mamma
-        </div>
-      )}
       <div className="dn-container flex h-16 items-center gap-3 md:gap-6">
         <Link
           href="/"
@@ -95,13 +88,20 @@ export function Header({
             <input
               value={q}
               onChange={(e) => setQ(e.target.value)}
-              placeholder="Search deals & products…"
+              placeholder="Search products, brands, categories…"
               className="w-full rounded-full border border-card-border bg-card py-2 pl-10 pr-4 text-sm outline-none ring-forest focus:ring-2"
             />
           </div>
         </form>
 
         <div className="ml-auto flex items-center gap-1 md:ml-0">
+          <Link
+            href="/search"
+            className="rounded-lg p-2 text-forest-muted hover:bg-forest/10 hover:text-forest md:hidden"
+            aria-label="Search products"
+          >
+            <Search className="h-4 w-4" />
+          </Link>
           <button
             type="button"
             onClick={toggle}
@@ -166,12 +166,15 @@ export function Header({
       {open && (
         <div className="border-t border-card-border bg-background px-4 py-4 md:hidden">
           <form onSubmit={onSearch} className="mb-3">
-            <input
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              placeholder="Search…"
-              className="w-full rounded-xl border border-card-border bg-card px-3 py-2 text-sm outline-none ring-forest focus:ring-2"
-            />
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-forest-muted" />
+              <input
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                placeholder="Search products…"
+                className="w-full rounded-xl border border-card-border bg-card py-2 pl-10 pr-3 text-sm outline-none ring-forest focus:ring-2"
+              />
+            </div>
           </form>
           <div className="flex flex-col gap-1">
             {NAV.map((item) => (
