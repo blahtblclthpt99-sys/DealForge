@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ExternalLink, Star } from "lucide-react";
+import { ExternalLink, ShieldCheck, Star } from "lucide-react";
 import { ProductCard } from "@/components/product-card";
 import { BuyButton } from "@/components/buy-button";
 import { WishlistButton } from "@/components/wishlist-button";
@@ -44,7 +44,8 @@ export default async function ProductPage({ params }: Props) {
   }
 
   const [similar, related] = await Promise.all([getSimilarProducts(product), getRelatedProducts(product)]);
-  const amazonUnverified = product.retailer === "amazon" && !product.priceVerified;
+  const direct = product.purchaseMode === "direct" && product.commerceReady;
+  const amazonUnverified = !direct && product.retailer === "amazon" && !product.priceVerified;
   const save = amazonUnverified ? null : discountLabel(product.discountPercent);
   const qnty = formatQuantityLabel(product.quantity);
 
@@ -65,6 +66,11 @@ export default async function ProductPage({ params }: Props) {
           <h1 className="mt-2 break-words font-display text-3xl font-semibold leading-tight text-forest-ink md:text-4xl">{product.title}</h1>
 
           <div className="mt-4 flex flex-wrap items-center gap-3 text-sm">
+            {direct ? (
+              <span className="inline-flex items-center gap-1 rounded-full bg-forest/10 px-3 py-1 font-medium text-forest">
+                <ShieldCheck className="h-3.5 w-3.5" /> Sold by DealForge
+              </span>
+            ) : null}
             {product.metadataVerified && product.rating > 0 ? (
               <span className="inline-flex items-center gap-1 rounded-full bg-forest/10 px-3 py-1 font-medium text-forest">
                 <Star className="h-3.5 w-3.5 fill-amber-400 text-amber-400" />
@@ -74,7 +80,7 @@ export default async function ProductPage({ params }: Props) {
             {qnty && <span className="rounded-full bg-forest px-3 py-1 text-xs font-semibold uppercase tracking-wide text-white">{qnty}</span>}
             {product.categoryName && <Link href={`/categories/${product.categorySlug}`} className="rounded-full border border-card-border px-3 py-1 text-forest-muted hover:text-forest">{product.categoryName}</Link>}
             {product.categorySlug === "clothing" && product.subcategory && <Link href={`/categories/clothing?subcategory=${product.subcategory}`} className="rounded-full border border-card-border px-3 py-1 capitalize text-forest-muted hover:text-forest">{product.subcategory}</Link>}
-            {product.metadataVerified ? <span className="rounded-full border border-card-border px-3 py-1 capitalize text-forest-muted">{product.availability.replace("_", " ")}</span> : null}
+            {product.availabilityVerified ? <span className="rounded-full border border-card-border px-3 py-1 capitalize text-forest-muted">{product.availability.replace("_", " ")}</span> : null}
           </div>
 
           {amazonUnverified ? (
@@ -89,7 +95,11 @@ export default async function ProductPage({ params }: Props) {
                 {product.originalPrice > product.price && <p className="pb-1 text-lg text-forest-muted line-through">{formatPrice(product.originalPrice)}</p>}
                 {save && <span className="mb-1 rounded-full bg-forest px-2.5 py-1 text-xs font-semibold text-white">{save}</span>}
               </div>
-              {product.priceVerifiedAt ? <p className="mt-1 text-[11px] text-forest-muted/70">Price verified {new Date(product.priceVerifiedAt).toLocaleDateString()}</p> : null}
+              {direct ? (
+                <p className="mt-1 text-xs text-forest-muted">DealForge selling price. Supplier economics are revalidated again when checkout starts.</p>
+              ) : product.priceVerifiedAt ? (
+                <p className="mt-1 text-[11px] text-forest-muted/70">Price verified {new Date(product.priceVerifiedAt).toLocaleDateString()}</p>
+              ) : null}
             </>
           )}
 
@@ -97,11 +107,21 @@ export default async function ProductPage({ params }: Props) {
           <p className="mt-6 text-sm leading-relaxed text-forest-muted">{product.description}</p>
 
           <div className="mt-8 flex flex-wrap gap-3">
-            <BuyButton productId={product.id} retailer={product.retailer} />
+            <BuyButton
+              productId={product.id}
+              retailer={product.retailer}
+              purchaseMode={product.purchaseMode}
+              customerEmail={session?.email ?? ""}
+              affiliateLabel={amazonUnverified ? "Check current price on Amazon" : "View retailer listing"}
+            />
             <WishlistButton productId={product.id} initial={wishlist.includes(product.id)} />
           </div>
           <p className="mt-3 text-[11px] leading-relaxed text-forest-muted/60">
-            {product.retailer === "amazon" ? "Outbound Amazon link may earn DealForge a commission." : "Outbound link may earn DealForge a commission."}
+            {direct
+              ? "Your payment is processed through DealForge secure checkout. Order status is confirmed from verified payment events."
+              : product.retailer === "amazon"
+                ? "Outbound Amazon link may earn DealForge a commission."
+                : "Outbound retailer link may earn DealForge a commission."}
           </p>
 
           {Object.keys(product.specifications).length > 0 && (
@@ -115,9 +135,11 @@ export default async function ProductPage({ params }: Props) {
             </div>
           )}
 
-          <a href={`/go/${product.id}`} target="_blank" rel="noopener noreferrer sponsored nofollow" className="mt-6 inline-flex items-center gap-2 text-sm text-forest hover:underline">
-            {amazonUnverified ? "Check current price on Amazon" : "View listing"} <ExternalLink className="h-3.5 w-3.5" />
-          </a>
+          {!direct ? (
+            <a href={`/go/${product.id}`} target="_blank" rel="noopener noreferrer sponsored nofollow" className="mt-6 inline-flex items-center gap-2 text-sm text-forest hover:underline">
+              {amazonUnverified ? "Check current price on Amazon" : "View retailer listing"} <ExternalLink className="h-3.5 w-3.5" />
+            </a>
+          ) : null}
         </div>
       </div>
 
