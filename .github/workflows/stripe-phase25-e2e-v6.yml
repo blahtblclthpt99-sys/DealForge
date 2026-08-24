@@ -6,10 +6,12 @@ on:
       - '.github/workflows/stripe-phase25-e2e-v6.yml'
       - 'docs/stripe-phase25-certification-2026-08-24.md'
       - 'src/lib/stripe-commerce.ts'
+      - 'src/lib/commerce-gate.ts'
       - 'src/app/api/checkout/route.ts'
       - 'src/app/api/stripe/webhook/route.ts'
       - 'src/app/api/admin/refunds/route.ts'
       - 'tests/stripe-commerce.test.ts'
+      - 'tests/commerce-gate.test.ts'
 permissions:
   contents: read
   statuses: write
@@ -24,7 +26,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Run Stripe helper unit tests
+      - name: Run Stripe and commerce gate tests
         run: |
           npm ci --no-fund --no-audit
           npm test
