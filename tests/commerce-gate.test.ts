@@ -148,8 +148,8 @@ test("production commerce paths do not query undeployed Product provenance colum
     assert.doesNotMatch(source, /metadataVerifiedAt:\s*true/);
   }
 
-  assert.doesNotMatch(adminApi, /data:\s*\{[^}]*priceVerifiedAt:/s);
-  assert.doesNotMatch(adminApi, /data:\s*\{[^}]*priceSource:/s);
-  assert.doesNotMatch(adminApi, /data:\s*\{[^}]*metadataSource:/s);
-  assert.doesNotMatch(adminApi, /data:\s*\{[^}]*metadataVerifiedAt:/s);
+  assert.doesNotMatch(adminApi, /data:\s*\{[^}]*priceVerifiedAt:/);
+  assert.doesNotMatch(adminApi, /data:\s*\{[^}]*priceSource:/);
+  assert.doesNotMatch(adminApi, /data:\s*\{[^}]*metadataSource:/);
+  assert.doesNotMatch(adminApi, /data:\s*\{[^}]*metadataVerifiedAt:/);
 });
