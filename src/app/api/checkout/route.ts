@@ -9,6 +9,7 @@ import { createStripeCheckoutSession } from "@/lib/stripe-commerce";
 export const runtime = "nodejs";
 
 const CERTIFICATION_PRODUCT_ID = "cert_test_75c_20260822_v2";
+const TERMINAL_CHECKOUT_STATUSES = new Set(["paid", "refunded", "partially_refunded", "canceled"]);
 
 const CheckoutSchema = z.object({
   checkoutKey: z.string().trim().min(8).max(128).regex(/^[A-Za-z0-9:_-]+$/),
@@ -111,9 +112,9 @@ export async function POST(request: Request) {
       if (existing.email !== email || !sameOrderItems(existing.items, requestedItems)) {
         return NextResponse.json({ error: "CHECKOUT_KEY_CONFLICT" }, { status: 409 });
       }
-      if (existing.status === "paid") {
+      if (TERMINAL_CHECKOUT_STATUSES.has(existing.status)) {
         return NextResponse.json(
-          { error: "ORDER_ALREADY_PAID", orderNumber: existing.orderNumber },
+          { error: "ORDER_NOT_RETRYABLE", orderNumber: existing.orderNumber },
           { status: 409 },
         );
       }
@@ -142,7 +143,9 @@ export async function POST(request: Request) {
 
     stage = "commerce_gate";
     const certificationOnly =
-      products.length > 0 && products.every((product) => isInternalCertificationProduct(product.specifications));
+      certificationAttempt &&
+      products.length > 0 &&
+      products.every((product) => isInternalCertificationProduct(product.specifications));
     const certificationBypass = certificationOnly && stripeTestMode();
     if (!commerceEnabled() && !certificationBypass) {
       return NextResponse.json({ error: "COMMERCE_DISABLED" }, { status: 503 });
@@ -150,7 +153,7 @@ export async function POST(request: Request) {
 
     stage = "commercial_gate";
     for (const product of products) {
-      if (isInternalCertificationProduct(product.specifications) && stripeTestMode()) continue;
+      if (certificationOnly && isInternalCertificationProduct(product.specifications) && stripeTestMode()) continue;
       const decision = evaluateCommerceGate({
         commerceEnabled: product.commerceEnabled,
         availability: product.availability,
