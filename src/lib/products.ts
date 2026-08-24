@@ -54,9 +54,6 @@ export type ProductDTO = {
   currency: string;
 };
 
-// Live production currently has the commerce columns below, while provenance
-// source/timestamp columns are deliberately stored inside specifications until
-// their separate migration is deployed.
 const productListSelect = {
   id: true,
   asin: true,
@@ -78,6 +75,10 @@ const productListSelect = {
   retailer: true,
   availability: true,
   specifications: true,
+  priceSource: true,
+  priceVerifiedAt: true,
+  metadataSource: true,
+  metadataVerifiedAt: true,
   trendingScore: true,
   clickCount: true,
   viewCount: true,
@@ -166,6 +167,7 @@ function directCommerceDecision(p: ProductWithCategory) {
     availability: p.availability,
     sellingPriceCents: p.sellingPriceCents,
     landedCostCents: p.landedCostCents,
+    priceVerifiedAt: p.priceVerifiedAt,
     specifications: p.specifications,
   });
 }
@@ -173,14 +175,16 @@ function directCommerceDecision(p: ProductWithCategory) {
 export function toProductDTO(p: ProductWithCategory): ProductDTO {
   const images = cleanImages(p.images);
   const specs = publicSpecifications(p.specifications);
-  // The legacy affiliate path still suppresses unverified Amazon claims. For a
-  // DealForge direct sale, the displayed price is DealForge's own selling price
-  // and is only surfaced while the runtime commercial gate remains valid.
-  const priceSource = null;
-  const priceVerifiedAt = null;
-  const metadataSource = null;
-  const metadataVerifiedAt = null;
-  const integrity = amazonClaimIntegrity({ retailer: p.retailer, priceSource, priceVerifiedAt, metadataSource, metadataVerifiedAt });
+  // Amazon affiliate claims are shown only when backed by an authorized source.
+  // Direct sales display DealForge's own selling price, but still use the actual
+  // supplier verification timestamp for the runtime commercial gate.
+  const integrity = amazonClaimIntegrity({
+    retailer: p.retailer,
+    priceSource: p.priceSource,
+    priceVerifiedAt: p.priceVerifiedAt,
+    metadataSource: p.metadataSource,
+    metadataVerifiedAt: p.metadataVerifiedAt,
+  });
   const commerce = directCommerceDecision(p);
   const direct = commerce.allowed && Number.isSafeInteger(p.sellingPriceCents) && (p.sellingPriceCents ?? 0) > 0;
   const rawPricing = sanitizePricing(p.price, p.originalPrice, p.discountPercent);
@@ -206,9 +210,10 @@ export function toProductDTO(p: ProductWithCategory): ProductDTO {
     availabilityVerified: direct || integrity.metadataVerified,
     priceVerified: direct || integrity.priceVerified,
     metadataVerified: integrity.metadataVerified,
-    priceSource: direct ? "dealforge" : priceSource,
-    priceVerifiedAt: direct ? new Date().toISOString() : null,
-    metadataSource, metadataVerifiedAt: null,
+    priceSource: direct ? "dealforge" : p.priceSource,
+    priceVerifiedAt: p.priceVerifiedAt?.toISOString() ?? null,
+    metadataSource: direct ? null : p.metadataSource,
+    metadataVerifiedAt: direct ? null : p.metadataVerifiedAt?.toISOString() ?? null,
     specifications: specs, trendingScore: p.trendingScore, clickCount: p.clickCount, viewCount: p.viewCount,
     isFeatured: p.isFeatured, isFlashDeal: p.isFlashDeal, flashEndsAt: p.flashEndsAt?.toISOString() ?? null,
     lastUpdated: p.lastUpdated.toISOString(), createdAt: p.createdAt.toISOString(), rankScore: computeRankScore(dtoBase),
@@ -267,7 +272,7 @@ function buildOrderBy(params: ProductQuery): Prisma.ProductOrderByWithRelationIn
 export async function queryProducts(params: ProductQuery) {
   const page = Math.max(1, params.page ?? 1);
   const limit = Math.min(48, Math.max(1, params.limit ?? 24));
-  const cacheKey = `products:v9:${JSON.stringify(params)}`;
+  const cacheKey = `products:v10:${JSON.stringify(params)}`;
   const cached = await cacheGet<{ items: ProductDTO[]; total: number; page: number; hasMore: boolean }>(cacheKey);
   if (cached) return cached;
   const where = buildWhere(params); const orderBy = buildOrderBy(params); const skip = (page - 1) * limit;
