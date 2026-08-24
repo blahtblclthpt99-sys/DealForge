@@ -60,7 +60,7 @@ export function SearchClientV2({ initialItems, initialTotal, categories, brands 
         body: JSON.stringify({ query: payload.query || "", filters: payload.filters || {} }),
       }).then((res) => setSaveState(res.ok ? "saved" : "idle"));
     } catch {
-      setSaveState("idle");
+      // Invalid/stale session storage is harmless; leave the default idle state.
     }
   }, []);
 
@@ -84,7 +84,7 @@ export function SearchClientV2({ initialItems, initialTotal, categories, brands 
       if (res.status === 401) {
         sessionStorage.setItem(PENDING_KEY, JSON.stringify(payload));
         const nextParams = new URLSearchParams({ ...(q.trim() ? { q: q.trim() } : {}), ...cleanFilters(filters) });
-        window.location.href = `/login?next=${encodeURIComponent(`/search?${nextParams.toString()}`)}`;
+        router.push(`/login?next=${encodeURIComponent(`/search?${nextParams.toString()}`)}`);
         return;
       }
       setSaveState(res.ok ? "saved" : "error");
