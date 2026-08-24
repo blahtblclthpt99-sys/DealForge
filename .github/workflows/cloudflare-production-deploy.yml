@@ -151,17 +151,23 @@ jobs:
             exit 1
           fi
 
-          webhook_code=$(curl --retry 5 --retry-all-errors --retry-delay 2 -sS -o /tmp/webhook-body -w '%{http_code}' -X POST "$base/api/stripe/webhook" -H 'content-type: application/json' -H 'stripe-signature: t=1,v1=deadbeef' --data '{}')
-          echo "webhook bogus-signature HTTP $webhook_code"
-          cat /tmp/webhook-body
-          echo
+          webhook_code='000'
+          for attempt in 1 2 3 4 5 6 7 8; do
+            webhook_code=$(curl -sS -o /tmp/webhook-body -w '%{http_code}' -X POST "$base/api/stripe/webhook" -H 'content-type: application/json' -H 'stripe-signature: t=1,v1=deadbeef' --data '{}' || true)
+            echo "webhook bogus-signature attempt ${attempt}: HTTP $webhook_code"
+            cat /tmp/webhook-body 2>/dev/null || true
+            echo
+            [[ "$webhook_code" == '400' ]] && break
+            sleep 3
+          done
+
           if [[ "$webhook_code" == '400' ]]; then
             gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=success -f context=cloudflare-live-webhook-secret -f description='Live webhook route rejected invalid signature as expected'
           elif [[ "$webhook_code" == '503' ]]; then
-            gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=failure -f context=cloudflare-live-webhook-secret -f description='STRIPE_WEBHOOK_SECRET missing in Cloudflare runtime'
+            gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=failure -f context=cloudflare-live-webhook-secret -f description='Stripe runtime secret unavailable after propagation window'
             exit 1
           else
-            gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=failure -f context=cloudflare-live-webhook-secret -f description="Webhook probe returned unexpected HTTP ${webhook_code}"
+            gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=failure -f context=cloudflare-live-webhook-secret -f description="Webhook probe returned unexpected HTTP ${webhook_code} after propagation window"
             exit 1
           fi
 
@@ -182,4 +188,4 @@ jobs:
         run: |
           gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=failure -f context=cloudflare-production-deploy -f description='Cloudflare production deployment failed'
 
-# redeploy original Stripe secret test: 2026-08-23T19:38-05:00
+# webhook smoke propagation hardening: 2026-08-24
