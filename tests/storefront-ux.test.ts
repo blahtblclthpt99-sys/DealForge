@@ -7,8 +7,17 @@ test("storefront keeps direct checkout path intact", async () => {
   const buyButton = await readFile("src/components/buy-button.tsx", "utf8");
   assert.match(productPage, /purchaseMode=\{product\.purchaseMode\}/);
   assert.match(productPage, /commerceReady/);
+  assert.match(productPage, /Your payment is processed through DealForge secure checkout/);
   assert.match(buyButton, /\/api\/checkout/);
   assert.match(buyButton, /Buy from DealForge/);
+});
+
+test("Amazon discovery preserves the approved current-price fallback", async () => {
+  const productPage = await readFile("src/app/product/[slug]/page.tsx", "utf8");
+  const card = await readFile("src/components/product-card.tsx", "utf8");
+  assert.match(productPage, /Check current price on Amazon/);
+  assert.match(card, /Check current price on Amazon/);
+  assert.match(productPage, /Check current availability/);
 });
 
 test("storefront removes personal header copy and keeps mobile search", async () => {
