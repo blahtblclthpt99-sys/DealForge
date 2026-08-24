@@ -11,8 +11,7 @@ import { formatQuantityLabel } from "@/lib/quantity";
 export function ProductCard({ product, wishlisted = false, onToggleWishlist }: { product: ProductDTO; wishlisted?: boolean; onToggleWishlist?: (id: string) => void }) {
   const [liked, setLiked] = useState(wishlisted);
   const image = product.images[0];
-  const amazonUnverified = product.retailer === "amazon" && !product.priceVerified;
-  const save = amazonUnverified ? null : discountLabel(product.discountPercent);
+  const save = product.priceEstimated ? null : discountLabel(product.discountPercent);
   const qnty = formatQuantityLabel(product.quantity);
 
   async function toggleWish(e: React.MouseEvent) {
@@ -46,13 +45,17 @@ export function ProductCard({ product, wishlisted = false, onToggleWishlist }: {
         <h3 className="line-clamp-2 text-sm font-semibold leading-snug text-forest-ink">{product.title}</h3>
         <div className="mt-auto flex items-end justify-between gap-2 pt-2">
           <div>
-            {amazonUnverified ? (
-              <p className="text-sm font-bold text-forest">Check current price on Amazon</p>
-            ) : (
+            {product.price > 0 ? (
               <>
                 <p className="text-lg font-bold text-forest">{formatPrice(product.price)}</p>
-                {product.originalPrice > product.price && <p className="text-xs text-forest-muted line-through">{formatPrice(product.originalPrice)}</p>}
+                {product.priceEstimated ? (
+                  <p className="text-[11px] font-medium text-forest-muted">DealForge estimate</p>
+                ) : product.originalPrice > product.price ? (
+                  <p className="text-xs text-forest-muted line-through">{formatPrice(product.originalPrice)}</p>
+                ) : null}
               </>
+            ) : (
+              <p className="text-sm font-bold text-forest">DealForge estimate pending</p>
             )}
           </div>
           {product.metadataVerified && product.rating > 0 ? (
