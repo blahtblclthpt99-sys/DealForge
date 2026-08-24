@@ -12,8 +12,8 @@ jobs:
     timeout-minutes: 15
     env:
       GH_TOKEN: ${{ github.token }}
-      CERT_EMAIL: phase25-e2e-v8-20260823-2140@example.com
-      CHECKOUT_KEY: phase25-e2e-v8-20260823-2140
+      CERT_EMAIL: phase25-e2e-v9-20260824-1445@example.com
+      CHECKOUT_KEY: phase25-e2e-v9-20260824-1445
     steps:
       - uses: actions/checkout@v4
       - name: Create live checkout
@@ -54,7 +54,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
-          name: stripe-phase25-v8-failure
+          name: stripe-phase25-v9-failure
           path: |
             checkout.json
             result.txt
