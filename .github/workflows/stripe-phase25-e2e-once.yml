@@ -16,12 +16,12 @@ jobs:
     timeout-minutes: 15
     env:
       GH_TOKEN: ${{ github.token }}
-      CERT_EMAIL: phase25-final-v4-20260823-2058@example.com
-      CHECKOUT_KEY: phase25-final-v4-20260823-2058
+      CERT_EMAIL: phase25-final-v5-20260823-2100@example.com
+      CHECKOUT_KEY: phase25-final-v5-20260823-2100
     steps:
       - uses: actions/checkout@v4
 
-      - name: Create and classify DealForge checkout session
+      - name: Create DealForge checkout session
         id: create
         continue-on-error: true
         run: |
@@ -30,16 +30,9 @@ jobs:
             -X POST 'https://www.deal-forge.sale/api/checkout' \
             -H 'content-type: application/json' \
             --data "{\"checkoutKey\":\"${CHECKOUT_KEY}\",\"email\":\"${CERT_EMAIL}\",\"items\":[{\"productId\":\"cert_test_75c_20260822_v2\",\"quantity\":1}]}")
-          error=$(node -e "const j=require('./checkout.json');process.stdout.write(String(j.error||''))")
-          safe=$(printf '%s' "${error:-none}" | tr '[:upper:]_' '[:lower:]-' | tr -cd 'a-z0-9-' | cut -c1-40)
-          state=failure; [[ "$code" == 201 ]] && state=success
-          gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state="$state" -f context="stripe-phase25-http-${code}" -f description="Checkout HTTP ${code}"
-          if [[ -n "$error" ]]; then
-            gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=failure -f context="stripe-phase25-error-${safe}" -f description="Checkout error ${error}"
-          fi
-          node -e "const j=require('./checkout.json'); if(!j.checkoutUrl||!j.orderNumber) throw new Error(j.error||'checkout response invalid'); console.log('ORDER '+j.orderNumber)"
           [[ "$code" == 201 ]]
-          gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=success -f context=stripe-phase25-checkout-create -f description='Live DealForge checkout session created'
+          node -e "const j=require('./checkout.json'); if(!j.checkoutUrl||!j.orderNumber) throw new Error(j.error||'checkout response invalid')"
+          gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=success -f context=stripe-phase25-checkout-create -f description='Live 75-cent Checkout Session created'
 
       - name: Stop if checkout creation failed
         if: steps.create.outcome != 'success'
@@ -47,9 +40,9 @@ jobs:
           gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=failure -f context=stripe-phase25-checkout-create -f description='Live DealForge checkout API failed'
           exit 1
 
-      - name: Install browser only after checkout exists
+      - name: Install Chromium
         run: |
-          gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=pending -f context=stripe-phase25-setup -f description='Installing browser after checkout creation'
+          gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=pending -f context=stripe-phase25-setup -f description='Installing browser'
           npm ci --no-fund --no-audit
           npx playwright install chromium
           gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=success -f context=stripe-phase25-setup -f description='Chromium ready'
@@ -63,47 +56,91 @@ jobs:
           const { chromium } = require('playwright');
           const fs = require('fs');
           const checkout = JSON.parse(fs.readFileSync('checkout.json','utf8'));
-          async function fill(page, selectors, value) {
-            for (const frame of page.frames()) for (const selector of selectors) {
+
+          async function tryFill(locator, value) {
+            try {
+              if (await locator.count() && await locator.first().isVisible({timeout:1500})) {
+                await locator.first().fill(value, {timeout:5000});
+                return true;
+              }
+            } catch {}
+            return false;
+          }
+
+          async function fillField(page, roleName, selectors, value) {
+            if (await tryFill(page.getByRole('textbox', {name: roleName}), value)) return true;
+            if (await tryFill(page.getByLabel(roleName), value)) return true;
+            for (const frame of page.frames()) {
               try {
-                const el=frame.locator(selector).first();
-                if(await el.count()&&await el.isVisible()){await el.fill(value,{timeout:3000});return true;}
+                if (await tryFill(frame.getByRole('textbox', {name: roleName}), value)) return true;
               } catch {}
+              for (const selector of selectors) {
+                try { if (await tryFill(frame.locator(selector), value)) return true; } catch {}
+              }
             }
             return false;
           }
+
           (async()=>{
             const browser=await chromium.launch({headless:true});
-            const page=await browser.newPage({viewport:{width:1440,height:1000}});
+            const context=await browser.newContext({locale:'en-US', viewport:{width:1440,height:1100}});
+            const page=await context.newPage();
             let stage='open-stripe';
+            let card=false, exp=false, cvc=false;
             try {
               await page.goto(checkout.checkoutUrl,{waitUntil:'domcontentloaded',timeout:60000});
-              await page.waitForTimeout(3000);
-              stage='card-entry';
-              for(const frame of page.frames()) {
-                try { const cardChoice=frame.getByText(/^Card$/i).first(); if(await cardChoice.count()&&await cardChoice.isVisible()) await cardChoice.click({timeout:2000}); } catch {}
+              await page.waitForTimeout(5000);
+
+              stage='choose-card';
+              for (const candidate of [page.getByText(/^Card$/i).first(), page.getByRole('button',{name:/Card/i}).first()]) {
+                try {
+                  if (await candidate.count() && await candidate.isVisible()) {
+                    await candidate.evaluate(el => el.click());
+                    break;
+                  }
+                } catch {}
               }
-              const card=await fill(page,['input[name="cardNumber"]','input[autocomplete="cc-number"]','input[aria-label*="Card number" i]'],'4242424242424242');
-              const exp=await fill(page,['input[name="cardExpiry"]','input[autocomplete="cc-exp"]','input[aria-label*="expiration" i]'],'1230');
-              const cvc=await fill(page,['input[name="cardCvc"]','input[autocomplete="cc-csc"]','input[aria-label*="CVC" i]'],'123');
-              await fill(page,['input[name="billingName"]','input[autocomplete="cc-name"]','input[autocomplete="name"]'],'DealForge Certification');
-              await fill(page,['input[name="billingPostalCode"]','input[autocomplete="postal-code"]'],'73160');
-              if(!card||!exp||!cvc) throw new Error(`card-fields-card-${card}-exp-${exp}-cvc-${cvc}`);
+              await page.waitForTimeout(2500);
+
+              stage='card-entry';
+              card=await fillField(page,/Card number/i,[
+                'input[name="cardnumber"]','input[name="cardNumber"]','input[id="Field-numberInput"]',
+                'input[autocomplete="cc-number"]','input[placeholder*="Card number" i]',
+                '[data-elements-stable-field-name="cardNumber"]'
+              ],'4242424242424242');
+              exp=await fillField(page,/Expiration|Expiry|MM \/ YY/i,[
+                'input[name="exp-date"]','input[name="cardExpiry"]','input[id="Field-expiryInput"]',
+                'input[autocomplete="cc-exp"]','input[placeholder*="MM" i]',
+                '[data-elements-stable-field-name="cardExpiry"]'
+              ],'1230');
+              cvc=await fillField(page,/CVC|CVV|Security code/i,[
+                'input[name="cvc"]','input[name="cardCvc"]','input[id="Field-cvcInput"]',
+                'input[autocomplete="cc-csc"]','input[placeholder*="CVC" i]',
+                '[data-elements-stable-field-name="cardCvc"]'
+              ],'123');
+              await fillField(page,/Name on card|Cardholder name|Name/i,[
+                'input[name="billingName"]','input[autocomplete="cc-name"]','input[autocomplete="name"]'
+              ],'DealForge Certification');
+              await fillField(page,/ZIP|Postal/i,[
+                'input[name="postal"]','input[name="billingPostalCode"]','input[id="Field-postalCodeInput"]','input[autocomplete="postal-code"]'
+              ],'73160');
+
+              if(!card||!exp||!cvc) throw new Error(`fields-card-${card}-exp-${exp}-cvc-${cvc}`);
+
               stage='submit';
               let clicked=false;
-              for(const frame of page.frames()) {
-                for(const button of [frame.getByRole('button',{name:/Pay/i}).last(),frame.locator('button[type="submit"]').last()]) {
-                  try { if(await button.count()&&await button.isVisible()){await button.click({timeout:5000});clicked=true;break;} } catch {}
-                }
-                if(clicked) break;
+              for(const button of [page.getByRole('button',{name:/Pay/i}).last(), page.locator('button[type="submit"]').last()]) {
+                try { if(await button.count()&&await button.isVisible()){await button.click({timeout:7000});clicked=true;break;} } catch {}
               }
               if(!clicked) throw new Error('pay-button-missing');
+
               stage='redirect';
               await page.waitForURL(/deal-forge\.sale/,{timeout:90000});
               fs.writeFileSync('payment-result.txt','PASS|redirect');
             } catch(e) {
               const m=e instanceof Error?e.message:String(e);
               fs.writeFileSync('payment-result.txt',`FAIL|${stage}|${m}`);
+              fs.writeFileSync('field-result.txt',`card=${card}|exp=${exp}|cvc=${cvc}`);
               await page.screenshot({path:'stripe-phase25-failure.png',fullPage:true}).catch(()=>{});
               process.exitCode=1;
             } finally { await browser.close(); }
@@ -119,6 +156,10 @@ jobs:
           [[ -n "$stage" ]] || stage=unknown
           gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state="$state" -f context=stripe-phase25-payment -f description="${result:0:130}"
           gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state="$state" -f context="stripe-phase25-payment-${stage}" -f description='Stripe hosted payment stage result'
+          if [[ -f field-result.txt ]]; then
+            field=$(cat field-result.txt | tr '=|' '-' | tr -cd 'a-z0-9-')
+            gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=failure -f context="stripe-phase25-${field}" -f description='Card field discovery result'
+          fi
           [[ "$state" == success ]]
 
       - name: Upload failure diagnostics
@@ -129,5 +170,6 @@ jobs:
           path: |
             checkout.json
             payment-result.txt
+            field-result.txt
             stripe-phase25-failure.png
           if-no-files-found: ignore
