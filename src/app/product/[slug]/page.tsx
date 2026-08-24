@@ -45,8 +45,7 @@ export default async function ProductPage({ params }: Props) {
 
   const [similar, related] = await Promise.all([getSimilarProducts(product), getRelatedProducts(product)]);
   const direct = product.purchaseMode === "direct" && product.commerceReady;
-  const amazonUnverified = !direct && product.retailer === "amazon" && !product.priceVerified;
-  const save = amazonUnverified ? null : discountLabel(product.discountPercent);
+  const save = product.priceEstimated ? null : discountLabel(product.discountPercent);
   const qnty = formatQuantityLabel(product.quantity);
 
   return (
@@ -70,6 +69,10 @@ export default async function ProductPage({ params }: Props) {
               <span className="inline-flex items-center gap-1 rounded-full bg-forest/10 px-3 py-1 font-medium text-forest">
                 <ShieldCheck className="h-3.5 w-3.5" /> Sold by DealForge
               </span>
+            ) : product.priceEstimated ? (
+              <span className="inline-flex items-center gap-1 rounded-full bg-forest/10 px-3 py-1 font-medium text-forest">
+                DealForge estimated price
+              </span>
             ) : null}
             {product.metadataVerified && product.rating > 0 ? (
               <span className="inline-flex items-center gap-1 rounded-full bg-forest/10 px-3 py-1 font-medium text-forest">
@@ -83,24 +86,26 @@ export default async function ProductPage({ params }: Props) {
             {product.availabilityVerified ? <span className="rounded-full border border-card-border px-3 py-1 capitalize text-forest-muted">{product.availability.replace("_", " ")}</span> : null}
           </div>
 
-          {amazonUnverified ? (
-            <div className="mt-6">
-              <p className="text-2xl font-bold text-forest">Check current price on Amazon</p>
-              <p className="mt-1 text-xs text-forest-muted">DealForge does not claim a current Amazon price, discount, rating, review count, or availability without an Amazon-authorized data source.</p>
-            </div>
-          ) : (
+          {product.price > 0 ? (
             <>
               <div className="mt-6 flex items-end gap-3">
                 <p className="text-4xl font-bold text-forest">{formatPrice(product.price)}</p>
-                {product.originalPrice > product.price && <p className="pb-1 text-lg text-forest-muted line-through">{formatPrice(product.originalPrice)}</p>}
+                {!product.priceEstimated && product.originalPrice > product.price ? <p className="pb-1 text-lg text-forest-muted line-through">{formatPrice(product.originalPrice)}</p> : null}
                 {save && <span className="mb-1 rounded-full bg-forest px-2.5 py-1 text-xs font-semibold text-white">{save}</span>}
               </div>
               {direct ? (
                 <p className="mt-1 text-xs text-forest-muted">DealForge selling price. Supplier economics are revalidated again when checkout starts.</p>
+              ) : product.priceEstimated ? (
+                <p className="mt-1 text-xs text-forest-muted">Estimated DealForge selling price based on DealForge reserve, profit, and margin logic. Final selling price is confirmed before DealForge checkout is enabled.</p>
               ) : product.priceVerifiedAt ? (
                 <p className="mt-1 text-[11px] text-forest-muted/70">Price verified {new Date(product.priceVerifiedAt).toLocaleDateString()}</p>
               ) : null}
             </>
+          ) : (
+            <div className="mt-6">
+              <p className="text-2xl font-bold text-forest">DealForge estimate pending</p>
+              <p className="mt-1 text-xs text-forest-muted">DealForge will publish a selling-price estimate after enough product cost data is available for its pricing model.</p>
+            </div>
           )}
 
           {qnty && <p className="mt-2 text-sm font-medium text-forest-ink">Pack quantity: <span className="text-forest">{product.quantity?.toLocaleString()}</span></p>}
@@ -112,16 +117,14 @@ export default async function ProductPage({ params }: Props) {
               retailer={product.retailer}
               purchaseMode={product.purchaseMode}
               customerEmail={session?.email ?? ""}
-              affiliateLabel={amazonUnverified ? "Check current price on Amazon" : "View retailer listing"}
+              affiliateLabel="View source listing"
             />
             <WishlistButton productId={product.id} initial={wishlist.includes(product.id)} />
           </div>
           <p className="mt-3 text-[11px] leading-relaxed text-forest-muted/60">
             {direct
               ? "Your payment is processed through DealForge secure checkout. Order status is confirmed from verified payment events."
-              : product.retailer === "amazon"
-                ? "Outbound Amazon link may earn DealForge a commission."
-                : "Outbound retailer link may earn DealForge a commission."}
+              : "This product is not yet enabled for DealForge checkout. The displayed DealForge estimate is not a checkout quote; the source listing remains available for reference."}
           </p>
 
           {Object.keys(product.specifications).length > 0 && (
@@ -137,7 +140,7 @@ export default async function ProductPage({ params }: Props) {
 
           {!direct ? (
             <a href={`/go/${product.id}`} target="_blank" rel="noopener noreferrer sponsored nofollow" className="mt-6 inline-flex items-center gap-2 text-sm text-forest hover:underline">
-              {amazonUnverified ? "Check current price on Amazon" : "View retailer listing"} <ExternalLink className="h-3.5 w-3.5" />
+              View source listing <ExternalLink className="h-3.5 w-3.5" />
             </a>
           ) : null}
         </div>
