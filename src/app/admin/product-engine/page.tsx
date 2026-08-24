@@ -8,6 +8,31 @@ export const dynamic = "force-dynamic";
 
 const CERTIFICATION_PRODUCT_ID = "cert_test_75c_20260822_v2";
 
+function supplierSummary(specifications: string) {
+  try {
+    const root = JSON.parse(specifications) as { supplierOfferV1?: unknown };
+    const raw = root.supplierOfferV1;
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+      return { priceSource: null, priceVerifiedAt: null };
+    }
+    const offer = raw as Record<string, unknown>;
+    const supplierName =
+      typeof offer.supplierName === "string" && offer.supplierName.trim()
+        ? offer.supplierName.trim()
+        : null;
+    const verified =
+      typeof offer.priceVerifiedAt === "string" && Number.isFinite(Date.parse(offer.priceVerifiedAt))
+        ? new Date(offer.priceVerifiedAt).toISOString()
+        : null;
+    return {
+      priceSource: supplierName ? `supplier:${supplierName}` : null,
+      priceVerifiedAt: verified,
+    };
+  } catch {
+    return { priceSource: null, priceVerifiedAt: null };
+  }
+}
+
 export default async function ProductEnginePage() {
   const session = await readSession();
   if (!session) redirect("/login?next=/admin/product-engine");
@@ -18,7 +43,6 @@ export default async function ProductEnginePage() {
   });
   const ownerEmail = process.env.PRODUCT_ENGINE_OWNER_EMAIL?.trim().toLowerCase();
 
-  // Fail closed: this route is owner-only, not merely hidden from navigation.
   if (!ownerEmail || !user || user.role !== "admin" || user.email.toLowerCase() !== ownerEmail) {
     redirect("/dashboard");
   }
@@ -37,8 +61,7 @@ export default async function ProductEnginePage() {
         sellingPriceCents: true,
         landedCostCents: true,
         availability: true,
-        priceSource: true,
-        priceVerifiedAt: true,
+        specifications: true,
       },
     }),
   ]);
@@ -100,17 +123,20 @@ export default async function ProductEnginePage() {
           category: candidate.normalizedCategory,
           rejectionReason: candidate.rejectionReason,
         }))}
-        products={products.map((product) => ({
-          id: product.id,
-          title: product.title,
-          slug: product.slug,
-          commerceEnabled: product.commerceEnabled,
-          sellingPriceCents: product.sellingPriceCents,
-          landedCostCents: product.landedCostCents,
-          availability: product.availability,
-          priceSource: product.priceSource,
-          priceVerifiedAt: product.priceVerifiedAt?.toISOString() ?? null,
-        }))}
+        products={products.map((product) => {
+          const source = supplierSummary(product.specifications);
+          return {
+            id: product.id,
+            title: product.title,
+            slug: product.slug,
+            commerceEnabled: product.commerceEnabled,
+            sellingPriceCents: product.sellingPriceCents,
+            landedCostCents: product.landedCostCents,
+            availability: product.availability,
+            priceSource: source.priceSource,
+            priceVerifiedAt: source.priceVerifiedAt,
+          };
+        })}
       />
 
       <section className="mt-8 grid min-w-0 gap-5 lg:grid-cols-2">
