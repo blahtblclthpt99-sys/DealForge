@@ -136,14 +136,19 @@ test("owner Product Engine surface enforces server-side admin authorization", as
   assert.match(page, /PRODUCT_ENGINE_OWNER_EMAIL/);
 });
 
-test("Amazon stale/unverified claims are suppressed in card and detail UI", async () => {
+test("unverified external claims stay suppressed while DealForge presents its own estimate", async () => {
   const card = await readFile("src/components/product-card.tsx", "utf8");
   const detail = await readFile("src/app/product/[slug]/page.tsx", "utf8");
+  const products = await readFile("src/lib/products.ts", "utf8");
+
   for (const source of [card, detail]) {
-    assert.match(source, /product\.retailer === "amazon"/);
-    assert.match(source, /Check current price on Amazon/);
+    assert.doesNotMatch(source, /Check current price on Amazon/i);
+    assert.match(source, /DealForge estimate/i);
   }
-  assert.match(detail, /does not claim a current Amazon price/);
+  assert.match(products, /amazonClaimIntegrity/);
+  assert.match(products, /dealForgeEstimatedPrice/);
+  assert.match(products, /recommendCommercialPrice/);
+  assert.match(products, /priceEstimated/);
 });
 
 test("Product Engine mobile UI uses bounded responsive overflow", async () => {
