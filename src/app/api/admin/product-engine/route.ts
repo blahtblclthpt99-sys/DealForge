@@ -172,6 +172,10 @@ export async function POST(req: Request) {
         data: {
           sellingPriceCents: prepared.sellingPriceCents,
           landedCostCents: prepared.landedCostCents,
+          priceSource: `supplier:${input.supplierName.trim()}`.slice(0, 255),
+          priceVerifiedAt: prepared.priceVerifiedAt,
+          metadataSource: `supplier:${input.sourceClass}`,
+          metadataVerifiedAt: new Date(input.sourceVerifiedAt),
           availability: prepared.availability,
           specifications: prepared.specifications,
           commerceEnabled: prepared.commerceEnabled,
@@ -182,8 +186,11 @@ export async function POST(req: Request) {
           commerceEnabled: true,
           sellingPriceCents: true,
           landedCostCents: true,
+          priceSource: true,
+          priceVerifiedAt: true,
+          metadataSource: true,
+          metadataVerifiedAt: true,
           availability: true,
-          specifications: true,
         },
       });
 
@@ -208,11 +215,7 @@ export async function POST(req: Request) {
         ok: true,
         commerceReady: prepared.decision.allowed,
         decision: prepared.decision,
-        product: {
-          ...updated,
-          priceSource: `supplier:${input.supplierName.trim()}`,
-          priceVerifiedAt: prepared.priceVerifiedAt.toISOString(),
-        },
+        product: updated,
       });
     }
 
