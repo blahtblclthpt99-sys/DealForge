@@ -181,6 +181,10 @@ export async function createStripeCheckoutSession(input: {
 }) {
   const body = new URLSearchParams();
   body.set("mode", "payment");
+  // DealForge is the merchant for physical-goods transactions. Stripe Managed
+  // Payments is a separate merchant-of-record product intended for eligible
+  // digital goods and must not be implicitly enabled for DealForge orders.
+  body.set("managed_payments[enabled]", "false");
   body.set("client_reference_id", input.orderId);
   body.set("customer_email", input.customerEmail);
   body.set("success_url", input.successUrl);
