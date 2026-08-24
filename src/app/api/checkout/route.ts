@@ -108,7 +108,23 @@ export async function POST(request: Request) {
     }
 
     const productIds = requestedItems.map((item) => item.productId);
-    const products = await prisma.product.findMany({ where: { id: { in: productIds } } });
+    // Checkout intentionally selects only fields it needs. The production catalog
+    // can be upgraded independently without making financial checkout depend on
+    // optional enrichment columns being present in every environment.
+    const products = await prisma.product.findMany({
+      where: { id: { in: productIds } },
+      select: {
+        id: true,
+        slug: true,
+        title: true,
+        specifications: true,
+        commerceEnabled: true,
+        sellingPriceCents: true,
+        landedCostCents: true,
+        currency: true,
+        availability: true,
+      },
+    });
     if (products.length !== productIds.length) {
       return NextResponse.json({ error: "PRODUCT_NOT_FOUND" }, { status: 409 });
     }
