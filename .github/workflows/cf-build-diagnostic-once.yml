@@ -1,0 +1,38 @@
+name: Cloudflare Build Diagnostic Once
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/cf-build-diagnostic-once.yml']
+permissions:
+  contents: read
+  statuses: write
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci --no-fund --no-audit
+      - name: Run Cloudflare build and fingerprint failure
+        shell: bash
+        run: |
+          set +e
+          npm run cf:build >cf-build.log 2>&1
+          code=$?
+          cat cf-build.log
+          if [[ $code -eq 0 ]]; then
+            gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=success -f context=cf-build-diagnostic-pass -f description='Cloudflare build passed'
+            exit 0
+          fi
+          line=$(grep -Ei 'Type error|Module not found|Error:|Failed to compile|Prisma|OpenNext|Build failed|SyntaxError|ReferenceError' cf-build.log | tail -n 1)
+          [[ -n "$line" ]] || line=$(tail -n 1 cf-build.log)
+          slug=$(printf '%s' "$line" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g;s/^-+|-+$//g' | cut -c1-85)
+          [[ -n "$slug" ]] || slug=unknown
+          gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=failure -f context="cf-build-fail-${slug}" -f description='Sanitized Cloudflare build failure fingerprint'
+          exit $code
