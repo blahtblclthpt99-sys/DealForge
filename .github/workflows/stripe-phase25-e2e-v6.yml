@@ -12,19 +12,16 @@ jobs:
     timeout-minutes: 15
     env:
       GH_TOKEN: ${{ github.token }}
-      CERT_EMAIL: phase25-e2e-v7-20260823-2136@example.com
-      CHECKOUT_KEY: phase25-e2e-v7-20260823-2136
+      CERT_EMAIL: phase25-e2e-v8-20260823-2140@example.com
+      CHECKOUT_KEY: phase25-e2e-v8-20260823-2140
     steps:
       - uses: actions/checkout@v4
       - name: Create live checkout
-        id: create
         run: |
           code=$(curl --retry 3 --retry-all-errors --retry-delay 2 -sS -o checkout.json -w '%{http_code}' -X POST 'https://www.deal-forge.sale/api/checkout' -H 'content-type: application/json' --data "{\"checkoutKey\":\"${CHECKOUT_KEY}\",\"email\":\"${CERT_EMAIL}\",\"items\":[{\"productId\":\"cert_test_75c_20260822_v2\",\"quantity\":1}]}")
           error=$(node -e "const j=require('./checkout.json');process.stdout.write(String(j.error||''))")
-          safe=$(printf '%s' "${error:-none}" | tr '[:upper:]_' '[:lower:]-' | tr -cd 'a-z0-9-' | cut -c1-40)
           state=failure; [[ "$code" == 201 ]] && state=success
           gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state="$state" -f context="stripe-phase25-http-${code}" -f description="Checkout HTTP ${code}"
-          if [[ -n "$error" ]]; then gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=failure -f context="stripe-phase25-error-${safe}" -f description="Checkout error ${error}"; fi
           node -e "const j=require('./checkout.json'); if(!j.checkoutUrl||!j.orderNumber) throw new Error(j.error||'checkout invalid'); console.log(j.orderNumber)"
           [[ "$code" == 201 ]]
           gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=success -f context=stripe-phase25-checkout-create -f description='75-cent checkout created'
@@ -35,7 +32,6 @@ jobs:
       - run: npm ci --no-fund --no-audit
       - run: npx playwright install chromium
       - name: Pay Stripe Checkout with test card
-        id: pay
         continue-on-error: true
         run: |
           gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=pending -f context=stripe-phase25-payment -f description='Submitting Stripe test card'
@@ -43,16 +39,22 @@ jobs:
           const {chromium}=require('playwright'),fs=require('fs');
           const c=JSON.parse(fs.readFileSync('checkout.json','utf8'));
           async function fill(p,s,v){for(const f of p.frames())for(const q of s){try{const e=f.locator(q).first();if(await e.count()&&await e.isVisible()){await e.fill(v,{timeout:3000});return true}}catch{}}return false}
-          (async()=>{const b=await chromium.launch({headless:true});const p=await b.newPage({viewport:{width:1440,height:1000}});let stage='open';try{await p.goto(c.checkoutUrl,{waitUntil:'domcontentloaded',timeout:60000});await p.waitForTimeout(3000);stage='card';for(const f of p.frames()){try{const x=f.getByText(/^Card$/i).first();if(await x.count()&&await x.isVisible())await x.click({timeout:2000})}catch{}}const a=await fill(p,['input[name="cardNumber"]','input[autocomplete="cc-number"]'],'4242424242424242'),e=await fill(p,['input[name="cardExpiry"]','input[autocomplete="cc-exp"]'],'1230'),v=await fill(p,['input[name="cardCvc"]','input[autocomplete="cc-csc"]'],'123');await fill(p,['input[name="billingName"]','input[autocomplete="cc-name"]'],'DealForge Certification');await fill(p,['input[name="billingPostalCode"]','input[autocomplete="postal-code"]'],'73160');if(!a||!e||!v)throw new Error(`fields-${a}-${e}-${v}`);stage='submit';let clicked=false;for(const f of p.frames()){for(const x of [f.getByRole('button',{name:/Pay/i}).last(),f.locator('button[type="submit"]').last()]){try{if(await x.count()&&await x.isVisible()){await x.click({timeout:5000});clicked=true;break}}catch{}}if(clicked)break}if(!clicked)throw new Error('pay-button');stage='redirect';await p.waitForURL(/deal-forge\.sale/,{timeout:90000});fs.writeFileSync('result.txt','PASS')}catch(err){fs.writeFileSync('result.txt',`FAIL-${stage}-${err.message}`);await p.screenshot({path:'failure.png',fullPage:true}).catch(()=>{});process.exitCode=1}finally{await b.close()}})();
+          (async()=>{const b=await chromium.launch({headless:true});const p=await b.newPage({viewport:{width:1440,height:1000}});let stage='open';try{await p.goto(c.checkoutUrl,{waitUntil:'domcontentloaded',timeout:60000});await p.waitForTimeout(4000);stage='card';for(const f of p.frames()){try{const x=f.getByText(/^Card$/i).first();if(await x.count()&&await x.isVisible())await x.click({timeout:2000})}catch{}}const a=await fill(p,['input[name="cardNumber"]','input[autocomplete="cc-number"]','input[aria-label*="Card number" i]'],'4242424242424242'),e=await fill(p,['input[name="cardExpiry"]','input[autocomplete="cc-exp"]','input[aria-label*="expiration" i]'],'1230'),v=await fill(p,['input[name="cardCvc"]','input[autocomplete="cc-csc"]','input[aria-label*="CVC" i]'],'123');await fill(p,['input[name="billingName"]','input[autocomplete="cc-name"]','input[autocomplete="name"]'],'DealForge Certification');await fill(p,['input[name="billingPostalCode"]','input[autocomplete="postal-code"]'],'73160');if(!a||!e||!v)throw new Error(`fields-${a}-${e}-${v}`);stage='submit';let clicked=false;for(const f of p.frames()){for(const x of [f.getByRole('button',{name:/Pay/i}).last(),f.locator('button[type="submit"]').last()]){try{if(await x.count()&&await x.isVisible()){await x.click({timeout:5000});clicked=true;break}}catch{}}if(clicked)break}if(!clicked)throw new Error('pay-button');stage='redirect';await p.waitForURL(/deal-forge\.sale/,{timeout:90000});fs.writeFileSync('result.txt','PASS-redirect')}catch(err){fs.writeFileSync('result.txt',`FAIL-${stage}-${err.message}`);await p.screenshot({path:'failure.png',fullPage:true}).catch(()=>{});process.exitCode=1}finally{await b.close()}})();
           NODE
-      - name: Report payment
+      - name: Report payment stage
         if: always()
         run: |
-          r=$(cat result.txt 2>/dev/null || echo FAIL-no-result); s=failure; [[ "$r" == PASS* ]] && s=success; gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state="$s" -f context=stripe-phase25-payment -f description="${r:0:130}"; [[ "$s" == success ]]
+          r=$(cat result.txt 2>/dev/null || echo FAIL-runner-no-result)
+          state=failure; [[ "$r" == PASS* ]] && state=success
+          stage=$(printf '%s' "$r" | cut -d- -f2 | tr -cd 'a-z0-9')
+          [[ -n "$stage" ]] || stage=unknown
+          gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state="$state" -f context=stripe-phase25-payment -f description="${r:0:130}"
+          gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state="$state" -f context="stripe-phase25-payment-stage-${stage}" -f description='Sanitized Stripe Checkout browser stage'
+          [[ "$state" == success ]]
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
-          name: stripe-phase25-v7-failure
+          name: stripe-phase25-v8-failure
           path: |
             checkout.json
             result.txt
