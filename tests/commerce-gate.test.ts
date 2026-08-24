@@ -136,20 +136,25 @@ test("checkout cannot reuse terminal orders and certification bypass is bound to
   assert.match(route, /CERTIFICATION_PRODUCT_ID/);
 });
 
-test("production commerce paths do not query undeployed Product provenance columns", async () => {
-  const checkout = await readFile("src/app/api/checkout/route.ts", "utf8");
+test("migrated Product provenance fields are required by runtime safety paths", async () => {
+  const schema = await readFile("prisma/schema.postgres.prisma", "utf8");
   const adminApi = await readFile("src/app/api/admin/product-engine/route.ts", "utf8");
   const adminPage = await readFile("src/app/admin/product-engine/page.tsx", "utf8");
+  const products = await readFile("src/lib/products.ts", "utf8");
+  const monitor = await readFile("src/lib/commerce-monitor.ts", "utf8");
 
-  for (const source of [checkout, adminApi, adminPage]) {
-    assert.doesNotMatch(source, /priceVerifiedAt:\s*true/);
-    assert.doesNotMatch(source, /priceSource:\s*true/);
-    assert.doesNotMatch(source, /metadataSource:\s*true/);
-    assert.doesNotMatch(source, /metadataVerifiedAt:\s*true/);
+  for (const field of ["priceSource", "priceVerifiedAt", "metadataSource", "metadataVerifiedAt"]) {
+    assert.match(schema, new RegExp(field));
   }
 
-  assert.doesNotMatch(adminApi, /data:\s*\{[^}]*priceVerifiedAt:/);
-  assert.doesNotMatch(adminApi, /data:\s*\{[^}]*priceSource:/);
-  assert.doesNotMatch(adminApi, /data:\s*\{[^}]*metadataSource:/);
-  assert.doesNotMatch(adminApi, /data:\s*\{[^}]*metadataVerifiedAt:/);
+  assert.match(adminApi, /priceSource: `supplier:/);
+  assert.match(adminApi, /priceVerifiedAt: prepared\.priceVerifiedAt/);
+  assert.match(adminApi, /metadataSource: `supplier:/);
+  assert.match(adminApi, /metadataVerifiedAt: new Date\(input\.sourceVerifiedAt\)/);
+  assert.match(adminPage, /priceSource: true/);
+  assert.match(adminPage, /priceVerifiedAt: true/);
+  assert.match(products, /priceVerifiedAt: true/);
+  assert.match(products, /priceVerifiedAt: p\.priceVerifiedAt/);
+  assert.match(monitor, /priceVerifiedAt: true/);
+  assert.match(monitor, /priceVerifiedAt: product\.priceVerifiedAt/);
 });
