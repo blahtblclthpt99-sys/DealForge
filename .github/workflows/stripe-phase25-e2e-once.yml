@@ -16,8 +16,8 @@ jobs:
     timeout-minutes: 15
     env:
       GH_TOKEN: ${{ github.token }}
-      CERT_EMAIL: phase25-final-v2-20260823-2027@example.com
-      CHECKOUT_KEY: phase25-final-v2-20260823-2027
+      CERT_EMAIL: phase25-final-v3-20260823-2027@example.com
+      CHECKOUT_KEY: phase25-final-v3-20260823-2027
     steps:
       - uses: actions/checkout@v4
 
@@ -75,11 +75,11 @@ jobs:
           (async()=>{
             const browser=await chromium.launch({headless:true});
             const page=await browser.newPage({viewport:{width:1440,height:1000}});
-            let stage='open_stripe';
+            let stage='open-stripe';
             try {
               await page.goto(checkout.checkoutUrl,{waitUntil:'domcontentloaded',timeout:60000});
               await page.waitForTimeout(3000);
-              stage='card_entry';
+              stage='card-entry';
               for(const frame of page.frames()) {
                 try { const cardChoice=frame.getByText(/^Card$/i).first(); if(await cardChoice.count()&&await cardChoice.isVisible()) await cardChoice.click({timeout:2000}); } catch {}
               }
@@ -88,7 +88,7 @@ jobs:
               const cvc=await fill(page,['input[name="cardCvc"]','input[autocomplete="cc-csc"]','input[aria-label*="CVC" i]'],'123');
               await fill(page,['input[name="billingName"]','input[autocomplete="cc-name"]','input[autocomplete="name"]'],'DealForge Certification');
               await fill(page,['input[name="billingPostalCode"]','input[autocomplete="postal-code"]'],'73160');
-              if(!card||!exp||!cvc) throw new Error(`card_fields card=${card} exp=${exp} cvc=${cvc}`);
+              if(!card||!exp||!cvc) throw new Error(`card-fields-card-${card}-exp-${exp}-cvc-${cvc}`);
               stage='submit';
               let clicked=false;
               for(const frame of page.frames()) {
@@ -97,7 +97,7 @@ jobs:
                 }
                 if(clicked) break;
               }
-              if(!clicked) throw new Error('pay_button_missing');
+              if(!clicked) throw new Error('pay-button-missing');
               stage='redirect';
               await page.waitForURL(/deal-forge\.sale/,{timeout:90000});
               fs.writeFileSync('payment-result.txt','PASS|redirect');
@@ -113,9 +113,12 @@ jobs:
       - name: Report payment result
         if: always() && steps.create.outcome == 'success'
         run: |
-          result=$(cat payment-result.txt 2>/dev/null || echo 'FAIL|runner|no result')
+          result=$(cat payment-result.txt 2>/dev/null || echo 'FAIL|runner|no-result')
           state=failure; [[ "$result" == PASS* ]] && state=success
+          stage=$(printf '%s' "$result" | cut -d'|' -f2 | tr '[:upper:]_' '[:lower:]-' | tr -cd 'a-z0-9-' | cut -c1-45)
+          [[ -n "$stage" ]] || stage=unknown
           gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state="$state" -f context=stripe-phase25-payment -f description="${result:0:130}"
+          gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state="$state" -f context="stripe-phase25-payment-${stage}" -f description='Stripe hosted payment stage result'
           [[ "$state" == success ]]
 
       - name: Upload failure diagnostics
