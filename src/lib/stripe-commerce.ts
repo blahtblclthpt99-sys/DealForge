@@ -15,6 +15,7 @@ export type StripeCheckoutSession = {
   url: string | null;
   payment_status?: string;
   payment_intent?: string | null;
+  payment_method_types?: string[];
   client_reference_id?: string | null;
   metadata?: Record<string, string>;
 };
@@ -93,6 +94,15 @@ export function assertStripeEventMode(event: Pick<StripeEvent, "livemode">, expe
 export function assertPositiveCents(value: number, field: string) {
   if (!Number.isSafeInteger(value) || value <= 0) {
     throw new Error(`${field.toUpperCase()}_INVALID`);
+  }
+}
+
+export function assertCardOnlyCheckoutSession(
+  session: Pick<StripeCheckoutSession, "payment_method_types">,
+) {
+  const methods = session.payment_method_types;
+  if (!Array.isArray(methods) || methods.length !== 1 || methods[0] !== "card") {
+    throw new Error("STRIPE_CARD_ONLY_SESSION_NOT_ENFORCED");
   }
 }
 
@@ -190,7 +200,7 @@ export async function createStripeCheckoutSession(input: {
   // payment gate can exercise the canonical card path deterministically. Normal
   // production sessions keep Stripe's configured payment-method set.
   if (input.cardOnly) {
-    body.set("payment_method_types[0]", "card");
+    body.append("payment_method_types[]", "card");
   }
   body.set("client_reference_id", input.orderId);
   body.set("customer_email", input.customerEmail);
@@ -218,11 +228,13 @@ export async function createStripeCheckoutSession(input: {
     body.set(`line_items[${index}][quantity]`, String(line.quantity));
   });
 
-  return stripeRequest<StripeCheckoutSession>("/checkout/sessions", {
+  const session = await stripeRequest<StripeCheckoutSession>("/checkout/sessions", {
     method: "POST",
     body,
     idempotencyKey: `dealforge-checkout:${input.orderId}`,
   });
+  if (input.cardOnly) assertCardOnlyCheckoutSession(session);
+  return session;
 }
 
 export async function retrieveStripePaymentIntent(paymentIntentId: string) {
