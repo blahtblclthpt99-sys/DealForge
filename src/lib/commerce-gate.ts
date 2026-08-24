@@ -1,10 +1,4 @@
-const DIRECT_RESALE_SOURCE_CLASSES = new Set([
-  "manufacturer",
-  "wholesale",
-  "distributor",
-  "authorized_dropshipper",
-  "retailer_permitting_resale",
-]);
+import { isDirectResaleSourceClass } from "./source-policy";
 
 const RESERVE_KEYS = [
   "paymentCents",
@@ -158,7 +152,7 @@ export function evaluateCommerceGate(input: CommerceGateInput, nowMs = Date.now(
     };
   }
 
-  if (!DIRECT_RESALE_SOURCE_CLASSES.has(policy.sourceClass)) reasons.push("source_class_not_direct_resale");
+  if (!isDirectResaleSourceClass(policy.sourceClass)) reasons.push("source_class_not_direct_resale");
   if (!policy.resaleAllowed) reasons.push("resale_not_verified");
 
   const sourceVerifiedAt = parseTimestamp(policy.sourceVerifiedAt);

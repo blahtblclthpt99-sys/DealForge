@@ -1,15 +1,13 @@
 import { evaluateCommerceGate, type CommerceGateDecision } from "@/lib/commerce-gate";
 import { recommendSellingPrice, type DynamicPricingDecision } from "@/lib/dynamic-pricing";
+import {
+  DIRECT_RESALE_SOURCE_CLASSES,
+  isDirectResaleSourceClass,
+  type DirectResaleSourceClass,
+} from "@/lib/source-policy";
 
-export const DIRECT_RESALE_SOURCE_CLASSES = [
-  "manufacturer",
-  "wholesale",
-  "distributor",
-  "authorized_dropshipper",
-  "retailer_permitting_resale",
-] as const;
-
-export type DirectResaleSourceClass = (typeof DIRECT_RESALE_SOURCE_CLASSES)[number];
+export { DIRECT_RESALE_SOURCE_CLASSES };
+export type { DirectResaleSourceClass };
 
 type CostInput = {
   itemCostCents: number;
@@ -223,7 +221,7 @@ export function prepareCommercialization(
 
   const supplierName = input.supplierName.trim();
   if (supplierName.length < 2 || supplierName.length > 160) throw new Error("SUPPLIER_NAME_INVALID");
-  if (!DIRECT_RESALE_SOURCE_CLASSES.includes(input.sourceClass)) throw new Error("SOURCE_CLASS_INVALID");
+  if (!isDirectResaleSourceClass(input.sourceClass)) throw new Error("SOURCE_CLASS_INVALID");
   if (input.resaleAllowed !== true) throw new Error("RESALE_AUTHORIZATION_REQUIRED");
 
   const sourceUrl = safeSourceUrl(input.sourceUrl);
