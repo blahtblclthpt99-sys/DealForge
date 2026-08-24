@@ -88,3 +88,12 @@ test("checkout route is wired to the fail-closed Phase 3 commercial gate", async
   assert.match(route, /evaluateCommerceGate/);
   assert.match(route, /PRODUCT_COMMERCE_GATE_FAILED/);
 });
+
+test("checkout cannot reuse terminal orders and certification bypass is bound to the exact test product", async () => {
+  const route = await readFile("src/app/api/checkout/route.ts", "utf8");
+  assert.match(route, /TERMINAL_CHECKOUT_STATUSES/);
+  assert.match(route, /"refunded"/);
+  assert.match(route, /"partially_refunded"/);
+  assert.match(route, /certificationAttempt &&/);
+  assert.match(route, /CERTIFICATION_PRODUCT_ID/);
+});
