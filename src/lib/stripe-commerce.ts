@@ -111,35 +111,6 @@ function constantTimeHexEqual(a: string, b: string) {
   return left.length === right.length && timingSafeEqual(left, right);
 }
 
-export function verifyStripeSignature(
-  rawBody: string,
-  signatureHeader: string,
-  secret: string,
-  options?: { nowSeconds?: number; toleranceSeconds?: number },
-) {
-  if (!secret || !signatureHeader) return false;
-  const parts = signatureHeader.split(",").map((part) => part.trim());
-  const timestampRaw = parts.find((part) => part.startsWith("t="))?.slice(2);
-  const signatures = parts
-    .filter((part) => part.startsWith("v1="))
-    .map((part) => part.slice(3));
-
-  if (!timestampRaw || signatures.length === 0) return false;
-  const timestamp = Number(timestampRaw);
-  if (!Number.isSafeInteger(timestamp) || timestamp <= 0) return false;
-
-  const now = options?.nowSeconds ?? Math.floor(Date.now() / 1000);
-  const tolerance = options?.toleranceSeconds ?? DEFAULT_WEBHOOK_TOLERANCE_SECONDS;
-  if (!Number.isSafeInteger(tolerance) || tolerance < 0) return false;
-  if (Math.abs(now - timestamp) > tolerance) return false;
-
-  const expected = createHmac("sha256", secret)
-    .update(`${timestamp}.${rawBody}`, "utf8")
-    .digest("hex");
-
-  return signatures.some((candidate) => constantTimeHexEqual(candidate, expected));
-}
-
 async function stripeRequest<T>(
   path: string,
   init: {
@@ -178,6 +149,7 @@ export async function createStripeCheckoutSession(input: {
   lines: StripeCheckoutLine[];
   successUrl: string;
   cancelUrl: string;
+  cardOnly?: boolean;
 }) {
   const body = new URLSearchParams();
   body.set("mode", "payment");
@@ -185,6 +157,12 @@ export async function createStripeCheckoutSession(input: {
   // Payments is a separate merchant-of-record product intended for eligible
   // digital goods and must not be implicitly enabled for DealForge orders.
   body.set("managed_payments[enabled]", "false");
+  // Certification sessions intentionally render card directly so the end-to-end
+  // payment gate can exercise the canonical card path deterministically. Normal
+  // production sessions keep Stripe's configured payment-method set.
+  if (input.cardOnly) {
+    body.set("payment_method_types[0]", "card");
+  }
   body.set("client_reference_id", input.orderId);
   body.set("customer_email", input.customerEmail);
   body.set("success_url", input.successUrl);
