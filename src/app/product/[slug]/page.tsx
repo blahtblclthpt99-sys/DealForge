@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ExternalLink, Star } from "lucide-react";
+import { CheckCircle2, Clock3, Star } from "lucide-react";
 import { ProductCard } from "@/components/product-card";
 import { BuyButton } from "@/components/buy-button";
 import { WishlistButton } from "@/components/wishlist-button";
@@ -9,26 +9,43 @@ import { ProductImage } from "@/components/product-image";
 import { readSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { getProductBySlug, getRelatedProducts, getSimilarProducts, recordProductView } from "@/lib/products";
+import { hasFreshVerifiedStock, isInternalCertificationProduct, publicCatalogItems } from "@/lib/public-catalog";
 import { parseJson, formatPrice, discountLabel } from "@/lib/utils";
 import { formatQuantityLabel } from "@/lib/quantity";
 
 type Props = { params: Promise<{ slug: string }> };
 
+const INTERNAL_SPEC_KEYS = new Set(["internalCertification", "commerceV1", "productEngine"]);
+
+function publicSpecifications(specifications: Record<string, string>) {
+  return Object.entries(specifications).flatMap(([key, rawValue]) => {
+    if (INTERNAL_SPEC_KEYS.has(key)) return [];
+    const value: unknown = rawValue;
+    if (typeof value === "string" || typeof value === "number") return [[key, String(value)] as const];
+    if (typeof value === "boolean") return [[key, value ? "Yes" : "No"] as const];
+    return [];
+  });
+}
+
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { slug } = await params;
   const product = await getProductBySlug(slug);
-  if (!product) return { title: "Product" };
+  if (!product || isInternalCertificationProduct(product)) return { title: "Product" };
   return {
     title: product.title,
     description: product.description.slice(0, 160),
-    openGraph: { title: product.title, description: product.description.slice(0, 160), images: product.images[0] ? [product.images[0]] : [] },
+    openGraph: {
+      title: product.title,
+      description: product.description.slice(0, 160),
+      images: product.images[0] ? [product.images[0]] : [],
+    },
   };
 }
 
 export default async function ProductPage({ params }: Props) {
   const { slug } = await params;
   const product = await getProductBySlug(slug);
-  if (!product) notFound();
+  if (!product || isInternalCertificationProduct(product)) notFound();
   await recordProductView(product.id);
 
   const session = await readSession();
@@ -43,14 +60,19 @@ export default async function ProductPage({ params }: Props) {
     }
   }
 
-  const [similar, related] = await Promise.all([getSimilarProducts(product), getRelatedProducts(product)]);
+  const [similarRows, relatedRows] = await Promise.all([getSimilarProducts(product), getRelatedProducts(product)]);
+  const similar = publicCatalogItems(similarRows);
+  const related = publicCatalogItems(relatedRows);
   const amazonUnverified = product.retailer === "amazon" && !product.priceVerified;
   const save = amazonUnverified ? null : discountLabel(product.discountPercent);
   const qnty = formatQuantityLabel(product.quantity);
+  const freshInStock = hasFreshVerifiedStock(product);
+  const unavailable = product.availability === "out_of_stock";
+  const specs = publicSpecifications(product.specifications);
 
   return (
-    <div className="dn-container py-10">
-      <div className="grid gap-10 lg:grid-cols-2">
+    <div className="dn-container py-8 md:py-10">
+      <div className="grid gap-8 lg:grid-cols-2 lg:gap-10">
         <div className="dn-card overflow-hidden">
           <ProductImage src={product.images[0]} alt={product.title} asin={product.asin} priority className="aspect-square w-full object-contain p-6" />
           {product.images.length > 1 && (
@@ -64,7 +86,18 @@ export default async function ProductPage({ params }: Props) {
           <p className="text-sm font-medium uppercase tracking-wide text-forest">{product.brand}</p>
           <h1 className="mt-2 break-words font-display text-3xl font-semibold leading-tight text-forest-ink md:text-4xl">{product.title}</h1>
 
-          <div className="mt-4 flex flex-wrap items-center gap-3 text-sm">
+          <div className="mt-4 flex flex-wrap items-center gap-2 text-sm">
+            {freshInStock ? (
+              <span className="inline-flex items-center gap-1 rounded-full bg-forest/10 px-3 py-1 font-medium text-forest">
+                <CheckCircle2 className="h-3.5 w-3.5" /> In stock · recently checked
+              </span>
+            ) : unavailable ? (
+              <span className="rounded-full border border-card-border px-3 py-1 font-medium text-forest-muted">Currently unavailable</span>
+            ) : (
+              <span className="inline-flex items-center gap-1 rounded-full border border-card-border px-3 py-1 font-medium text-forest-muted">
+                <Clock3 className="h-3.5 w-3.5" /> Check current availability
+              </span>
+            )}
             {product.metadataVerified && product.rating > 0 ? (
               <span className="inline-flex items-center gap-1 rounded-full bg-forest/10 px-3 py-1 font-medium text-forest">
                 <Star className="h-3.5 w-3.5 fill-amber-400 text-amber-400" />
@@ -73,14 +106,12 @@ export default async function ProductPage({ params }: Props) {
             ) : null}
             {qnty && <span className="rounded-full bg-forest px-3 py-1 text-xs font-semibold uppercase tracking-wide text-white">{qnty}</span>}
             {product.categoryName && <Link href={`/categories/${product.categorySlug}`} className="rounded-full border border-card-border px-3 py-1 text-forest-muted hover:text-forest">{product.categoryName}</Link>}
-            {product.categorySlug === "clothing" && product.subcategory && <Link href={`/categories/clothing?subcategory=${product.subcategory}`} className="rounded-full border border-card-border px-3 py-1 capitalize text-forest-muted hover:text-forest">{product.subcategory}</Link>}
-            {product.metadataVerified ? <span className="rounded-full border border-card-border px-3 py-1 capitalize text-forest-muted">{product.availability.replace("_", " ")}</span> : null}
           </div>
 
           {amazonUnverified ? (
-            <div className="mt-6">
-              <p className="text-2xl font-bold text-forest">Check current price on Amazon</p>
-              <p className="mt-1 text-xs text-forest-muted">DealForge does not claim a current Amazon price, discount, rating, review count, or availability without an Amazon-authorized data source.</p>
+            <div className="mt-6 rounded-2xl border border-card-border bg-card p-4">
+              <p className="text-xl font-bold text-forest">Check price & availability on Amazon</p>
+              <p className="mt-1 text-xs leading-relaxed text-forest-muted">DealForge does not present Amazon price, discount, rating, reviews, or stock as current without an authorized fresh source.</p>
             </div>
           ) : (
             <>
@@ -97,38 +128,43 @@ export default async function ProductPage({ params }: Props) {
           <p className="mt-6 text-sm leading-relaxed text-forest-muted">{product.description}</p>
 
           <div className="mt-8 flex flex-wrap gap-3">
-            <BuyButton productId={product.id} retailer={product.retailer} />
+            {!unavailable && <BuyButton productId={product.id} retailer={product.retailer} />}
             <WishlistButton productId={product.id} initial={wishlist.includes(product.id)} />
           </div>
-          <p className="mt-3 text-[11px] leading-relaxed text-forest-muted/60">
-            {product.retailer === "amazon" ? "Outbound Amazon link may earn DealForge a commission." : "Outbound link may earn DealForge a commission."}
-          </p>
+          {!unavailable && (
+            <p className="mt-3 text-[11px] leading-relaxed text-forest-muted/70">
+              {product.retailer === "amazon" ? "The Amazon button opens the current retailer listing; DealForge may earn a commission from qualifying purchases." : "Retailer-linked listings open the current source in a new tab."}
+            </p>
+          )}
 
-          {Object.keys(product.specifications).length > 0 && (
+          {specs.length > 0 && (
             <div className="mt-10">
-              <h2 className="font-display text-xl font-semibold text-forest-ink">Specifications</h2>
+              <h2 className="font-display text-xl font-semibold text-forest-ink">Product details</h2>
               <dl className="mt-4 divide-y divide-card-border rounded-2xl border border-card-border bg-card">
-                {Object.entries(product.specifications).map(([k, v]) => (
-                  <div key={k} className="grid grid-cols-2 gap-2 px-4 py-3 text-sm"><dt className="break-words text-forest-muted">{k}</dt><dd className="break-words font-medium text-forest-ink">{v}</dd></div>
+                {specs.map(([key, value]) => (
+                  <div key={key} className="grid grid-cols-2 gap-2 px-4 py-3 text-sm">
+                    <dt className="break-words text-forest-muted">{key}</dt>
+                    <dd className="break-words font-medium text-forest-ink">{value}</dd>
+                  </div>
                 ))}
               </dl>
             </div>
           )}
-
-          <a href={`/go/${product.id}`} target="_blank" rel="noopener noreferrer sponsored nofollow" className="mt-6 inline-flex items-center gap-2 text-sm text-forest hover:underline">
-            {amazonUnverified ? "Check current price on Amazon" : "View listing"} <ExternalLink className="h-3.5 w-3.5" />
-          </a>
         </div>
       </div>
 
-      <section className="mt-16">
-        <h2 className="font-display text-2xl font-semibold text-forest-ink">Similar products</h2>
-        <div className="mt-6 grid grid-cols-2 gap-3 md:grid-cols-4">{similar.map((p) => <ProductCard key={p.id} product={p} />)}</div>
-      </section>
-      <section className="mb-8 mt-16">
-        <h2 className="font-display text-2xl font-semibold text-forest-ink">Related products</h2>
-        <div className="mt-6 grid grid-cols-2 gap-3 md:grid-cols-4">{related.map((p) => <ProductCard key={p.id} product={p} />)}</div>
-      </section>
+      {similar.length > 0 && (
+        <section className="mt-14 md:mt-16">
+          <h2 className="font-display text-2xl font-semibold text-forest-ink">Similar products</h2>
+          <div className="mt-5 grid grid-cols-2 gap-3 md:grid-cols-4">{similar.map((item) => <ProductCard key={item.id} product={item} />)}</div>
+        </section>
+      )}
+      {related.length > 0 && (
+        <section className="mb-8 mt-14 md:mt-16">
+          <h2 className="font-display text-2xl font-semibold text-forest-ink">More from this brand</h2>
+          <div className="mt-5 grid grid-cols-2 gap-3 md:grid-cols-4">{related.map((item) => <ProductCard key={item.id} product={item} />)}</div>
+        </section>
+      )}
     </div>
   );
 }
