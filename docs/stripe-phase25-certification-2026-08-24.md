@@ -58,3 +58,7 @@ The two Stripe refund lifecycle events converged on one DealForge refund record.
 Phase 2.5 is certified and no longer blocks Phase 3/4 engineering work.
 
 This certification does **not** automatically authorize broad catalog sales. At certification time, only the private 75-cent certification product was commerce-enabled; ordinary catalog products remained commerce-disabled. Product publication and customer commerce must continue through Phase 3 profit, source, risk, inventory-confidence, and pricing gates before activation.
+
+## Post-certification guardrails
+
+Phase 3 engineering added a fail-closed commercial checkout gate and terminal-order reuse protection after certification. A subsequent Cloudflare deployment reported a failed live webhook-secret smoke probe even though the immediately preceding certified deployment was green and the successful Stripe payment/refund webhooks had already reconciled correctly. This documentation update intentionally triggers a fresh production deployment and financial-gate recheck so that transient propagation can be distinguished from a persistent runtime configuration regression. Broad catalog commerce remains disabled regardless of the recheck result.
