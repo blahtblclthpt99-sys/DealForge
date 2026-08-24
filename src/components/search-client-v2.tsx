@@ -6,6 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState, useTransition } from "react";
 import { ProductCard } from "@/components/product-card";
 import type { ProductDTO } from "@/lib/products";
+import { publicCatalogItems } from "@/lib/public-catalog";
 
 const SORTS = [
   { value: "rank", label: "Best match" },
@@ -17,13 +18,6 @@ const PENDING_KEY = "df_pending_saved_search_v2";
 
 function cleanFilters(raw: Record<string, string>) {
   return Object.fromEntries(Object.entries(raw).filter(([, value]) => value.trim() !== ""));
-}
-
-function isPublicProduct(product: ProductDTO) {
-  const internalCertification =
-    product.specifications.internalCertification === "true" ||
-    product.specifications.internalCertification === true;
-  return !internalCertification && product.availability !== "out_of_stock";
 }
 
 export function SearchClientV2({
@@ -44,7 +38,7 @@ export function SearchClientV2({
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
 
-  const items = useMemo(() => initialItems.filter(isPublicProduct), [initialItems]);
+  const items = useMemo(() => publicCatalogItems(initialItems), [initialItems]);
   const filters = useMemo(
     () => ({
       category: searchParams.get("category") || "",
@@ -64,6 +58,22 @@ export function SearchClientV2({
     }, 250);
     return () => clearTimeout(timer);
   }, [q, router, searchParams]);
+
+  useEffect(() => {
+    const raw = sessionStorage.getItem(PENDING_KEY);
+    if (!raw) return;
+    sessionStorage.removeItem(PENDING_KEY);
+    try {
+      const payload = JSON.parse(raw) as { query?: string; filters?: Record<string, string> };
+      void fetch("/api/saved-searches", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query: payload.query || "", filters: payload.filters || {} }),
+      }).then((res) => setSaveState(res.ok ? "saved" : "idle"));
+    } catch {
+      setSaveState("idle");
+    }
+  }, []);
 
   function setFilter(key: string, value: string) {
     const params = new URLSearchParams(searchParams.toString());
@@ -89,8 +99,8 @@ export function SearchClientV2({
       });
       if (res.status === 401) {
         sessionStorage.setItem(PENDING_KEY, JSON.stringify(payload));
-        const current = `/search?${new URLSearchParams({ ...(q.trim() ? { q: q.trim() } : {}), ...cleanFilters(filters) }).toString()}`;
-        window.location.href = `/login?next=${encodeURIComponent(current)}`;
+        const nextParams = new URLSearchParams({ ...(q.trim() ? { q: q.trim() } : {}), ...cleanFilters(filters) });
+        window.location.href = `/login?next=${encodeURIComponent(`/search?${nextParams.toString()}`)}`;
         return;
       }
       setSaveState(res.ok ? "saved" : "error");
@@ -114,13 +124,8 @@ export function SearchClientV2({
               className="w-full rounded-2xl border border-card-border bg-card py-3 pl-10 pr-4 text-sm outline-none ring-forest focus:ring-2"
             />
           </div>
-          <button
-            type="button"
-            onClick={() => setFiltersOpen((value) => !value)}
-            className="inline-flex items-center gap-2 rounded-2xl border border-card-border bg-card px-4 text-sm font-semibold text-forest-ink md:hidden"
-          >
-            <SlidersHorizontal className="h-4 w-4" />
-            Filters{activeFilters ? ` (${activeFilters})` : ""}
+          <button type="button" onClick={() => setFiltersOpen((value) => !value)} className="inline-flex items-center gap-2 rounded-2xl border border-card-border bg-card px-4 text-sm font-semibold text-forest-ink md:hidden">
+            <SlidersHorizontal className="h-4 w-4" /> Filters{activeFilters ? ` (${activeFilters})` : ""}
           </button>
         </div>
       </div>
@@ -129,11 +134,7 @@ export function SearchClientV2({
         <aside className={`${filtersOpen ? "block" : "hidden"} dn-card h-fit space-y-4 p-4 lg:block`}>
           <div className="flex items-center justify-between">
             <h2 className="font-semibold text-forest-ink">Refine</h2>
-            {activeFilters > 0 && (
-              <button type="button" onClick={clearFilters} className="text-xs font-semibold text-forest hover:underline">
-                Clear
-              </button>
-            )}
+            {activeFilters > 0 && <button type="button" onClick={clearFilters} className="text-xs font-semibold text-forest hover:underline">Clear</button>}
           </div>
 
           <label className="block text-sm">
@@ -174,7 +175,7 @@ export function SearchClientV2({
 
           <div className="mt-4 flex items-start gap-2 rounded-xl border border-card-border bg-card/60 px-3 py-2 text-xs text-forest-muted">
             <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-forest" />
-            <p>DealForge only shows “In stock” when the listing data is verified and recently refreshed. Other listings ask you to check current retailer availability.</p>
+            <p>DealForge only shows “In stock” when listing data is verified and recently refreshed. Other listings ask you to check current retailer availability.</p>
           </div>
 
           <div className="mt-5 grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-4">
