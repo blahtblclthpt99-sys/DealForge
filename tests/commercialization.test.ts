@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { prepareCommercialization } from "../src/lib/commercialization";
+import { prepareCommercialization, recommendCommercialPrice } from "../src/lib/commercialization";
 
 const NOW = Date.parse("2026-08-24T20:30:00Z");
 
@@ -37,6 +37,41 @@ test("verified profitable supplier offer becomes commerce-ready", () => {
   assert.equal(specifications.supplierOfferV1.supplierName, "Verified Supplier");
   assert.equal(specifications.supplierOfferV1.costBreakdown.landedCostCents, 3300);
   assert.equal(specifications.commerceV1.resaleAllowed, true);
+});
+
+test("dynamic pricing recommendation includes variable reserves and clears floors", () => {
+  const input = goodInput();
+  const result = recommendCommercialPrice({
+    itemCostCents: input.itemCostCents,
+    shippingCents: input.shippingCents,
+    taxCents: input.taxCents,
+    supplierFeeCents: input.supplierFeeCents,
+    handlingCents: input.handlingCents,
+    acquisitionReserveCents: 250,
+  });
+  assert.equal(result.landedCostCents, 3300);
+  assert.ok(result.reserveTotalCents >= 250);
+  assert.ok(result.recommendedPriceCents >= result.minimumSafePriceCents);
+  assert.ok(result.contributionProfitCents >= 500);
+  assert.ok(result.contributionMarginBps >= 1000);
+  assert.equal(result.recommendedPriceCents % 100, 99);
+});
+
+test("dynamic pricing refuses to sacrifice profit to match an unsafe market price", () => {
+  const result = recommendCommercialPrice({
+    itemCostCents: 8000,
+    shippingCents: 500,
+    taxCents: 0,
+    supplierFeeCents: 0,
+    handlingCents: 0,
+    acquisitionReserveCents: 500,
+    marketReferenceCents: 9000,
+    maxMarketPremiumBps: 500,
+  });
+  assert.equal(result.marketCompatible, false);
+  assert.match(result.reasons.join(","), /safe_price_exceeds_market_ceiling/);
+  assert.ok(result.contributionProfitCents >= 500);
+  assert.ok(result.contributionMarginBps >= 1000);
 });
 
 test("stale supplier price blocks commerce-ready state", () => {
@@ -89,8 +124,12 @@ test("supplier source URL must be public HTTPS", () => {
 
 test("commercialization remains owner-only and does not alter the global commerce switch", async () => {
   const route = await readFile("src/app/api/admin/product-engine/route.ts", "utf8");
+  const recommendationRoute = await readFile("src/app/api/admin/product-engine/recommend-price/route.ts", "utf8");
   assert.match(route, /PRODUCT_ENGINE_OWNER_EMAIL/);
   assert.match(route, /action: z\.literal\("commercialize"\)/);
   assert.match(route, /prepareCommercialization/);
   assert.doesNotMatch(route, /process\.env\.COMMERCE_ENABLED\s*=/);
+  assert.match(recommendationRoute, /PRODUCT_ENGINE_OWNER_EMAIL/);
+  assert.match(recommendationRoute, /recommendCommercialPrice/);
+  assert.match(recommendationRoute, /recommendation_only/);
 });
