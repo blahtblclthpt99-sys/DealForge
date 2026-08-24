@@ -2,6 +2,7 @@ import { SignJWT, jwtVerify } from "jose";
 import { cookies } from "next/headers";
 import bcrypt from "bcryptjs";
 import { prisma } from "./db";
+import { resolveAuthSecret } from "./auth-secret";
 
 const COOKIE_NAME = "dealforge_session";
 const SESSION_DAYS = 14;
@@ -14,8 +15,7 @@ export type SessionUser = {
 };
 
 function secretKey() {
-  const secret = process.env.AUTH_SECRET || "dev-insecure-secret";
-  return new TextEncoder().encode(secret);
+  return new TextEncoder().encode(resolveAuthSecret());
 }
 
 export async function hashPassword(password: string) {
@@ -45,11 +45,22 @@ export async function readSession(): Promise<SessionUser | null> {
   if (!token) return null;
   try {
     const { payload } = await jwtVerify(token, secretKey());
+    if (
+      typeof payload.id !== "string" ||
+      payload.id.length === 0 ||
+      typeof payload.email !== "string" ||
+      payload.email.length === 0 ||
+      typeof payload.name !== "string" ||
+      typeof payload.role !== "string" ||
+      payload.role.length === 0
+    ) {
+      return null;
+    }
     return {
-      id: String(payload.id),
-      email: String(payload.email),
-      name: String(payload.name),
-      role: String(payload.role),
+      id: payload.id,
+      email: payload.email,
+      name: payload.name,
+      role: payload.role,
     };
   } catch {
     return null;
@@ -79,9 +90,19 @@ export async function requireUser() {
 }
 
 export async function requireAdmin() {
-  const user = await requireUser();
-  if (user.role !== "admin") throw new Error("FORBIDDEN");
-  return user;
+  const session = await requireUser();
+  const current = await prisma.user.findUnique({
+    where: { id: session.id },
+    select: { id: true, email: true, name: true, role: true },
+  });
+  if (
+    !current ||
+    current.role !== "admin" ||
+    current.email.toLowerCase() !== session.email.toLowerCase()
+  ) {
+    throw new Error("FORBIDDEN");
+  }
+  return current;
 }
 
 export async function getUserByEmail(email: string) {

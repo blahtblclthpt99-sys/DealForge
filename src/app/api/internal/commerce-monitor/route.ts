@@ -1,15 +1,12 @@
 import { timingSafeEqual } from "node:crypto";
 import { NextResponse } from "next/server";
 import { pauseUnsafeCommerceProducts } from "@/lib/commerce-monitor";
+import { resolveMaintenanceToken } from "@/lib/maintenance-token";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const TOKEN_HEADER = "x-dealforge-maintenance-token";
-
-function maintenanceToken() {
-  return (process.env.MAINTENANCE_TOKEN || process.env.AUTH_SECRET || "").trim();
-}
 
 function constantTimeEqual(left: string, right: string) {
   const a = Buffer.from(left, "utf8");
@@ -18,9 +15,9 @@ function constantTimeEqual(left: string, right: string) {
 }
 
 function authorized(request: Request) {
-  const expected = maintenanceToken();
+  const expected = resolveMaintenanceToken();
   const supplied = (request.headers.get(TOKEN_HEADER) || "").trim();
-  return expected.length >= 24 && supplied.length === expected.length && constantTimeEqual(supplied, expected);
+  return Boolean(expected) && supplied.length === expected.length && constantTimeEqual(supplied, expected);
 }
 
 export async function POST(request: Request) {
