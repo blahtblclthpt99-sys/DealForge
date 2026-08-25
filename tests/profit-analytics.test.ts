@@ -24,6 +24,10 @@ function authoritativePayment(amountCents = 10_000) {
       processingFeeCents: 300,
       processingFeeCurrency: "usd",
       processingFeeSource: "stripe_balance_transaction",
+      processingFeeChargeId: "ch_profit_123",
+      processingFeeBalanceTransactionId: "txn_profit_123",
+      processingFeeGrossCents: 10_000,
+      processingFeeNetCents: 9_700,
     }),
   };
 }
@@ -83,8 +87,39 @@ test("supplier recovery reduces supplier cost while accepted loss is not double 
   assert.equal(result.supplier.supplierRecoveredCents, 2_000);
   assert.equal(result.supplier.netKnownSupplierCostCents, 4_000);
   assert.equal(result.supplier.acceptedLossCents, 4_000);
+  assert.equal(result.contribution.contributionBeforeTaxAndPaymentFeesCents, 4_000);
+  assert.equal(result.paymentProcessing.chargeFeeComplete, true);
+  assert.equal(result.paymentProcessing.refundAdjustmentComplete, false);
+  assert.equal(result.contribution.certified, false);
+  assert.equal(result.contribution.certifiedOrderContributionCents, null);
+  assert.ok(result.contribution.finalizationReasons.includes("REFUND_PROCESSING_ADJUSTMENT_UNKNOWN"));
+});
+
+test("unrefunded order with complete Stripe fee evidence can certify contribution", () => {
+  const result = analyzeOrderProfit({
+    subtotalCents: 10_000,
+    shippingCents: 0,
+    taxCents: 0,
+    totalCents: 10_000,
+    currency: "usd",
+    refunds: [],
+    payments: [authoritativePayment()],
+    items: [
+      {
+        id: "line-certified",
+        lineTotalCents: 10_000,
+        procurementIntent: {
+          expectedTotalCostCents: 5_000,
+          actualTotalCostCents: 5_000,
+          quantity: 1,
+          events: [],
+        },
+      },
+    ],
+  });
+  assert.equal(result.paymentProcessing.complete, true);
   assert.equal(result.contribution.certified, true);
-  assert.equal(result.contribution.certifiedOrderContributionCents, 3_700);
+  assert.equal(result.contribution.certifiedOrderContributionCents, 4_700);
 });
 
 test("estimated or unproven payment fee never certifies contribution", () => {
@@ -125,7 +160,7 @@ test("estimated or unproven payment fee never certifies contribution", () => {
   assert.ok(result.contribution.finalizationReasons.includes("PAYMENT_PROCESSING_COST_UNKNOWN"));
 });
 
-test("authoritative fee parser requires Stripe balance transaction provenance", () => {
+test("authoritative fee parser requires complete Stripe balance transaction provenance", () => {
   assert.equal(authoritativePaymentFee(authoritativePayment())?.feeCents, 300);
   assert.equal(
     authoritativePaymentFee({
@@ -133,6 +168,17 @@ test("authoritative fee parser requires Stripe balance transaction provenance", 
       amountCents: 10_000,
       currency: "usd",
       meta: JSON.stringify({ processingFeeCents: 300, processingFeeSource: "manual_guess" }),
+    }),
+    null,
+  );
+  assert.equal(
+    authoritativePaymentFee({
+      ...authoritativePayment(),
+      meta: JSON.stringify({
+        processingFeeCents: 300,
+        processingFeeCurrency: "usd",
+        processingFeeSource: "stripe_balance_transaction",
+      }),
     }),
     null,
   );
@@ -171,6 +217,7 @@ test("taxable refunded order stays uncertified without authoritative refund tax 
   assert.equal(result.tax.complete, false);
   assert.equal(result.contribution.certified, false);
   assert.ok(result.contribution.finalizationReasons.includes("REFUND_TAX_ALLOCATION_UNKNOWN"));
+  assert.ok(result.contribution.finalizationReasons.includes("REFUND_PROCESSING_ADJUSTMENT_UNKNOWN"));
 });
 
 test("pending refund prevents certified contribution", () => {

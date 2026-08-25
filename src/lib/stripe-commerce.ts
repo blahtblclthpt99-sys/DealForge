@@ -20,6 +20,29 @@ export type StripeCheckoutSession = {
   metadata?: Record<string, string>;
 };
 
+export type StripeBalanceTransaction = {
+  id: string;
+  amount: number;
+  fee: number;
+  net: number;
+  currency: string;
+  source?: string | null;
+  status?: string | null;
+  type?: string | null;
+  reporting_category?: string | null;
+};
+
+export type StripeCharge = {
+  id: string;
+  amount?: number;
+  amount_refunded?: number;
+  currency?: string;
+  status?: string;
+  refunded?: boolean;
+  payment_intent?: string | null;
+  balance_transaction?: string | StripeBalanceTransaction | null;
+};
+
 export type StripePaymentIntent = {
   id: string;
   status: string;
@@ -27,15 +50,7 @@ export type StripePaymentIntent = {
   amount_received?: number;
   currency: string;
   metadata?: Record<string, string>;
-  latest_charge?:
-    | string
-    | null
-    | {
-        id: string;
-        amount?: number;
-        amount_refunded?: number;
-        refunded?: boolean;
-      };
+  latest_charge?: string | null | StripeCharge;
 };
 
 export type StripeRefund = {
@@ -240,7 +255,16 @@ export async function createStripeCheckoutSession(input: {
 export async function retrieveStripePaymentIntent(paymentIntentId: string) {
   if (!/^pi_[A-Za-z0-9_]+$/.test(paymentIntentId)) throw new Error("PAYMENT_INTENT_ID_INVALID");
   return stripeRequest<StripePaymentIntent>(
-    `/payment_intents/${encodeURIComponent(paymentIntentId)}?expand%5B%5D=latest_charge`,
+    `/payment_intents/${encodeURIComponent(paymentIntentId)}?expand%5B%5D=latest_charge.balance_transaction`,
+  );
+}
+
+export async function retrieveStripeBalanceTransaction(balanceTransactionId: string) {
+  if (!/^txn_[A-Za-z0-9_]+$/.test(balanceTransactionId)) {
+    throw new Error("BALANCE_TRANSACTION_ID_INVALID");
+  }
+  return stripeRequest<StripeBalanceTransaction>(
+    `/balance_transactions/${encodeURIComponent(balanceTransactionId)}`,
   );
 }
 

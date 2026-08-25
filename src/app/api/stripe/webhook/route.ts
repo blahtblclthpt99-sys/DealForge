@@ -7,10 +7,17 @@ import {
   expectedStripeLivemode,
   isExactWebhookReplay,
   payloadSha256,
+  retrieveStripeBalanceTransaction,
   stripeWebhookSecret,
   verifyStripeSignature,
   type StripeEvent,
 } from "@/lib/stripe-commerce";
+import {
+  mergeStripeFeeMeta,
+  STRIPE_FEE_WEBHOOK_SOURCE,
+  validateStripeFeeEvidence,
+  type StripeFeeEvidence,
+} from "@/lib/stripe-fee-reconciliation";
 
 export const runtime = "nodejs";
 
@@ -31,6 +38,14 @@ function asInteger(value: unknown) {
   return typeof value === "number" && Number.isSafeInteger(value) ? value : null;
 }
 
+function objectId(value: unknown) {
+  if (typeof value === "string") return value;
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return asString((value as Record<string, unknown>).id);
+  }
+  return null;
+}
+
 function metadataOf(object: Record<string, unknown>) {
   const metadata = object.metadata;
   if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
@@ -42,19 +57,14 @@ function metadataOf(object: Record<string, unknown>) {
 }
 
 function paymentIntentId(object: Record<string, unknown>) {
-  const raw = object.payment_intent;
-  if (typeof raw === "string") return raw;
-  if (raw && typeof raw === "object" && !Array.isArray(raw)) {
-    return asString((raw as Record<string, unknown>).id);
-  }
-  return null;
+  return objectId(object.payment_intent);
 }
 
 function eventObjectPaymentIntentId(object: Record<string, unknown>) {
   const relatedIntent = paymentIntentId(object);
   if (relatedIntent) return relatedIntent;
-  const objectId = asString(object.id);
-  return objectId?.startsWith("pi_") ? objectId : null;
+  const objectIdValue = asString(object.id);
+  return objectIdValue?.startsWith("pi_") ? objectIdValue : null;
 }
 
 async function assertPaymentIntentOrderBinding(
@@ -130,8 +140,8 @@ async function markPaymentSucceeded(
   const intentId = eventObjectPaymentIntentId(object);
   if (!intentId) throw new Error("WEBHOOK_PAYMENT_INTENT_MISSING");
 
-  const objectId = asString(object.id);
-  const sessionId = objectId?.startsWith("cs_") ? objectId : null;
+  const objectIdValue = asString(object.id);
+  const sessionId = objectIdValue?.startsWith("cs_") ? objectIdValue : null;
   if (sessionId && order.stripeCheckoutSessionId && order.stripeCheckoutSessionId !== sessionId) {
     throw new Error("WEBHOOK_CHECKOUT_SESSION_MISMATCH");
   }
@@ -282,7 +292,74 @@ async function reconcileRefund(
   return order.id;
 }
 
-async function processStripeEvent(tx: Prisma.TransactionClient, event: StripeEvent) {
+async function prepareStripeFeeEvidence(event: StripeEvent): Promise<StripeFeeEvidence | null> {
+  if (!["charge.succeeded", "charge.updated"].includes(event.type)) return null;
+  const object = event.data.object;
+  const status = asString(object.status);
+  if (status && status !== "succeeded") return null;
+
+  const intentId = paymentIntentId(object);
+  const balanceTransactionId = objectId(object.balance_transaction);
+  if (!intentId || !balanceTransactionId) return null;
+
+  const balanceTransaction = await retrieveStripeBalanceTransaction(balanceTransactionId);
+  const validated = validateStripeFeeEvidence({
+    paymentIntentId: intentId,
+    charge: object,
+    balanceTransaction,
+  });
+  if (!validated.ok) throw new Error(validated.reason);
+  return validated.evidence;
+}
+
+async function reconcilePaymentFee(
+  tx: Prisma.TransactionClient,
+  evidence: StripeFeeEvidence,
+  eventId: string,
+) {
+  const payment = await tx.payment.findUnique({
+    where: { providerPaymentId: evidence.paymentIntentId },
+  });
+  if (!payment) throw new Error("WEBHOOK_FEE_PAYMENT_NOT_FOUND");
+  if (payment.status !== "succeeded") throw new Error("WEBHOOK_FEE_PAYMENT_NOT_SUCCEEDED");
+  if (
+    payment.amountCents !== evidence.chargeAmountCents ||
+    payment.currency.toLowerCase() !== evidence.chargeCurrency
+  ) {
+    throw new Error("WEBHOOK_FEE_PAYMENT_MISMATCH");
+  }
+
+  const order = await tx.order.findUnique({ where: { id: payment.orderId } });
+  if (!order) throw new Error("WEBHOOK_FEE_ORDER_NOT_FOUND");
+  if (
+    order.stripePaymentIntentId !== evidence.paymentIntentId ||
+    order.totalCents !== evidence.chargeAmountCents ||
+    order.currency.toLowerCase() !== evidence.chargeCurrency
+  ) {
+    throw new Error("WEBHOOK_FEE_ORDER_MISMATCH");
+  }
+
+  const merged = mergeStripeFeeMeta({
+    currentMeta: payment.meta,
+    evidence,
+    source: STRIPE_FEE_WEBHOOK_SOURCE,
+    reconciledAt: new Date().toISOString(),
+    eventId,
+  });
+  if (!merged.ok) throw new Error(merged.reason);
+
+  await tx.payment.update({
+    where: { id: payment.id },
+    data: { meta: merged.meta },
+  });
+  return order.id;
+}
+
+async function processStripeEvent(
+  tx: Prisma.TransactionClient,
+  event: StripeEvent,
+  feeEvidence: StripeFeeEvidence | null,
+) {
   const object = event.data.object;
   let orderId = await resolveOrderId(tx, object);
 
@@ -307,6 +384,10 @@ async function processStripeEvent(tx: Prisma.TransactionClient, event: StripeEve
     case "refund.updated":
     case "refund.failed":
       orderId = await reconcileRefund(tx, object);
+      break;
+    case "charge.succeeded":
+    case "charge.updated":
+      if (feeEvidence) orderId = await reconcilePaymentFee(tx, feeEvidence, event.id);
       break;
     default:
       break;
@@ -405,11 +486,15 @@ export async function POST(request: Request) {
   }
 
   try {
+    // Stripe fee evidence is fetched only for signed charge events and before the
+    // local event is claimed. A transient Stripe API failure therefore remains
+    // retryable and cannot leave a half-recorded fee journal entry.
+    const feeEvidence = await prepareStripeFeeEvidence(event);
     const result = await prisma.$transaction(async (tx) => {
       const claim = await claimStripeEvent(tx, event, rawBody);
       if (claim.duplicate) return { duplicate: true };
 
-      const orderId = await processStripeEvent(tx, event);
+      const orderId = await processStripeEvent(tx, event, feeEvidence);
       await tx.paymentEvent.update({
         where: { providerEventId: event.id },
         data: {
