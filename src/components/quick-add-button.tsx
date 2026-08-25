@@ -33,7 +33,7 @@ export function QuickAddButton({ productId }: { productId: string }) {
       onClick={add}
       disabled={busy}
       aria-label={added ? "Added to cart" : "Add to cart"}
-      className="inline-flex items-center gap-1.5 rounded-full bg-forest px-3 py-2 text-xs font-semibold text-white hover:bg-forest-dark disabled:opacity-60"
+      className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full bg-forest px-3 py-2 text-xs font-semibold text-white hover:bg-forest-dark disabled:opacity-60"
     >
       <ShoppingCart className="h-3.5 w-3.5" /> {busy ? "Pricing…" : added ? "Added" : "Add"}
     </button>

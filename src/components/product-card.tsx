@@ -44,7 +44,7 @@ export function ProductCard({ product, wishlisted = false, onToggleWishlist }: {
   }
 
   return (
-    <article className="dn-card group flex flex-col overflow-hidden transition duration-300 hover:-translate-y-1 hover:shadow-lg">
+    <article className="dn-card group flex min-w-0 flex-col overflow-hidden transition duration-300 hover:-translate-y-1 hover:shadow-lg">
       <div className="relative aspect-square overflow-hidden bg-forest-bg">
         <Link href={`/product/${product.slug}`} aria-label={product.title} className="block h-full w-full">
           <ProductImage src={image} alt={product.title} asin={product.asin} className="h-full w-full object-contain p-3 transition duration-500 group-hover:scale-105" />
@@ -61,19 +61,19 @@ export function ProductCard({ product, wishlisted = false, onToggleWishlist }: {
           <Heart className={cn("h-4 w-4", liked && "fill-current")} />
         </button>
       </div>
-      <div className="flex flex-1 flex-col gap-2 p-4">
-        <p className="text-xs font-medium uppercase tracking-wide text-forest-muted">{product.brand}{qnty ? <span className="text-forest"> · {qnty}</span> : null}</p>
-        <Link href={`/product/${product.slug}`} className="line-clamp-2 text-sm font-semibold leading-snug text-forest-ink hover:text-forest">{product.title}</Link>
+      <div className="flex min-w-0 flex-1 flex-col gap-2 p-3 sm:p-4">
+        <p className="min-w-0 break-words text-xs font-medium uppercase tracking-wide text-forest-muted">{product.brand}{qnty ? <span className="text-forest"> · {qnty}</span> : null}</p>
+        <Link href={`/product/${product.slug}`} className="line-clamp-2 min-w-0 break-words text-sm font-semibold leading-snug text-forest-ink hover:text-forest">{product.title}</Link>
         {verifiedInStock ? (
           <p className="text-[11px] font-semibold text-forest">In stock · Sold by DealForge</p>
         ) : (
           <p className="text-[11px] font-medium text-forest-muted">Check price &amp; availability at source</p>
         )}
-        <div className="mt-auto flex items-end justify-between gap-2 pt-2">
-          <div>
+        <div className="mt-auto flex min-w-0 flex-wrap items-end justify-between gap-2 pt-2">
+          <div className="min-w-0 flex-1">
             {product.price > 0 ? (
               <>
-                <p className="text-lg font-bold text-forest">{formatPrice(product.price)}</p>
+                <p className="break-words text-lg font-bold text-forest">{formatPrice(product.price)}</p>
                 {direct ? (
                   <p className="text-[11px] font-medium text-forest-muted">Published ceiling · cart may be lower</p>
                 ) : product.priceEstimated ? (
@@ -87,7 +87,7 @@ export function ProductCard({ product, wishlisted = false, onToggleWishlist }: {
             )}
           </div>
           {product.metadataVerified && product.rating > 0 ? (
-            <div className="flex items-center gap-1 text-xs text-forest-muted">
+            <div className="flex shrink-0 items-center gap-1 text-xs text-forest-muted">
               <Star className="h-3.5 w-3.5 fill-amber-400 text-amber-400" />
               <span>{product.rating.toFixed(1)}</span>
               <span>({product.reviewCount.toLocaleString()})</span>
@@ -95,8 +95,8 @@ export function ProductCard({ product, wishlisted = false, onToggleWishlist }: {
           ) : null}
         </div>
         {direct ? (
-          <div className="mt-2 flex items-center justify-between gap-2 border-t border-card-border pt-3">
-            <span className="text-[11px] text-forest-muted">Final price calculated in cart</span>
+          <div className="mt-2 flex min-w-0 flex-wrap items-center justify-between gap-2 border-t border-card-border pt-3">
+            <span className="min-w-[7rem] flex-1 text-[11px] text-forest-muted">Final price calculated in cart</span>
             <QuickAddButton productId={product.id} />
           </div>
         ) : null}
