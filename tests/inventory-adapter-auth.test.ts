@@ -14,6 +14,16 @@ test("adapter authentication is HMAC signed, constant-time, source-scoped, and d
   assert.match(source, /ADAPTER_SIGNATURE_INVALID/);
 });
 
+test("adapter secret resolution prefers deployed Cloudflare bindings with process env fallback", async () => {
+  const source = await readFile("src/lib/inventory-adapter-auth.ts", "utf8");
+  assert.match(source, /getCloudflareContext/);
+  assert.match(source, /resolveInventoryAdapterRuntimeValue/);
+  assert.match(source, /bindings = getCloudflareContext\(\)\.env/);
+  assert.match(source, /const boundValue = bindings\?\.\[name\]/);
+  assert.match(source, /return \(processEnv\[name\] \|\| ""\)\.trim\(\)/);
+  assert.match(source, /resolveInventoryAdapterRuntimeValue\("INVENTORY_ADAPTER_SECRETS_JSON"\)/);
+});
+
 test("adapter requests have durable replay protection", async () => {
   const source = await readFile("src/lib/inventory-adapter-auth.ts", "utf8");
   const migration = await readFile(
