@@ -104,7 +104,10 @@ export function CartClient({ initialEmail = "" }: { initialEmail?: string }) {
   }, []);
 
   useEffect(() => {
-    void refreshQuote(readCart());
+    const timer = window.setTimeout(() => {
+      void refreshQuote(readCart());
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [refreshQuote]);
 
   function invalidateAddons() {
