@@ -49,5 +49,5 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          gh workflow run inventory-adapter-certification.yml --ref "$GITHUB_SHA"
+          gh workflow run inventory-adapter-certification.yml --repo "$GITHUB_REPOSITORY" --ref "$GITHUB_SHA"
           echo "Dispatched final inventory adapter certification for ${GITHUB_SHA}."
