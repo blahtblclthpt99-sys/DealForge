@@ -71,7 +71,7 @@ jobs:
               exit 1
             fi
             echo "::add-mask::$value"
-            printf '%s' "$value" | npx wrangler secret put "$cloudflare_name" --name dealforge
+            printf '%s' "$value" | npx wrangler versions secret put "$cloudflare_name" --name dealforge --message "DealForge secure secret sync ${GITHUB_SHA:0:12}"
             synced=1
           }
 
