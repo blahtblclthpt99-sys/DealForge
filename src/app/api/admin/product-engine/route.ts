@@ -2,7 +2,6 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireAdmin } from "@/lib/auth";
 import { prisma } from "@/lib/db";
-import { prepareCommercialization } from "@/lib/commercialization";
 import {
   ingestCandidate,
   productEngineDashboard,
@@ -11,6 +10,8 @@ import {
   runProductEngine,
   setEnginePaused,
 } from "@/lib/product-engine";
+import { readLimitedJson } from "@/lib/request-json";
+import { persistSelectAndPrepareCommercialization } from "@/lib/supplier-commercialization";
 
 const candidateSchema = z.object({
   action: z.literal("intake"),
@@ -97,6 +98,16 @@ function sameOrigin(req: Request) {
   }
 }
 
+function selectionReasons(selection: Awaited<ReturnType<typeof persistSelectAndPrepareCommercialization>>["selection"]) {
+  return selection.evaluated.map((entry) => ({
+    offerId: entry.offer.id,
+    supplierId: entry.offer.supplierId,
+    eligible: entry.eligible,
+    reasons: entry.reasons,
+    landedCostCents: entry.landedCostCents,
+  }));
+}
+
 export async function GET() {
   try {
     await requireOwner();
@@ -113,13 +124,14 @@ export async function POST(req: Request) {
     const owner = await requireOwner();
     if (!sameOrigin(req)) return NextResponse.json({ error: "Invalid origin" }, { status: 403 });
 
-    let json: unknown;
-    try {
-      json = await req.json();
-    } catch {
-      return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+    const read = await readLimitedJson(req, 32 * 1024);
+    if (!read.ok) {
+      return NextResponse.json(
+        { error: read.error === "BODY_TOO_LARGE" ? "Product Engine request too large" : "Invalid JSON" },
+        { status: read.error === "BODY_TOO_LARGE" ? 413 : 400 },
+      );
     }
-    const parsed = actionSchema.safeParse(json);
+    const parsed = actionSchema.safeParse(read.value);
     if (!parsed.success) {
       return NextResponse.json({ error: "Invalid request", issues: parsed.error.flatten() }, { status: 400 });
     }
@@ -145,11 +157,14 @@ export async function POST(req: Request) {
     if (input.action === "commercialize") {
       const product = await prisma.product.findUnique({
         where: { id: input.productId },
-        select: { id: true, title: true, specifications: true },
+        select: { id: true, title: true, specifications: true, currency: true },
       });
       if (!product) throw new Error("PRODUCT_NOT_FOUND");
 
-      const prepared = prepareCommercialization(product.specifications, {
+      const result = await persistSelectAndPrepareCommercialization({
+        productId: product.id,
+        productCurrency: product.currency,
+        existingSpecifications: product.specifications,
         supplierName: input.supplierName,
         sourceClass: input.sourceClass,
         sourceUrl: input.sourceUrl,
@@ -167,15 +182,43 @@ export async function POST(req: Request) {
         availability: input.availability,
       });
 
+      if (!result.prepared || !result.selection.selected) {
+        const evaluated = selectionReasons(result.selection);
+        await prisma.productEngineAudit.create({
+          data: {
+            candidateId: null,
+            actor: owner.email,
+            action: "commercial_gate_blocked_no_supplier_offer",
+            detail: JSON.stringify({
+              productId: product.id,
+              submittedSupplierId: result.submittedSupplierId,
+              submittedOfferId: result.submittedOfferId,
+              evaluated,
+            }),
+          },
+        });
+        return NextResponse.json(
+          {
+            ok: false,
+            error: "NO_ELIGIBLE_SUPPLIER_OFFER",
+            submittedOfferId: result.submittedOfferId,
+            evaluated,
+          },
+          { status: 409 },
+        );
+      }
+
+      const prepared = result.prepared;
+      const selected = result.selection.selected.offer;
       const updated = await prisma.product.update({
         where: { id: product.id },
         data: {
           sellingPriceCents: prepared.sellingPriceCents,
           landedCostCents: prepared.landedCostCents,
-          priceSource: `supplier:${input.supplierName.trim()}`.slice(0, 255),
+          priceSource: `supplier-offer:${selected.id}`.slice(0, 255),
           priceVerifiedAt: prepared.priceVerifiedAt,
-          metadataSource: `supplier:${input.sourceClass}`,
-          metadataVerifiedAt: new Date(input.sourceVerifiedAt),
+          metadataSource: `supplier:${selected.supplierId}`.slice(0, 255),
+          metadataVerifiedAt: selected.sourceVerifiedAt,
           availability: prepared.availability,
           specifications: prepared.specifications,
           commerceEnabled: prepared.commerceEnabled,
@@ -201,12 +244,16 @@ export async function POST(req: Request) {
           action: prepared.decision.allowed ? "commercial_gate_passed" : "commercial_gate_blocked",
           detail: JSON.stringify({
             productId: product.id,
-            supplierName: input.supplierName.trim(),
-            sourceClass: input.sourceClass,
+            submittedSupplierId: result.submittedSupplierId,
+            submittedOfferId: result.submittedOfferId,
+            selectedSupplierId: selected.supplierId,
+            selectedOfferId: selected.id,
+            selectedOfferKey: selected.offerKey ?? null,
             contributionProfitCents: prepared.decision.contributionProfitCents,
             contributionMarginBps: prepared.decision.contributionMarginBps,
             reserveTotalCents: prepared.decision.reserveTotalCents,
             reasons: prepared.decision.reasons,
+            evaluatedOfferCount: result.selection.evaluated.length,
           }),
         },
       });
@@ -215,6 +262,12 @@ export async function POST(req: Request) {
         ok: true,
         commerceReady: prepared.decision.allowed,
         decision: prepared.decision,
+        selectedOffer: {
+          supplierId: selected.supplierId,
+          offerId: selected.id,
+          offerKey: selected.offerKey ?? null,
+          landedCostCents: result.selection.selected.landedCostCents,
+        },
         product: updated,
       });
     }
@@ -231,6 +284,9 @@ export async function POST(req: Request) {
     const message = error instanceof Error ? error.message : "Product Engine action failed";
     if (message === "PRODUCT_NOT_FOUND") {
       return NextResponse.json({ error: message }, { status: 404 });
+    }
+    if (["SUPPLIER_KEY_CONFLICT", "SUPPLIER_OFFER_KEY_CONFLICT", "SUPPLIER_OFFER_VERIFICATION_CONFLICT"].includes(message)) {
+      return NextResponse.json({ error: message }, { status: 409 });
     }
     const badRequest =
       message === "CERTIFICATION_PRODUCT_IMMUTABLE" ||

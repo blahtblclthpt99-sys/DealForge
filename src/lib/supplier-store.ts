@@ -7,7 +7,9 @@ import {
 
 export type PersistedSupplierOfferRow = {
   id: string;
+  offerKey: string;
   supplierId: string;
+  sourceUrl: string | null;
   active: boolean;
   availability: string;
   currency: string;
@@ -20,6 +22,7 @@ export type PersistedSupplierOfferRow = {
   inventoryConfidenceBps: number;
   priority: number;
   supplier: {
+    name: string;
     active: boolean;
     sourceClass: string;
     resaleAllowed: boolean;
@@ -35,7 +38,10 @@ export type PersistedSupplierOfferRow = {
 export function toSupplierOfferCandidate(row: PersistedSupplierOfferRow): SupplierOfferCandidate {
   return {
     id: row.id,
+    offerKey: row.offerKey,
     supplierId: row.supplierId,
+    supplierName: row.supplier.name,
+    sourceUrl: row.sourceUrl,
     supplierActive: row.supplier.active,
     offerActive: row.active,
     sourceClass: row.supplier.sourceClass,
@@ -56,7 +62,9 @@ export function toSupplierOfferCandidate(row: PersistedSupplierOfferRow): Suppli
 
 const supplierOfferSelect = {
   id: true,
+  offerKey: true,
   supplierId: true,
+  sourceUrl: true,
   active: true,
   availability: true,
   currency: true,
@@ -70,6 +78,7 @@ const supplierOfferSelect = {
   priority: true,
   supplier: {
     select: {
+      name: true,
       active: true,
       sourceClass: true,
       resaleAllowed: true,

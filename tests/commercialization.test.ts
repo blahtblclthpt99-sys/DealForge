@@ -122,12 +122,13 @@ test("supplier source URL must be public HTTPS", () => {
   );
 });
 
-test("commercialization remains owner-only and does not alter the global commerce switch", async () => {
+test("commercialization remains owner-only, persisted-first, and does not alter the global commerce switch", async () => {
   const route = await readFile("src/app/api/admin/product-engine/route.ts", "utf8");
   const recommendationRoute = await readFile("src/app/api/admin/product-engine/recommend-price/route.ts", "utf8");
   assert.match(route, /PRODUCT_ENGINE_OWNER_EMAIL/);
   assert.match(route, /action: z\.literal\("commercialize"\)/);
-  assert.match(route, /prepareCommercialization/);
+  assert.match(route, /persistSelectAndPrepareCommercialization/);
+  assert.match(route, /NO_ELIGIBLE_SUPPLIER_OFFER/);
   assert.doesNotMatch(route, /process\.env\.COMMERCE_ENABLED\s*=/);
   assert.match(recommendationRoute, /PRODUCT_ENGINE_OWNER_EMAIL/);
   assert.match(recommendationRoute, /recommendCommercialPrice/);

@@ -9,7 +9,9 @@ const NOW = Date.parse("2026-08-24T23:20:00Z");
 function row() {
   return {
     id: "offer-1",
+    offerKey: "offer-key-1",
     supplierId: "supplier-1",
+    sourceUrl: "https://supplier.example/items/1",
     active: true,
     availability: "in_stock",
     currency: "usd",
@@ -22,6 +24,7 @@ function row() {
     inventoryConfidenceBps: 9200,
     priority: 10,
     supplier: {
+      name: "Verified Supplier",
       active: true,
       sourceClass: "authorized_dropshipper",
       resaleAllowed: true,
@@ -40,7 +43,10 @@ const policy = {
 test("persisted supplier rows map exactly into the fail-closed selector contract", () => {
   const candidate = toSupplierOfferCandidate(row());
   assert.equal(candidate.id, "offer-1");
+  assert.equal(candidate.offerKey, "offer-key-1");
   assert.equal(candidate.supplierId, "supplier-1");
+  assert.equal(candidate.supplierName, "Verified Supplier");
+  assert.equal(candidate.sourceUrl, "https://supplier.example/items/1");
   assert.equal(candidate.sourceClass, "authorized_dropshipper");
   assert.equal(candidate.resaleAllowed, true);
   assert.equal(candidate.itemCostCents, 2000);

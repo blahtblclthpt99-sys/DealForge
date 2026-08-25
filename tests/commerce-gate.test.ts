@@ -147,10 +147,10 @@ test("migrated Product provenance fields are required by runtime safety paths", 
     assert.match(schema, new RegExp(field));
   }
 
-  assert.match(adminApi, /priceSource: `supplier:/);
+  assert.match(adminApi, /priceSource: `supplier-offer:\$\{selected\.id\}`/);
   assert.match(adminApi, /priceVerifiedAt: prepared\.priceVerifiedAt/);
-  assert.match(adminApi, /metadataSource: `supplier:/);
-  assert.match(adminApi, /metadataVerifiedAt: new Date\(input\.sourceVerifiedAt\)/);
+  assert.match(adminApi, /metadataSource: `supplier:\$\{selected\.supplierId\}`/);
+  assert.match(adminApi, /metadataVerifiedAt: selected\.sourceVerifiedAt/);
   assert.match(adminPage, /priceSource: true/);
   assert.match(adminPage, /priceVerifiedAt: true/);
   assert.match(products, /priceVerifiedAt: true/);
