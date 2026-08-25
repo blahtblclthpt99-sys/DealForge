@@ -56,10 +56,15 @@ export type StripePaymentIntent = {
 export type StripeRefund = {
   id: string;
   payment_intent?: string | null;
+  charge?: string | null;
   amount: number;
   currency: string;
   status?: string | null;
   metadata?: Record<string, string>;
+  reason?: string | null;
+  balance_transaction?: string | StripeBalanceTransaction | null;
+  failure_balance_transaction?: string | StripeBalanceTransaction | null;
+  failure_reason?: string | null;
 };
 
 export type StripeEvent = {
@@ -265,6 +270,13 @@ export async function retrieveStripeBalanceTransaction(balanceTransactionId: str
   }
   return stripeRequest<StripeBalanceTransaction>(
     `/balance_transactions/${encodeURIComponent(balanceTransactionId)}`,
+  );
+}
+
+export async function retrieveStripeRefund(refundId: string) {
+  if (!/^re_[A-Za-z0-9_]+$/.test(refundId)) throw new Error("REFUND_ID_INVALID");
+  return stripeRequest<StripeRefund>(
+    `/refunds/${encodeURIComponent(refundId)}?expand%5B%5D=balance_transaction&expand%5B%5D=failure_balance_transaction`,
   );
 }
 
