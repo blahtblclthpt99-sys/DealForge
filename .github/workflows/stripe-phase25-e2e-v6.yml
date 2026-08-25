@@ -1,4 +1,5 @@
 name: Stripe Phase 2.5 Hosted Checkout Gate
+
 on:
   push:
     branches: [main]
@@ -15,24 +16,122 @@ on:
       - 'tests/stripe-commerce.test.ts'
       - 'tests/commerce-gate.test.ts'
       - 'tests/commercialization.test.ts'
+  workflow_dispatch:
+
 permissions:
   contents: read
   statuses: write
+
+concurrency:
+  group: stripe-phase25-hosted-checkout-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   checkout-gate:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: dealforge
+          POSTGRES_PASSWORD: dealforge
+          POSTGRES_DB: dealforge_phase25_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U dealforge -d dealforge_phase25_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     env:
       GH_TOKEN: ${{ github.token }}
-      CERT_EMAIL: phase25-hosted-gate-20260824@example.com
-      CHECKOUT_KEY: phase25-hosted-gate-20260824
+      DATABASE_URL: postgresql://dealforge:dealforge@localhost:5432/dealforge_phase25_ci?schema=public
+      AUTH_SECRET: phase25-ci-only-auth-secret-not-for-production
+      NEXT_PUBLIC_APP_URL: http://localhost:3000
+      PRODUCT_ENGINE_OWNER_EMAIL: owner@example.test
+      STRIPE_SECRET_KEY: sk_test_ci_placeholder
+      STRIPE_WEBHOOK_SECRET: whsec_ci_placeholder
+      CERT_EMAIL: phase25-hosted-gate-20260825@example.com
+      CHECKOUT_KEY: phase25-hosted-gate-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Run Stripe and commerce gate tests
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci --no-fund --no-audit
+
+      - name: Validate database schemas and migration chain
         run: |
-          npm ci --no-fund --no-audit
+          set -euo pipefail
+          npm run prisma:validate
+          npx prisma migrate deploy --schema=prisma/schema.postgres.prisma
+
+      - name: Prepare isolated application test database
+        env:
+          DATABASE_URL: file:./phase25-ci-test.db
+        run: |
+          set -euo pipefail
+          npx prisma generate --schema=prisma/schema.prisma
+          npx prisma db push --schema=prisma/schema.prisma --force-reset --skip-generate
+
+      - name: Run Stripe and commerce regression suite
+        env:
+          DATABASE_URL: file:./phase25-ci-test.db
+        run: |
+          set -euo pipefail
           npm test
+          npx tsx --test tests/stripe-commerce.test.ts tests/commerce-gate.test.ts tests/commercialization.test.ts
+
+      - name: Wait for exact production revision
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 30); do
+            state=$(gh api "/repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/status" \
+              --jq '[.statuses[] | select(.context == "cloudflare-production-deploy")][0].state // "pending"')
+            echo "production deploy status attempt ${attempt}: ${state}"
+            if [[ "$state" == 'success' ]]; then
+              exit 0
+            fi
+            if [[ "$state" == 'failure' || "$state" == 'error' ]]; then
+              echo '::error::Exact production revision failed Cloudflare deployment.'
+              exit 1
+            fi
+            sleep 10
+          done
+          echo '::error::Timed out waiting for exact production revision.'
+          exit 1
+
+      - name: Verify live production runtime gate
+        run: |
+          set -euo pipefail
+          base='https://www.deal-forge.sale'
+
+          health_code=$(curl --retry 5 --retry-all-errors --retry-delay 2 -sS -o /tmp/phase25-health -w '%{http_code}' "$base/api/health")
+          db_state=$(node -e "const fs=require('fs');try{const j=JSON.parse(fs.readFileSync('/tmp/phase25-health','utf8'));process.stdout.write(String(j.database||'unknown'))}catch{process.stdout.write('invalid_response')}")
+          [[ "$health_code" == '200' && "$db_state" == 'ok' ]] || { echo "::error::Production health/database gate failed (${health_code}/${db_state})"; exit 1; }
+
+          cert_code=$(curl --retry 5 --retry-all-errors --retry-delay 2 -sS -o /tmp/phase25-cert-route -w '%{http_code}' "$base/stripe-certification")
+          [[ "$cert_code" == '200' ]] || { echo "::error::Production certification route failed (${cert_code})"; exit 1; }
+
+          webhook_code=$(curl -sS -o /tmp/phase25-webhook -w '%{http_code}' \
+            -X POST "$base/api/stripe/webhook" \
+            -H 'content-type: application/json' \
+            -H 'stripe-signature: t=1,v1=deadbeef' \
+            --data '{}' || true)
+          webhook_error=$(node -e "const fs=require('fs');try{const j=JSON.parse(fs.readFileSync('/tmp/phase25-webhook','utf8'));process.stdout.write(String(j.error||'none'))}catch{process.stdout.write('invalid_response')}")
+          [[ "$webhook_code" == '400' && "$webhook_error" == 'INVALID_STRIPE_SIGNATURE' ]] || { echo "::error::Production webhook verification gate failed (${webhook_code}/${webhook_error})"; exit 1; }
+
+          gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
+            -f state=success \
+            -f context=stripe-phase25-runtime-gate \
+            -f description='Production health, database, certification route, and webhook verification passed'
 
       - name: Create live test-mode Checkout Session
         run: |
@@ -59,14 +158,14 @@ jobs:
           if (!body.checkoutUrl.startsWith('https://checkout.stripe.com/')) {
             throw new Error('checkout URL is not Stripe-hosted');
           }
-          console.log(`Created/reused ${body.orderNumber}`);
+          console.log(`Created ${body.orderNumber}`);
           NODE
 
           [[ "$code" == 201 ]]
           gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
             -f state=success \
             -f context=stripe-phase25-checkout-create \
-            -f description='75-cent Stripe-hosted Checkout created'
+            -f description='Fresh 75-cent Stripe-hosted test Checkout created'
 
       - name: Verify recorded financial certification
         run: |
@@ -74,6 +173,7 @@ jobs:
           report='docs/stripe-phase25-certification-2026-08-24.md'
           test -f "$report"
           grep -Fq 'Status: **CERTIFIED**' "$report"
+          grep -Fq 'Mode: **Stripe test mode only**' "$report"
           grep -Fq 'pending_payment -> paid' "$report"
           grep -Fq 'paid -> refunded' "$report"
           grep -Fq 'pi_3U84CoRFopwBpZeP1BRJxV6X' "$report"
@@ -82,11 +182,11 @@ jobs:
           gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
             -f state=success \
             -f context=stripe-phase25-financial-certification \
-            -f description='Certified sandbox payment, webhook ledger, and refund reconciliation'
+            -f description='Certified sandbox payment, webhook ledger, and refund reconciliation verified'
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: stripe-phase25-hosted-checkout-gate
+          name: stripe-phase25-hosted-checkout-gate-${{ github.run_id }}-${{ github.run_attempt }}
           path: checkout.json
-          if-no-files-found: error
+          if-no-files-found: ignore
