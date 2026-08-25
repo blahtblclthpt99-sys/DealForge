@@ -1,12 +1,13 @@
 "use client";
 
-import { ExternalLink, LockKeyhole } from "lucide-react";
+import Link from "next/link";
+import { ExternalLink, ShoppingCart } from "lucide-react";
 import { useState } from "react";
+import { addCartItem } from "@/lib/cart-client";
 
 export function BuyButton({
   productId,
   purchaseMode = "affiliate",
-  customerEmail = "",
   affiliateLabel = "View listing",
 }: {
   productId: string;
@@ -17,8 +18,8 @@ export function BuyButton({
   /** @deprecated Links are built live via /go/[productId] */
   affiliateUrl?: string;
 }) {
-  const [email, setEmail] = useState(customerEmail);
   const [busy, setBusy] = useState(false);
+  const [added, setAdded] = useState(false);
   const [error, setError] = useState("");
 
   if (purchaseMode !== "direct") {
@@ -34,66 +35,58 @@ export function BuyButton({
     );
   }
 
-  async function startCheckout() {
-    const normalizedEmail = email.trim().toLowerCase();
-    if (!/^\S+@\S+\.\S+$/.test(normalizedEmail)) {
-      setError("Enter a valid email for your order receipt.");
-      return;
-    }
-
+  async function addToCart() {
     setBusy(true);
+    setAdded(false);
     setError("");
     try {
-      const checkoutKey = `buy:${productId}:${crypto.randomUUID()}`;
-      const response = await fetch("/api/checkout", {
+      // The server makes the authoritative customer-friendly price decision at
+      // cart-add time. Only product identity and quantity are stored locally;
+      // client-provided prices are never trusted by checkout.
+      const response = await fetch("/api/cart/quote", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          checkoutKey,
-          email: normalizedEmail,
-          items: [{ productId, quantity: 1 }],
-        }),
+        body: JSON.stringify({ items: [{ productId, quantity: 1 }] }),
       });
       const payload = await response.json().catch(() => ({}));
-      if (!response.ok || typeof payload.checkoutUrl !== "string") {
-        const reason = typeof payload.error === "string" ? payload.error : "CHECKOUT_UNAVAILABLE";
+      if (!response.ok || !Array.isArray(payload.items)) {
+        const reason = typeof payload.error === "string" ? payload.error : "CART_QUOTE_UNAVAILABLE";
         throw new Error(reason);
       }
-      window.location.assign(payload.checkoutUrl);
-    } catch (checkoutError) {
-      const message = checkoutError instanceof Error ? checkoutError.message : "CHECKOUT_UNAVAILABLE";
+      addCartItem(productId, 1);
+      setAdded(true);
+    } catch (cartError) {
+      const message = cartError instanceof Error ? cartError.message : "CART_QUOTE_UNAVAILABLE";
       setError(
-        message === "PRODUCT_COMMERCE_GATE_FAILED" || message === "COMMERCE_DISABLED"
-          ? "This item is temporarily unavailable for DealForge checkout."
-          : "Checkout is temporarily unavailable. Please try again.",
+        message === "PRODUCT_COMMERCE_GATE_FAILED" ||
+        message === "PRODUCT_SUPPLIER_BINDING_FAILED" ||
+        message === "PUBLISHED_PRICE_NO_LONGER_SAFE" ||
+        message === "MINIMUM_SAFE_PROFIT_NOT_MET" ||
+        message === "COMMERCE_DISABLED"
+          ? "This item is temporarily unavailable at a safe DealForge price."
+          : "We could not confirm this item's cart price. Please try again.",
       );
+    } finally {
       setBusy(false);
     }
   }
 
   return (
     <div className="min-w-[16rem] max-w-sm">
-      {!customerEmail ? (
-        <label className="mb-2 block text-xs font-medium text-forest-muted">
-          Receipt email
-          <input
-            type="email"
-            autoComplete="email"
-            value={email}
-            onChange={(event) => setEmail(event.target.value)}
-            placeholder="you@example.com"
-            className="mt-1 w-full rounded-xl border border-card-border bg-card px-3 py-2 text-sm text-forest-ink"
-          />
-        </label>
-      ) : null}
       <button
         type="button"
         disabled={busy}
-        onClick={startCheckout}
+        onClick={addToCart}
         className="inline-flex w-full items-center justify-center gap-2 rounded-full bg-forest px-6 py-3 text-sm font-semibold text-white shadow-md transition hover:bg-forest-dark disabled:cursor-not-allowed disabled:opacity-60"
       >
-        <LockKeyhole className="h-4 w-4" /> {busy ? "Opening secure checkout…" : "Buy from DealForge"}
+        <ShoppingCart className="h-4 w-4" /> {busy ? "Confirming cart price…" : added ? "Added to cart" : "Add to cart"}
       </button>
+      {added ? (
+        <div className="mt-2 flex items-center justify-between gap-3 text-xs">
+          <span className="font-medium text-forest">Price confirmed in your cart.</span>
+          <Link href="/cart" className="font-semibold text-forest hover:underline">View cart</Link>
+        </div>
+      ) : null}
       {error ? <p role="alert" className="mt-2 text-xs text-red-700">{error}</p> : null}
     </div>
   );
