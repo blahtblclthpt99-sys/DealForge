@@ -40,10 +40,25 @@ test("certification client signs exact raw body and requires replay rejection", 
   assert.match(client, /ADAPTER_REPLAY_DETECTED/);
 });
 
-test("Cloudflare certification workflow is ephemeral and refuses to overwrite real adapter credentials", async () => {
+test("production schema checker is read-only and verifies every replay-protection index", async () => {
+  const checker = await readFile("scripts/check-inventory-adapter-schema.ts", "utf8");
+
+  assert.match(checker, /InventoryAdapterNonce/);
+  assert.match(checker, /InventoryAdapterNonce_nonceHash_key/);
+  assert.match(checker, /InventoryAdapterNonce_expires_idx/);
+  assert.match(checker, /InventoryAdapterNonce_adapter_source_idx/);
+  assert.match(checker, /to_regclass/);
+  assert.doesNotMatch(checker, /\b(CREATE|ALTER|DROP|TRUNCATE|INSERT|UPDATE|DELETE)\b/);
+});
+
+test("Cloudflare certification workflow is ephemeral, schema-gated, and refuses to overwrite real adapter credentials", async () => {
   const workflow = await readFile(".github/workflows/inventory-adapter-certification.yml", "utf8");
 
   assert.match(workflow, /workflow_dispatch:/);
+  assert.match(workflow, /src\/lib\/inventory-adapter-auth\.ts/);
+  assert.match(workflow, /inventory_adapter_nonce_v1/);
+  assert.match(workflow, /DATABASE_URL: \$\{\{ secrets\.DATABASE_URL \}\}/);
+  assert.match(workflow, /check-inventory-adapter-schema\.ts/);
   assert.match(workflow, /ADAPTER_AUTH_NOT_CONFIGURED/);
   assert.match(workflow, /wrangler secret list --name dealforge --format json/);
   assert.match(workflow, /refusing certification overwrite/i);
@@ -55,4 +70,18 @@ test("Cloudflare certification workflow is ephemeral and refuses to overwrite re
   assert.match(workflow, /workers\/scripts\/dealforge\/secrets\/INVENTORY_ADAPTER_SECRETS_JSON/);
   assert.match(workflow, /Prove adapters returned to disabled state/);
   assert.doesNotMatch(workflow, /INVENTORY_ADAPTER_SECRETS_JSON:\s*\$\{\{\s*secrets\./);
+});
+
+test("production Cloudflare deploy fails closed when adapter replay schema is missing", async () => {
+  const workflow = await readFile(".github/workflows/cloudflare-production-deploy.yml", "utf8");
+  const schemaCheck = workflow.indexOf("Verify critical production schema contracts");
+  const build = workflow.indexOf("Build Cloudflare Worker");
+  const deploy = workflow.indexOf("Deploy exact main revision");
+
+  assert.ok(schemaCheck >= 0);
+  assert.ok(build >= 0);
+  assert.ok(deploy >= 0);
+  assert.ok(schemaCheck < build, "production schema must be verified before build/publish");
+  assert.ok(schemaCheck < deploy, "production schema must be verified before publish");
+  assert.match(workflow, /check-inventory-adapter-schema\.ts/);
 });

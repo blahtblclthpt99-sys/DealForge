@@ -66,6 +66,9 @@ jobs:
       - name: Install locked dependencies
         run: npm ci --no-fund --no-audit
 
+      - name: Verify critical production schema contracts
+        run: npx tsx scripts/check-inventory-adapter-schema.ts
+
       - name: Mark build pending
         shell: bash
         run: |

@@ -6,7 +6,11 @@ on:
     paths:
       - '.github/workflows/inventory-adapter-certification.yml'
       - 'src/app/api/internal/inventory-adapter-certification/**'
+      - 'src/lib/inventory-adapter-auth.ts'
+      - 'src/lib/db.ts'
+      - 'prisma/migrations/20260825163500_inventory_adapter_nonce_v1/**'
       - 'scripts/certify-inventory-adapter.mjs'
+      - 'scripts/check-inventory-adapter-schema.ts'
   workflow_dispatch:
 
 permissions:
@@ -24,6 +28,7 @@ jobs:
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
       GH_TOKEN: ${{ github.token }}
       DEALFORGE_BASE_URL: https://www.deal-forge.sale
       INVENTORY_ADAPTER_CERT_ID: dealforge-phase3-cert-v1
@@ -38,11 +43,11 @@ jobs:
             -f context=inventory-adapter-certification \
             -f description='Signed inventory adapter certification in progress'
 
-      - name: Validate Cloudflare credentials
+      - name: Validate certification credentials
         shell: bash
         run: |
           set -euo pipefail
-          for name in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID; do
+          for name in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID DATABASE_URL; do
             value="${!name:-}"
             [[ -n "$value" ]] || { echo "::error::${name} missing"; exit 1; }
             echo "::add-mask::$value"
@@ -59,6 +64,9 @@ jobs:
 
       - name: Install locked dependencies
         run: npm ci --no-fund --no-audit
+
+      - name: Verify production adapter schema contract
+        run: npx tsx scripts/check-inventory-adapter-schema.ts
 
       - name: Wait for certification endpoint and prove adapters are disabled
         shell: bash
