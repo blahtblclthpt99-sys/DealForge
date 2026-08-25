@@ -104,6 +104,9 @@ const productListSelect = {
 
 type ProductWithCategory = Prisma.ProductGetPayload<{ select: typeof productListSelect }>;
 
+const RETAIL_PRICE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+const RETAIL_METADATA_MAX_AGE_MS = 48 * 60 * 60 * 1000;
+
 function cleanImages(raw: string): string[] {
   const list = parseJson<string[]>(raw, []).filter(Boolean);
   const normalized = list.map((u) => normalizeProductImage(u)).filter((u) => u && !u.includes("placeholder"));
@@ -133,21 +136,38 @@ const PRIVATE_SPECIFICATION_KEYS = new Set([
   "needsEnrichment",
 ]);
 
-export function amazonClaimIntegrity(input: {
+export function productClaimIntegrity(input: {
   retailer: string;
   priceSource: string | null;
   priceVerifiedAt: Date | null;
   metadataSource: string | null;
   metadataVerifiedAt: Date | null;
-}) {
-  if (input.retailer !== "amazon") return { priceVerified: true, metadataVerified: true };
+}, nowMs = Date.now()) {
+  if (input.retailer === "amazon") {
+    return {
+      priceVerified: isAuthorizedAmazonPriceSource(input.priceSource)
+        && isFreshVerification(input.priceVerifiedAt, AMAZON_PRICE_MAX_AGE_MS, nowMs),
+      metadataVerified: isAuthorizedAmazonMetadataSource(input.metadataSource)
+        && isFreshVerification(input.metadataVerifiedAt, AMAZON_METADATA_MAX_AGE_MS, nowMs),
+    };
+  }
+
+  // Non-Amazon retailer claims are not implicitly trustworthy. A claim must
+  // carry an explicit provenance source and a recent verification timestamp.
   return {
-    priceVerified: isAuthorizedAmazonPriceSource(input.priceSource)
-      && isFreshVerification(input.priceVerifiedAt, AMAZON_PRICE_MAX_AGE_MS),
-    metadataVerified: isAuthorizedAmazonMetadataSource(input.metadataSource)
-      && isFreshVerification(input.metadataVerifiedAt, AMAZON_METADATA_MAX_AGE_MS),
+    priceVerified: Boolean(
+      input.priceSource?.trim()
+      && isFreshVerification(input.priceVerifiedAt, RETAIL_PRICE_MAX_AGE_MS, nowMs),
+    ),
+    metadataVerified: Boolean(
+      input.metadataSource?.trim()
+      && isFreshVerification(input.metadataVerifiedAt, RETAIL_METADATA_MAX_AGE_MS, nowMs),
+    ),
   };
 }
+
+// Backward-compatible export for existing Amazon-specific tests/importers.
+export const amazonClaimIntegrity = productClaimIntegrity;
 
 function publicSpecifications(raw: string) {
   const parsed = parseJson<Record<string, unknown>>(raw, {});
@@ -202,7 +222,7 @@ function dealForgeEstimatedPrice(referencePrice: number) {
 export function toProductDTO(p: ProductWithCategory): ProductDTO {
   const images = cleanImages(p.images);
   const specs = publicSpecifications(p.specifications);
-  const integrity = amazonClaimIntegrity({
+  const integrity = productClaimIntegrity({
     retailer: p.retailer,
     priceSource: p.priceSource,
     priceVerifiedAt: p.priceVerifiedAt,
@@ -236,12 +256,12 @@ export function toProductDTO(p: ProductWithCategory): ProductDTO {
     affiliateUrl: generateAffiliateLink(p.retailer, { asin: p.asin, url: p.affiliateUrl }),
     retailer: p.retailer, availability,
     availabilityVerified: direct || integrity.metadataVerified,
-    priceVerified: direct || integrity.priceVerified,
+    priceVerified: direct || (!priceEstimated && integrity.priceVerified),
     metadataVerified: integrity.metadataVerified,
     priceSource: direct ? "dealforge" : priceEstimated ? "dealforge_estimate" : p.priceSource,
-    priceVerifiedAt: direct ? p.priceVerifiedAt?.toISOString() ?? null : null,
+    priceVerifiedAt: direct ? p.priceVerifiedAt?.toISOString() ?? null : (!priceEstimated && integrity.priceVerified ? p.priceVerifiedAt?.toISOString() ?? null : null),
     metadataSource: direct ? null : p.metadataSource,
-    metadataVerifiedAt: direct ? null : p.metadataVerifiedAt?.toISOString() ?? null,
+    metadataVerifiedAt: direct ? null : (integrity.metadataVerified ? p.metadataVerifiedAt?.toISOString() ?? null : null),
     specifications: specs, trendingScore: p.trendingScore, clickCount: p.clickCount, viewCount: p.viewCount,
     isFeatured: p.isFeatured, isFlashDeal: p.isFlashDeal, flashEndsAt: p.flashEndsAt?.toISOString() ?? null,
     lastUpdated: p.lastUpdated.toISOString(), createdAt: p.createdAt.toISOString(), rankScore: computeRankScore(dtoBase),
@@ -257,16 +277,24 @@ export type ProductQuery = {
   flash?: boolean; trending?: boolean; newest?: boolean;
 };
 
-function buildWhere(params: ProductQuery): Prisma.ProductWhereInput {
-  const ci = process.env.DATABASE_URL?.startsWith("postgres") || process.env.DATABASE_URL?.startsWith("postgresql") ? ({ mode: "insensitive" as const }) : {};
-  const where: Prisma.ProductWhereInput = {
+export function publicCatalogWhere(): Prisma.ProductWhereInput {
+  return {
     AND: [
+      { availability: { not: "out_of_stock" } },
+      { NOT: { id: { startsWith: "cert_" } } },
+      { NOT: { specifications: { contains: '\"internalCertification\":true' } } },
+      { NOT: { specifications: { contains: '\"internalCertification\": true' } } },
       { NOT: { specifications: { contains: '\"needsEnrichment\":true' } } },
       { NOT: { specifications: { contains: '\"needsEnrichment\": true' } } },
       { NOT: { title: { startsWith: "Coach product " } } },
       { NOT: { title: { startsWith: "Amazon listing " } } },
     ],
   };
+}
+
+function buildWhere(params: ProductQuery): Prisma.ProductWhereInput {
+  const ci = process.env.DATABASE_URL?.startsWith("postgres") || process.env.DATABASE_URL?.startsWith("postgresql") ? ({ mode: "insensitive" as const }) : {};
+  const where: Prisma.ProductWhereInput = publicCatalogWhere();
   if (params.q) where.OR = [{ title: { contains: params.q, ...ci } }, { brand: { contains: params.q, ...ci } }, { description: { contains: params.q, ...ci } }];
   if (params.category) where.category = { slug: params.category };
   if (params.subcategory) where.subcategory = params.subcategory;
@@ -300,11 +328,11 @@ function buildOrderBy(params: ProductQuery): Prisma.ProductOrderByWithRelationIn
 export async function queryProducts(params: ProductQuery) {
   const page = Math.max(1, params.page ?? 1);
   const limit = Math.min(48, Math.max(1, params.limit ?? 24));
-  const cacheKey = `products:v11:${JSON.stringify(params)}`;
+  const cacheKey = `products:v12:${JSON.stringify(params)}`;
   const cached = await cacheGet<{ items: ProductDTO[]; total: number; page: number; hasMore: boolean }>(cacheKey);
   if (cached) return cached;
   const where = buildWhere(params); const orderBy = buildOrderBy(params); const skip = (page - 1) * limit;
-  const countKey = `products:count:v5:${JSON.stringify({ q: params.q, category: params.category, subcategory: params.subcategory, brand: params.brand, minPrice: params.minPrice, maxPrice: params.maxPrice, minRating: params.minRating, minDiscount: params.minDiscount, featured: params.featured, flash: params.flash })}`;
+  const countKey = `products:count:v6:${JSON.stringify({ q: params.q, category: params.category, subcategory: params.subcategory, brand: params.brand, minPrice: params.minPrice, maxPrice: params.maxPrice, minRating: params.minRating, minDiscount: params.minDiscount, featured: params.featured, flash: params.flash })}`;
   const [cachedTotal, rows] = await Promise.all([cacheGet<number>(countKey), prisma.product.findMany({ where, select: productListSelect, orderBy, skip, take: limit })]);
   let total = cachedTotal;
   if (total == null) { total = await prisma.product.count({ where }); await cacheSet(countKey, total, 120); }
@@ -312,29 +340,51 @@ export async function queryProducts(params: ProductQuery) {
   await cacheSet(cacheKey, result, 45); return result;
 }
 
+function internalCertificationRecord(product: Pick<ProductWithCategory, "id" | "specifications">) {
+  if (product.id.startsWith("cert_")) return true;
+  const root = parseJson<Record<string, unknown>>(product.specifications, {});
+  return root.internalCertification === true;
+}
+
 export async function getProductBySlug(slug: string) {
   const product = await prisma.product.findUnique({ where: { slug }, select: productListSelect });
-  return product ? toProductDTO(product) : null;
+  return product && !internalCertificationRecord(product) ? toProductDTO(product) : null;
 }
 
 export async function getSimilarProducts(product: ProductDTO, limit = 8) {
-  const rows = await prisma.product.findMany({ where: { categoryId: product.categoryId, id: { not: product.id } }, select: productListSelect, orderBy: [{ discountPercent: "desc" }, { rating: "desc" }], take: limit });
+  const rows = await prisma.product.findMany({
+    where: { AND: [publicCatalogWhere(), { categoryId: product.categoryId, id: { not: product.id } }] },
+    select: productListSelect,
+    orderBy: [{ discountPercent: "desc" }, { rating: "desc" }],
+    take: Math.min(24, Math.max(1, limit)),
+  });
   return rows.map(toProductDTO);
 }
 
 export async function getRelatedProducts(product: ProductDTO, limit = 8) {
-  const rows = await prisma.product.findMany({ where: { brand: product.brand, id: { not: product.id } }, select: productListSelect, orderBy: [{ rating: "desc" }, { reviewCount: "desc" }], take: limit });
+  const rows = await prisma.product.findMany({
+    where: { AND: [publicCatalogWhere(), { brand: product.brand, id: { not: product.id } }] },
+    select: productListSelect,
+    orderBy: [{ rating: "desc" }, { reviewCount: "desc" }],
+    take: Math.min(24, Math.max(1, limit)),
+  });
   return rows.map(toProductDTO);
 }
 
 export async function getCategories() {
-  const cached = await cacheGet<Awaited<ReturnType<typeof fetchCategories>>>("categories:all");
-  if (cached) return cached; const data = await fetchCategories(); await cacheSet("categories:all", data, 60); return data;
+  const cached = await cacheGet<Awaited<ReturnType<typeof fetchCategories>>>("categories:public:v2");
+  if (cached) return cached; const data = await fetchCategories(); await cacheSet("categories:public:v2", data, 60); return data;
 }
-async function fetchCategories() { return prisma.category.findMany({ orderBy: { name: "asc" }, include: { _count: { select: { products: true } } } }); }
+async function fetchCategories() {
+  return prisma.category.findMany({
+    orderBy: { name: "asc" },
+    include: { _count: { select: { products: { where: publicCatalogWhere() } } } },
+  });
+}
 export async function getTopBrands(limit = 200) {
-  const cacheKey = `brands:top:${limit}`; const cached = await cacheGet<string[]>(cacheKey); if (cached) return cached;
-  const grouped = await prisma.product.groupBy({ by: ["brand"], _count: { brand: true }, orderBy: { _count: { brand: "desc" } }, take: limit });
+  const boundedLimit = Math.min(200, Math.max(1, limit));
+  const cacheKey = `brands:public:v2:${boundedLimit}`; const cached = await cacheGet<string[]>(cacheKey); if (cached) return cached;
+  const grouped = await prisma.product.groupBy({ where: publicCatalogWhere(), by: ["brand"], _count: { brand: true }, orderBy: { _count: { brand: "desc" } }, take: boundedLimit });
   const brands = grouped.map((g) => g.brand).filter(Boolean).sort((a, b) => a.localeCompare(b)); await cacheSet(cacheKey, brands, 300); return brands;
 }
 export async function recordProductView(productId: string) { await prisma.product.update({ where: { id: productId }, data: { viewCount: { increment: 1 } } }); }
