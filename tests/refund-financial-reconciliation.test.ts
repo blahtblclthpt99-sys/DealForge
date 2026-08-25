@@ -159,7 +159,7 @@ test("failed refund reversal validates separately and cannot masquerade as a suc
   assert.equal(result.ok, true);
 
   const notFailed = validateRefundFinancialEvidence({
-    refund: stripeRefund,
+    refund: { ...stripeRefund, failure_balance_transaction: "txn_failure_123" },
     balanceTransaction: failureBalance,
     kind: "refund_failure_balance",
   });
