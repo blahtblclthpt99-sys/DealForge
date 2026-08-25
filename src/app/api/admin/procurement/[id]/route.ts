@@ -14,6 +14,7 @@ import {
   isSameOriginProcurementMutation,
   requireProcurementOwner,
 } from "@/lib/procurement-authorization";
+import { checkProcurementSourceRevalidation } from "@/lib/procurement-source-revalidation";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -84,7 +85,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     where: { id },
     include: {
       order: { select: { id: true, status: true, paidAt: true, currency: true, refunds: { select: { status: true } } } },
-      orderItem: { select: { id: true, lineTotalCents: true } },
+      orderItem: { select: { id: true, productId: true, lineTotalCents: true } },
     },
   });
   if (!intent) return noStore(NextResponse.json({ error: "PROCUREMENT_INTENT_NOT_FOUND" }, { status: 404 }));
@@ -112,6 +113,27 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     return noStore(NextResponse.json({ error: transition.reason, currentState: intent.status }, { status: 409 }));
   }
 
+  let sourceRevalidation: Awaited<ReturnType<typeof checkProcurementSourceRevalidation>> | null = null;
+  if (parsed.data.action === "APPROVE_MANUAL") {
+    sourceRevalidation = await checkProcurementSourceRevalidation({
+      supplierSnapshot: intent.supplierSnapshot,
+      productId: intent.orderItem.productId,
+      currency: intent.currency,
+      expectedUnitCostCents: intent.expectedUnitCostCents,
+    });
+    if (!sourceRevalidation.allowed) {
+      return noStore(
+        NextResponse.json(
+          {
+            error: "PROCUREMENT_LIVE_SOURCE_REVALIDATION_FAILED",
+            reasons: sourceRevalidation.reasons,
+          },
+          { status: 409 },
+        ),
+      );
+    }
+  }
+
   let economics: ReturnType<typeof validateManualPurchaseEconomics> | null = null;
   if (parsed.data.action === "RECORD_MANUAL_PURCHASE") {
     economics = validateManualPurchaseEconomics({
@@ -137,7 +159,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
         where: { id: intent.id },
         include: {
           order: { select: { status: true, paidAt: true, refunds: { select: { status: true } } } },
-          orderItem: { select: { lineTotalCents: true } },
+          orderItem: { select: { productId: true, lineTotalCents: true } },
         },
       });
       if (!current) throw new Error("PROCUREMENT_INTENT_CHANGED");
@@ -151,6 +173,23 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       }
       const txTransition = transitionProcurement(current.status, parsed.data.action);
       if (!txTransition.ok) throw new Error("PROCUREMENT_TRANSITION_CHANGED");
+
+      let approvalSourceRevalidation = sourceRevalidation;
+      if (parsed.data.action === "APPROVE_MANUAL") {
+        approvalSourceRevalidation = await checkProcurementSourceRevalidation(
+          {
+            supplierSnapshot: current.supplierSnapshot,
+            productId: current.orderItem.productId,
+            currency: current.currency,
+            expectedUnitCostCents: current.expectedUnitCostCents,
+          },
+          Date.now(),
+          tx,
+        );
+        if (!approvalSourceRevalidation.allowed) {
+          throw new Error("PROCUREMENT_LIVE_SOURCE_REVALIDATION_CHANGED");
+        }
+      }
 
       const now = new Date();
       const data: {
@@ -191,6 +230,14 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
             note: parsed.data.note || null,
             reason: "reason" in parsed.data ? parsed.data.reason : null,
             automaticSupplierPurchasingEnabled: false,
+            ...(parsed.data.action === "APPROVE_MANUAL" && approvalSourceRevalidation?.allowed
+              ? {
+                  liveSourceRevalidated: true,
+                  liveSourceRevalidatedAt: now.toISOString(),
+                  persistedOfferId: approvalSourceRevalidation.persistedOfferId,
+                  currentLandedCostCents: approvalSourceRevalidation.currentLandedCostCents,
+                }
+              : {}),
             ...(parsed.data.action === "RECORD_MANUAL_PURCHASE"
               ? {
                   manualPurchaseConfirmed: true,
@@ -222,7 +269,13 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   } catch (error) {
     const message = error instanceof Error ? error.message : "UNKNOWN";
     if (message.startsWith("PROCUREMENT_")) {
-      return noStore(NextResponse.json({ error: message === "PROCUREMENT_REFUND_INTERLOCK" ? "PROCUREMENT_BLOCKED_BY_REFUND" : "PROCUREMENT_STATE_CONFLICT" }, { status: 409 }));
+      const responseError =
+        message === "PROCUREMENT_REFUND_INTERLOCK"
+          ? "PROCUREMENT_BLOCKED_BY_REFUND"
+          : message === "PROCUREMENT_LIVE_SOURCE_REVALIDATION_CHANGED"
+            ? "PROCUREMENT_LIVE_SOURCE_REVALIDATION_FAILED"
+            : "PROCUREMENT_STATE_CONFLICT";
+      return noStore(NextResponse.json({ error: responseError }, { status: 409 }));
     }
     console.error("procurement.owner_action_failed", {
       procurementIntentId: intent.id,
