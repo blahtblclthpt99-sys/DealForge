@@ -4,6 +4,7 @@ import {
   parseCheckoutShippingCountries,
   type CheckoutShippingDestination,
 } from "@/lib/checkout-shipping";
+import { resolveStripeRuntimeValue } from "@/lib/stripe-commerce";
 
 export const ORDER_DESTINATION_SOURCE = "stripe_checkout" as const;
 
@@ -21,7 +22,9 @@ function nonEmptyString(value: unknown): value is string {
 
 export function prepareCheckoutOrderDestination(
   object: Record<string, unknown>,
-  allowedCountriesRaw: string | null | undefined = process.env.CHECKOUT_ALLOWED_SHIPPING_COUNTRIES,
+  allowedCountriesRaw: string | null | undefined = resolveStripeRuntimeValue(
+    "CHECKOUT_ALLOWED_SHIPPING_COUNTRIES",
+  ),
 ): PreparedOrderDestination {
   const stripeCheckoutSessionId = nonEmptyString(object.id) ? object.id.trim() : "";
   if (!/^cs_[A-Za-z0-9_]+$/.test(stripeCheckoutSessionId)) {
