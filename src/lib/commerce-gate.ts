@@ -45,6 +45,10 @@ export type CommerceGateDecision = {
   sourceClass: string | null;
 };
 
+type CommerceGateOptions = {
+  bypassBroadCatalogLock?: boolean;
+};
+
 function isSafeNonNegativeInteger(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 }
@@ -133,11 +137,19 @@ function parsePolicy(specifications: string): CommercePolicyV1 | null {
   }
 }
 
-export function evaluateCommerceGate(input: CommerceGateInput, nowMs = Date.now()): CommerceGateDecision {
+export function evaluateCommerceGate(
+  input: CommerceGateInput,
+  nowMs = Date.now(),
+  options: CommerceGateOptions = {},
+): CommerceGateDecision {
   const reasons: string[] = [];
   const policy = parsePolicy(input.specifications);
 
-  if (process.env.NODE_ENV === "production" && !isBroadCatalogCommerceEnabled()) {
+  if (
+    process.env.NODE_ENV === "production" &&
+    !options.bypassBroadCatalogLock &&
+    !isBroadCatalogCommerceEnabled()
+  ) {
     reasons.push("broad_catalog_commerce_locked");
   }
   if (!input.commerceEnabled) reasons.push("commerce_disabled");
@@ -200,4 +212,11 @@ export function evaluateCommerceGate(input: CommerceGateInput, nowMs = Date.now(
     reserveTotalCents: Number.isSafeInteger(reserveTotalCents) ? reserveTotalCents : null,
     sourceClass: policy.sourceClass,
   };
+}
+
+/** Certification still has to pass every commercial rule; only the broad-catalog
+ * production kill switch is bypassed, and callers must independently require an
+ * allowlisted internal certification product plus a Stripe test key. */
+export function evaluateCertificationCommerceGate(input: CommerceGateInput, nowMs = Date.now()) {
+  return evaluateCommerceGate(input, nowMs, { bypassBroadCatalogLock: true });
 }
