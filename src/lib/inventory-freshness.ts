@@ -7,6 +7,7 @@ export type InventoryObservationSnapshot = {
   availability: string;
   quantity?: number | null;
   inventoryConfidenceBps: number;
+  observedPriceCents?: number | null;
   observedAt: Date | null;
   expiresAt: Date | null;
   verificationMethod?: string | null;
