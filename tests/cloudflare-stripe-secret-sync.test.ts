@@ -41,6 +41,22 @@ test("production deploy supplies the complete required Cloudflare runtime secret
   assert.doesNotMatch(source, /Cloudflare owns DATABASE_URL, AUTH_SECRET, and STRIPE_SECRET_KEY/);
 });
 
+test("Cloudflare publish guard enforces the currently certified Stripe test-mode contract", async () => {
+  const source = await readFile("scripts/ensure-cloudflare-build.mjs", "utf8");
+
+  assert.match(source, /stripeKey\.startsWith\("sk_live_"\)/);
+  assert.match(source, /Stripe live mode is not certified for DealForge production yet/);
+  assert.match(source, /stripeKey\.startsWith\("sk_test_"\)/);
+  assert.match(source, /STRIPE_WEBHOOK_SECRET_TEST must be configured/);
+  assert.match(source, /Stripe deployment mode verified: test/);
+
+  const validateIndex = source.indexOf("validateCertifiedStripeMode();");
+  const artifactIndex = source.indexOf("if (await artifactExists())");
+  assert.ok(validateIndex >= 0, "missing Stripe deployment-mode validation");
+  assert.ok(artifactIndex >= 0, "missing artifact bootstrap check");
+  assert.ok(validateIndex < artifactIndex, "Stripe mode must be validated even when the OpenNext artifact already exists");
+});
+
 test("live smoke requires the webhook route to reach signature verification", async () => {
   for (const path of [
     ".github/workflows/cloudflare-stripe-secret-sync.yml",
