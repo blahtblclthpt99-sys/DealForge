@@ -2,11 +2,9 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { calculateCustomerFriendlyPrice } from "@/lib/cart-pricing";
 import { evaluateCommerceGate } from "@/lib/commerce-gate";
-import { calculateSavingsFundDryRun } from "@/lib/customer-savings-fund";
 import { prisma } from "@/lib/db";
 import { checkPersistedOfferBinding } from "@/lib/persisted-offer-binding";
 import { readLimitedJson } from "@/lib/request-json";
-import { getShadowSavingsFundBalance } from "@/lib/savings-fund-ledger";
 
 export const runtime = "nodejs";
 
@@ -97,7 +95,6 @@ export async function POST(request: Request) {
       savingsCents: number;
       savingsPercent: number;
     }>;
-    let preSubsidyContributionCents = 0;
 
     for (const requested of requestedItems) {
       const product = productById.get(requested.productId)!;
@@ -155,16 +152,7 @@ export async function POST(request: Request) {
 
       const lineTotalCents = pricing.customerPriceCents * requested.quantity;
       const savingsCents = pricing.savingsCents * requested.quantity;
-      const lineContributionCents = pricing.estimatedContributionProfitCents * requested.quantity;
-      if (
-        !Number.isSafeInteger(lineTotalCents) ||
-        lineTotalCents <= 0 ||
-        !Number.isSafeInteger(lineContributionCents)
-      ) {
-        return NextResponse.json({ error: "CART_AMOUNT_INVALID" }, { status: 409 });
-      }
-      preSubsidyContributionCents += lineContributionCents;
-      if (!Number.isSafeInteger(preSubsidyContributionCents)) {
+      if (!Number.isSafeInteger(lineTotalCents) || lineTotalCents <= 0) {
         return NextResponse.json({ error: "CART_AMOUNT_INVALID" }, { status: 409 });
       }
 
@@ -187,7 +175,6 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "MIXED_CURRENCY_CART" }, { status: 409 });
     }
 
-    const currency = quotedItems[0].currency;
     const subtotalCents = quotedItems.reduce((sum, item) => sum + item.lineTotalCents, 0);
     const publishedSubtotalCents = quotedItems.reduce(
       (sum, item) => sum + item.publishedUnitPriceCents * item.quantity,
@@ -195,29 +182,14 @@ export async function POST(request: Request) {
     );
     const savingsCents = quotedItems.reduce((sum, item) => sum + item.savingsCents, 0);
 
-    const shadowBalance = await getShadowSavingsFundBalance(currency);
-    const savingsFundDryRun = calculateSavingsFundDryRun({
-      availableFundCents: shadowBalance.integrityOk ? shadowBalance.balanceCents : 0,
-      cartSubtotalCents: subtotalCents,
-      preSubsidyContributionCents,
-    });
-
     return NextResponse.json(
       {
-        currency,
+        currency: quotedItems[0].currency,
         subtotalCents,
         publishedSubtotalCents,
         savingsCents,
         quotedAt: new Date().toISOString(),
         items: quotedItems,
-        savingsFundDryRun: {
-          ...savingsFundDryRun,
-          ledgerAvailable: shadowBalance.available,
-          ledgerIntegrityOk: shadowBalance.integrityOk,
-          // Phase A invariant: this preview is telemetry only. subtotalCents is
-          // unchanged and Checkout independently rebuilds the payable amount.
-          chargedSubtotalCents: subtotalCents,
-        },
       },
       { status: 200 },
     );
