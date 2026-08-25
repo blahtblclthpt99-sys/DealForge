@@ -17,7 +17,7 @@ CREATE TABLE "SavingsFundEntry" (
   "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT "SavingsFundEntry_pkey" PRIMARY KEY ("id"),
   CONSTRAINT "SavingsFundEntry_amount_nonzero" CHECK ("amountCents" <> 0),
-  CONSTRAINT "SavingsFundEntry_type_valid" CHECK ("type" IN ('accrual', 'reversal', 'adjustment', 'allocation', 'release')),
+  CONSTRAINT "SavingsFundEntry_phase_a_type" CHECK ("type" IN ('accrual', 'reversal', 'adjustment')),
   CONSTRAINT "SavingsFundEntry_currency_valid" CHECK (char_length("currency") = 3),
   CONSTRAINT "SavingsFundEntry_phase_a_dry_run" CHECK ("dryRun" = TRUE)
 );
