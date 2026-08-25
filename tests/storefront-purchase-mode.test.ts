@@ -65,7 +65,7 @@ test("runtime UI never tells customers to check Amazon for a price", async () =>
   }
 });
 
-test("public product DTO calculates estimates but checkout authority remains separate", async () => {
+test("public product DTO calculates estimates while checkout authority remains separate", async () => {
   const source = await readFile("src/lib/products.ts", "utf8");
   const checkout = await readFile("src/app/api/checkout/route.ts", "utf8");
 
@@ -77,7 +77,9 @@ test("public product DTO calculates estimates but checkout authority remains sep
   assert.match(source, /priceEstimated/);
   assert.match(source, /priceSource: direct \? "dealforge" : priceEstimated \? "dealforge_estimate"/);
   assert.match(source, /purchaseMode: direct \? "direct" : "affiliate"/);
-  assert.match(source, /if \(process\.env\.COMMERCE_ENABLED !== "true"\) return \{ allowed: false \}/);
+  assert.match(source, /certificationTransaction/);
+  assert.match(source, /if \(!certificationTransaction && process\.env\.COMMERCE_ENABLED !== "true"\) return \{ allowed: false \}/);
+  assert.match(source, /evaluateCertificationCommerceGate/);
   assert.match(checkout, /calculateCustomerFriendlyPrice/);
   assert.match(checkout, /unitPriceCents/);
   assert.doesNotMatch(checkout, /dealForgeEstimatedPrice/);
