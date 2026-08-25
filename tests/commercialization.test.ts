@@ -51,6 +51,19 @@ test("verified profitable supplier offer becomes commerce-ready under canonical 
   assert.equal(specifications.commerceV2.rounding, "next_49_or_99_only");
 });
 
+test("attributable acquisition cost does not move the landed-cost profit tier", () => {
+  const result = prepareCommercialization(
+    "{}",
+    { ...goodInput(), acquisitionReserveCents: 250 },
+    NOW,
+  );
+  const specifications = JSON.parse(result.specifications);
+  const expectedProfitFloor = minimumSafeProfitCents(3300);
+  assert.equal(specifications.commerceV1.minContributionProfitCents, expectedProfitFloor);
+  assert.equal(specifications.commerceV2.minimumProfitCents, expectedProfitFloor);
+  assert.equal(specifications.commerceV2.attributableAcquisitionCostCents, 250);
+});
+
 test("price recommendation uses one payment allowance, one pooled loss reserve, and attributable cost", () => {
   const input = goodInput();
   const result = recommendCommercialPrice({
