@@ -6,6 +6,7 @@ import {
 } from "@/lib/cart-pricing";
 import { evaluateCommerceGate } from "@/lib/commerce-gate";
 import { prisma } from "@/lib/db";
+import { resolveOperationalCartPricingPolicy } from "@/lib/loss-reserve-policy";
 import { checkPersistedOfferBinding } from "@/lib/persisted-offer-binding";
 import { readLimitedJson } from "@/lib/request-json";
 
@@ -85,6 +86,16 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "PRODUCT_NOT_FOUND" }, { status: 409 });
     }
 
+    const currencies = new Set(products.map((product) => product.currency.toLowerCase()));
+    if (currencies.size !== 1) {
+      return NextResponse.json({ error: "MIXED_CURRENCY_CART" }, { status: 409 });
+    }
+    const currency = [...currencies][0];
+    if (!/^[a-z]{3}$/.test(currency)) {
+      return NextResponse.json({ error: "PRODUCT_CURRENCY_INVALID" }, { status: 409 });
+    }
+    const pricingPolicy = (await resolveOperationalCartPricingPolicy(currency)).policy;
+
     const productById = new Map(products.map((product) => [product.id, product]));
     const quotedItems = [] as Array<{
       productId: string;
@@ -146,6 +157,7 @@ export async function POST(request: Request) {
         landedCostCents: product.landedCostCents,
         attributableCostCents: attributableCostFromSpecifications(product.specifications),
         publishedPriceCents: product.sellingPriceCents,
+        policy: pricingPolicy,
       });
       if (!pricing.eligible) {
         return NextResponse.json(
@@ -165,18 +177,13 @@ export async function POST(request: Request) {
         slug: product.slug,
         title: product.title,
         quantity: requested.quantity,
-        currency: product.currency.toLowerCase(),
+        currency,
         publishedUnitPriceCents: product.sellingPriceCents,
         unitPriceCents: pricing.customerPriceCents,
         lineTotalCents,
         savingsCents,
         savingsPercent: pricing.savingsPercent,
       });
-    }
-
-    const currencies = new Set(quotedItems.map((item) => item.currency));
-    if (currencies.size !== 1) {
-      return NextResponse.json({ error: "MIXED_CURRENCY_CART" }, { status: 409 });
     }
 
     const subtotalCents = quotedItems.reduce((sum, item) => sum + item.lineTotalCents, 0);
@@ -188,7 +195,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json(
       {
-        currency: quotedItems[0].currency,
+        currency,
         subtotalCents,
         publishedSubtotalCents,
         savingsCents,
