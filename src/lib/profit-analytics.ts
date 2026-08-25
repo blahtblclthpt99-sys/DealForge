@@ -56,9 +56,10 @@ export function authoritativePaymentFee(payment: PaymentView): PaymentFeeRecord 
   if (!meta) return null;
   const feeCents = safeNonNegativeInteger(meta.processingFeeCents);
   const source = meta.processingFeeSource;
-  const currency = typeof meta.processingFeeCurrency === "string"
-    ? meta.processingFeeCurrency.trim().toLowerCase()
-    : payment.currency.trim().toLowerCase();
+  const currency =
+    typeof meta.processingFeeCurrency === "string"
+      ? meta.processingFeeCurrency.trim().toLowerCase()
+      : payment.currency.trim().toLowerCase();
   if (
     feeCents === null ||
     typeof source !== "string" ||
@@ -85,13 +86,23 @@ export function analyzeOrderProfit(input: {
   items: ProfitLineView[];
 }) {
   const orderCurrency = input.currency.toLowerCase();
+  const activeRefunds = input.refunds.filter((refund) =>
+    ["pending", "succeeded"].includes(refund.status),
+  );
+  const refundCurrencyMismatchCount = activeRefunds.filter(
+    (refund) => refund.currency.toLowerCase() !== orderCurrency,
+  ).length;
   const succeededRefundCents = input.refunds
     .filter((refund) => refund.status === "succeeded" && refund.currency.toLowerCase() === orderCurrency)
     .reduce((sum, refund) => sum + refund.amountCents, 0);
   const pendingRefundCents = input.refunds
     .filter((refund) => refund.status === "pending" && refund.currency.toLowerCase() === orderCurrency)
     .reduce((sum, refund) => sum + refund.amountCents, 0);
+  const activeRefundExposureCents = succeededRefundCents + pendingRefundCents;
+  const refundLedgerValid = refundCurrencyMismatchCount === 0 && activeRefundExposureCents <= input.totalCents;
   const netCustomerReceiptsCents = Math.max(0, input.totalCents - succeededRefundCents);
+  const orderTotalBreakdownValid =
+    input.subtotalCents + input.shippingCents + input.taxCents === input.totalCents;
 
   let knownActualSupplierCostCents = 0;
   let projectedSupplierCostCents = 0;
@@ -102,6 +113,7 @@ export function analyzeOrderProfit(input: {
   let recoveryProjectionValid = true;
   let openRecoveryCaseCount = 0;
   let overAccountedRecoveryCaseCount = 0;
+  let aggregateOverAccountedIntentCount = 0;
   let recoveryCaseCount = 0;
 
   for (const item of input.items) {
@@ -128,12 +140,17 @@ export function analyzeOrderProfit(input: {
       intentQuantity: intent.quantity,
     });
     recoveryCaseCount += cases.length;
+    let intentRecoveredCents = 0;
+    let intentAcceptedLossCents = 0;
+
     for (const recovery of cases) {
       if (!recovery.ok) {
         recoveryProjectionValid = false;
         openRecoveryCaseCount += 1;
         continue;
       }
+      intentRecoveredCents += recovery.supplierRecoveredCents;
+      intentAcceptedLossCents += recovery.acceptedLossCents;
       supplierRecoveredCents += recovery.supplierRecoveredCents;
       acceptedLossCents += recovery.acceptedLossCents;
       if (recovery.remainingSupplierExposureCents !== null) {
@@ -142,15 +159,43 @@ export function analyzeOrderProfit(input: {
       if (recovery.overAccounted) overAccountedRecoveryCaseCount += 1;
       if (!recovery.closed) openRecoveryCaseCount += 1;
     }
+
+    if (
+      actual !== null &&
+      intentRecoveredCents + intentAcceptedLossCents > actual
+    ) {
+      aggregateOverAccountedIntentCount += 1;
+    }
   }
 
-  const recoveryAccountingValid = recoveryProjectionValid && overAccountedRecoveryCaseCount === 0;
-  const netKnownSupplierCostCents = Math.max(0, knownActualSupplierCostCents - supplierRecoveredCents);
-  const netProjectedSupplierCostCents = Math.max(0, projectedSupplierCostCents - supplierRecoveredCents);
+  const recoveryAccountingValid =
+    recoveryProjectionValid &&
+    overAccountedRecoveryCaseCount === 0 &&
+    aggregateOverAccountedIntentCount === 0;
+  const netKnownSupplierCostCents = Math.max(
+    0,
+    knownActualSupplierCostCents - supplierRecoveredCents,
+  );
+  const netProjectedSupplierCostCents = Math.max(
+    0,
+    projectedSupplierCostCents - supplierRecoveredCents,
+  );
 
   const succeededPayments = input.payments.filter(
     (payment) => payment.status === "succeeded" && payment.currency.toLowerCase() === orderCurrency,
   );
+  const succeededPaymentAmountCents = succeededPayments.reduce(
+    (sum, payment) => sum + payment.amountCents,
+    0,
+  );
+  const paymentCurrencyMismatchCount = input.payments.filter(
+    (payment) => payment.status === "succeeded" && payment.currency.toLowerCase() !== orderCurrency,
+  ).length;
+  const paymentLedgerValid =
+    paymentCurrencyMismatchCount === 0 &&
+    succeededPayments.length === 1 &&
+    succeededPaymentAmountCents === input.totalCents;
+
   let knownPaymentProcessingFeeCents = 0;
   let authoritativePaymentFeeCount = 0;
   for (const payment of succeededPayments) {
@@ -160,7 +205,7 @@ export function analyzeOrderProfit(input: {
     authoritativePaymentFeeCount += 1;
   }
   const paymentProcessingCostComplete =
-    succeededPayments.length > 0 && authoritativePaymentFeeCount === succeededPayments.length;
+    paymentLedgerValid && authoritativePaymentFeeCount === succeededPayments.length;
 
   // Collected tax is a liability, not contribution. Once a taxable order is partially/full refunded,
   // the exact retained tax liability is not inferred from a lump-sum refund without authoritative tax allocation.
@@ -173,6 +218,9 @@ export function analyzeOrderProfit(input: {
     netCustomerReceiptsCents - netProjectedSupplierCostCents;
 
   const finalizationReasons: string[] = [];
+  if (!orderTotalBreakdownValid) finalizationReasons.push("ORDER_TOTAL_BREAKDOWN_INVALID");
+  if (!refundLedgerValid) finalizationReasons.push("REFUND_LEDGER_INVALID");
+  if (!paymentLedgerValid) finalizationReasons.push("PAYMENT_LEDGER_INVALID");
   if (!supplierCostComplete) finalizationReasons.push("SUPPLIER_COST_INCOMPLETE");
   if (!paymentProcessingCostComplete) finalizationReasons.push("PAYMENT_PROCESSING_COST_UNKNOWN");
   if (!taxLiabilityComplete) finalizationReasons.push("REFUND_TAX_ALLOCATION_UNKNOWN");
@@ -198,6 +246,13 @@ export function analyzeOrderProfit(input: {
       excludes: ["marketing_cac", "support_overhead", "chargeback_loss_unless_recorded_elsewhere"],
       acceptedLossTreatment: "disclosure_only_not_double_counted",
     },
+    integrity: {
+      orderTotalBreakdownValid,
+      refundLedgerValid,
+      refundCurrencyMismatchCount,
+      paymentLedgerValid,
+      paymentCurrencyMismatchCount,
+    },
     receipts: {
       subtotalCents: input.subtotalCents,
       shippingCents: input.shippingCents,
@@ -221,10 +276,12 @@ export function analyzeOrderProfit(input: {
       recoveryCaseCount,
       openRecoveryCaseCount,
       overAccountedRecoveryCaseCount,
+      aggregateOverAccountedIntentCount,
       accountingValid: recoveryAccountingValid,
     },
     paymentProcessing: {
       succeededPaymentCount: succeededPayments.length,
+      succeededPaymentAmountCents,
       authoritativeFeeCount: authoritativePaymentFeeCount,
       complete: paymentProcessingCostComplete,
       knownFeeCents: knownPaymentProcessingFeeCents,
