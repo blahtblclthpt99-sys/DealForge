@@ -148,6 +148,16 @@ function certificationSpecifications(fixture: Fixture, now: Date) {
   return JSON.stringify(root);
 }
 
+function recognizedExistingFixture(product: { slug: string; specifications: string }, fixture: Fixture) {
+  if (product.slug !== fixture.slug) return false;
+  try {
+    const root = JSON.parse(product.specifications) as Record<string, unknown>;
+    return root.internalCertification === true && root.certificationCatalog === true;
+  } catch {
+    return false;
+  }
+}
+
 async function main() {
   assertInstallAuthorized();
   const now = new Date();
@@ -160,18 +170,8 @@ async function main() {
 
   for (const fixture of FIXTURES) {
     const current = existingById.get(fixture.id);
-    if (current) {
-      let marked = false;
-      try {
-        const root = JSON.parse(current.specifications) as Record<string, unknown>;
-        marked = root.internalCertification === true && root.certificationCatalog === true;
-      } catch {
-        marked = false;
-      }
-      if (!marked || current.slug !== fixture.slug) {
-        throw new Error(`CERTIFICATION_FIXTURE_ID_COLLISION:${fixture.id}`);
-      }
-      continue;
+    if (current && !recognizedExistingFixture(current, fixture)) {
+      throw new Error(`CERTIFICATION_FIXTURE_ID_COLLISION:${fixture.id}`);
     }
 
     const category = await prisma.category.upsert({
@@ -181,42 +181,52 @@ async function main() {
       select: { id: true },
     });
     const specifications = certificationSpecifications(fixture, now);
+    const canonicalData = {
+      title: fixture.title,
+      description: fixture.description,
+      brand: fixture.brand,
+      categoryId: category.id,
+      subcategory: fixture.subcategory,
+      images: JSON.stringify(["/images/placeholder-product.svg"]),
+      quantity: 1,
+      price: fixture.sellingPriceCents / 100,
+      originalPrice: fixture.sellingPriceCents / 100,
+      discountPercent: 0,
+      rating: 0,
+      reviewCount: 0,
+      affiliateUrl: "",
+      retailer: "dealforge-test",
+      availability: "in_stock",
+      specifications,
+      priceSource: "dealforge_certification_fixture",
+      priceVerifiedAt: now,
+      metadataSource: "dealforge_certification_fixture",
+      metadataVerifiedAt: now,
+      trendingScore: 0,
+      isFeatured: fixture.role === "main",
+      isFlashDeal: false,
+      commerceEnabled: true,
+      sellingPriceCents: fixture.sellingPriceCents,
+      landedCostCents: fixture.landedCostCents,
+      currency: "usd",
+      lastUpdated: now,
+    } as const;
 
-    await prisma.product.create({
-      data: {
-        id: fixture.id,
-        asin: null,
-        slug: fixture.slug,
-        title: fixture.title,
-        description: fixture.description,
-        brand: fixture.brand,
-        categoryId: category.id,
-        subcategory: fixture.subcategory,
-        images: JSON.stringify(["/images/placeholder-product.svg"]),
-        quantity: 1,
-        price: fixture.sellingPriceCents / 100,
-        originalPrice: fixture.sellingPriceCents / 100,
-        discountPercent: 0,
-        rating: 0,
-        reviewCount: 0,
-        affiliateUrl: "",
-        retailer: "dealforge-certification",
-        availability: "in_stock",
-        specifications,
-        priceSource: "dealforge_certification_fixture",
-        priceVerifiedAt: now,
-        metadataSource: "dealforge_certification_fixture",
-        metadataVerifiedAt: now,
-        trendingScore: 0,
-        isFeatured: fixture.role === "main",
-        isFlashDeal: false,
-        commerceEnabled: true,
-        sellingPriceCents: fixture.sellingPriceCents,
-        landedCostCents: fixture.landedCostCents,
-        currency: "usd",
-        lastUpdated: now,
-      },
-    });
+    if (current) {
+      // Recognized internal fixtures may be refreshed so source/price freshness
+      // does not silently expire during a later certification run.
+      await prisma.product.update({ where: { id: fixture.id }, data: canonicalData });
+    } else {
+      await prisma.product.create({
+        data: {
+          id: fixture.id,
+          asin: null,
+          slug: fixture.slug,
+          createdAt: now,
+          ...canonicalData,
+        },
+      });
+    }
   }
 
   const installed = await prisma.product.count({
