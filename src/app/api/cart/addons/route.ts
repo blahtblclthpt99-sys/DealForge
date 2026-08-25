@@ -1,7 +1,13 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { calculateCustomerFriendlyPrice } from "@/lib/cart-pricing";
-import { evaluateCommerceGate } from "@/lib/commerce-gate";
+import {
+  CERTIFICATION_CATALOG_PRODUCT_IDS,
+  isCertificationCatalogMode,
+  isCertificationCatalogProduct,
+  isCertificationTransactionMode,
+} from "@/lib/certification-catalog";
+import { evaluateCertificationCommerceGate, evaluateCommerceGate } from "@/lib/commerce-gate";
 import { prisma } from "@/lib/db";
 import { checkPersistedOfferBinding } from "@/lib/persisted-offer-binding";
 import { readLimitedJson } from "@/lib/request-json";
@@ -27,7 +33,12 @@ const Schema = z.object({
 
 export async function POST(request: Request) {
   try {
-    if (process.env.COMMERCE_ENABLED !== "true") {
+    const certificationMode = isCertificationCatalogMode();
+    const certificationTransaction = isCertificationTransactionMode();
+    if (certificationMode && !certificationTransaction) {
+      return NextResponse.json({ error: "CERTIFICATION_REQUIRES_STRIPE_TEST_MODE" }, { status: 503 });
+    }
+    if (!certificationMode && process.env.COMMERCE_ENABLED !== "true") {
       return NextResponse.json({ error: "COMMERCE_DISABLED" }, { status: 503 });
     }
 
@@ -65,6 +76,9 @@ export async function POST(request: Request) {
     if (cartProducts.length !== cartIds.length) {
       return NextResponse.json({ error: "PRODUCT_NOT_FOUND" }, { status: 409 });
     }
+    if (certificationMode && !cartProducts.every(isCertificationCatalogProduct)) {
+      return NextResponse.json({ error: "PRODUCT_NOT_IN_CERTIFICATION_CATALOG" }, { status: 409 });
+    }
 
     const currencies = new Set(cartProducts.map((product) => product.currency.toLowerCase()));
     if (currencies.size !== 1) {
@@ -101,7 +115,9 @@ export async function POST(request: Request) {
 
     const candidates = await prisma.product.findMany({
       where: {
-        id: { notIn: cartIds },
+        id: certificationMode
+          ? { in: [...CERTIFICATION_CATALOG_PRODUCT_IDS], notIn: cartIds }
+          : { notIn: cartIds },
         categoryId: { in: categoryIds },
         currency,
         commerceEnabled: true,
@@ -125,7 +141,7 @@ export async function POST(request: Request) {
         specifications: true,
       },
       orderBy: [{ sellingPriceCents: "asc" }, { trendingScore: "desc" }],
-      take: 30,
+      take: certificationMode ? CERTIFICATION_CATALOG_PRODUCT_IDS.length : 30,
     });
 
     const eligible: Array<{
@@ -142,30 +158,36 @@ export async function POST(request: Request) {
     }> = [];
 
     for (const product of candidates) {
+      if (certificationMode && !isCertificationCatalogProduct(product)) continue;
       if (
         !Number.isSafeInteger(product.sellingPriceCents) || !product.sellingPriceCents || product.sellingPriceCents <= 0 ||
         !Number.isSafeInteger(product.landedCostCents) || !product.landedCostCents || product.landedCostCents <= 0
       ) continue;
 
-      const gate = evaluateCommerceGate({
+      const gateInput = {
         commerceEnabled: product.commerceEnabled,
         availability: product.availability,
         sellingPriceCents: product.sellingPriceCents,
         landedCostCents: product.landedCostCents,
         priceVerifiedAt: product.priceVerifiedAt,
         specifications: product.specifications,
-      });
+      };
+      const gate = certificationTransaction
+        ? evaluateCertificationCommerceGate(gateInput)
+        : evaluateCommerceGate(gateInput);
       if (!gate.allowed) continue;
 
-      const binding = await checkPersistedOfferBinding({
-        productId: product.id,
-        currency: product.currency,
-        availability: product.availability,
-        landedCostCents: product.landedCostCents,
-        priceVerifiedAt: product.priceVerifiedAt,
-        specifications: product.specifications,
-      });
-      if (!binding.allowed) continue;
+      if (!certificationTransaction) {
+        const binding = await checkPersistedOfferBinding({
+          productId: product.id,
+          currency: product.currency,
+          availability: product.availability,
+          landedCostCents: product.landedCostCents,
+          priceVerifiedAt: product.priceVerifiedAt,
+          specifications: product.specifications,
+        });
+        if (!binding.allowed) continue;
+      }
 
       const pricing = calculateCustomerFriendlyPrice({
         landedCostCents: product.landedCostCents,
@@ -199,7 +221,7 @@ export async function POST(request: Request) {
       maxAddonPriceCents: addonPriceCapCents,
       currency,
       searchedAt: new Date().toISOString(),
-      method: "category_affinity_plus_safe_price",
+      method: certificationMode ? "certification_catalog_affinity" : "category_affinity_plus_safe_price",
     });
   } catch (error) {
     console.error("cart.addons.failed", { error: error instanceof Error ? error.message : "UNKNOWN" });
