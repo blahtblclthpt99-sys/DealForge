@@ -37,6 +37,7 @@ jobs:
           set -euo pipefail
           [[ -n "${CLOUDFLARE_API_TOKEN:-}" ]] || { echo '::error::CLOUDFLARE_API_TOKEN missing'; exit 1; }
           [[ -n "${CLOUDFLARE_ACCOUNT_ID:-}" ]] || { echo '::error::CLOUDFLARE_ACCOUNT_ID missing'; exit 1; }
+          [[ "${STRIPE_WEBHOOK_SECRET_TEST:-}" == whsec_* ]] || { echo '::error::STRIPE_WEBHOOK_SECRET_TEST missing or invalid'; exit 1; }
 
       - name: Mark credentials valid
         shell: bash
@@ -55,33 +56,16 @@ jobs:
       - name: Install locked dependencies
         run: npm ci --no-fund --no-audit
 
-      - name: Synchronize Stripe webhook secrets when GitHub sources exist
+      - name: Validate Stripe webhook secret sources
         shell: bash
         run: |
           set -euo pipefail
-          synced=0
-
-          write_secret() {
-            local cloudflare_name="$1"
-            local source_name="$2"
-            local value="$3"
-            [[ -n "$value" ]] || return 0
-            if [[ "$value" != whsec_* ]]; then
-              echo "::error::${source_name} must start with whsec_."
-              exit 1
-            fi
+          for name in STRIPE_WEBHOOK_SECRET_LIVE STRIPE_WEBHOOK_SECRET_TEST STRIPE_WEBHOOK_SECRET_LEGACY; do
+            value="${!name:-}"
+            [[ -n "$value" ]] || continue
             echo "::add-mask::$value"
-            printf '%s' "$value" | npx wrangler versions secret put "$cloudflare_name" --name dealforge --message "DealForge secure secret sync ${GITHUB_SHA:0:12}"
-            synced=1
-          }
-
-          write_secret STRIPE_WEBHOOK_SECRET_LIVE STRIPE_WEBHOOK_SECRET_LIVE "${STRIPE_WEBHOOK_SECRET_LIVE:-}"
-          write_secret STRIPE_WEBHOOK_SECRET_TEST STRIPE_WEBHOOK_SECRET_TEST "${STRIPE_WEBHOOK_SECRET_TEST:-}"
-          write_secret STRIPE_WEBHOOK_SECRET STRIPE_WEBHOOK_SECRET "${STRIPE_WEBHOOK_SECRET_LEGACY:-}"
-
-          if [[ "$synced" == '0' ]]; then
-            echo '::notice::No GitHub webhook secret mirror is configured; preserving existing Cloudflare secrets and relying on live smoke validation.'
-          fi
+            [[ "$value" == whsec_* ]] || { echo "::error::${name} must start with whsec_."; exit 1; }
+          done
 
       - name: Mark build pending
         shell: bash
@@ -101,8 +85,32 @@ jobs:
         run: |
           gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=pending -f context=cloudflare-deploy-publish -f description='Publishing Worker to Cloudflare'
 
-      - name: Deploy exact main revision
-        run: npm run cf:deploy
+      - name: Deploy exact main revision with webhook secret
+        shell: bash
+        run: |
+          set -euo pipefail
+          secrets_file="$(mktemp)"
+          trap 'rm -f "$secrets_file"' EXIT
+          chmod 600 "$secrets_file"
+          SECRETS_FILE="$secrets_file" node <<'NODE'
+          const fs = require('fs');
+          const names = ['STRIPE_WEBHOOK_SECRET_LIVE', 'STRIPE_WEBHOOK_SECRET_TEST', 'STRIPE_WEBHOOK_SECRET_LEGACY'];
+          const mapped = {
+            STRIPE_WEBHOOK_SECRET_LIVE: 'STRIPE_WEBHOOK_SECRET_LIVE',
+            STRIPE_WEBHOOK_SECRET_TEST: 'STRIPE_WEBHOOK_SECRET_TEST',
+            STRIPE_WEBHOOK_SECRET_LEGACY: 'STRIPE_WEBHOOK_SECRET',
+          };
+          const secrets = {};
+          for (const source of names) {
+            const value = (process.env[source] || '').trim();
+            if (value) secrets[mapped[source]] = value;
+          }
+          if (!(secrets.STRIPE_WEBHOOK_SECRET_TEST || '').startsWith('whsec_')) {
+            throw new Error('STRIPE_WEBHOOK_SECRET_TEST missing or invalid');
+          }
+          fs.writeFileSync(process.env.SECRETS_FILE, JSON.stringify(secrets), { mode: 0o600 });
+          NODE
+          npx wrangler deploy --secrets-file "$secrets_file"
 
       - name: Mark smoke test pending
         shell: bash
