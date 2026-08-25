@@ -160,16 +160,16 @@ function reserveTotal(reserves: CanonicalReserves) {
 
 export function recommendCommercialPrice(
   input: CostInput & { marketReferenceCents?: number | null; maxMarketPremiumBps?: number },
+  pricingPolicy: CartPricingPolicy = currentCartPricingPolicy(),
 ): CommercialPriceRecommendation {
   const c = costs(input);
-  const policy = currentCartPricingPolicy();
   const safe = calculateMinimumSafeCustomerPrice({
     landedCostCents: c.landedCostCents,
     attributableCostCents: c.acquisitionReserveCents,
-    policy,
+    policy: pricingPolicy,
   });
   const recommendedPriceCents = safe.customerPriceCents;
-  const reserves = buildReserves(recommendedPriceCents, c.acquisitionReserveCents, policy);
+  const reserves = buildReserves(recommendedPriceCents, c.acquisitionReserveCents, pricingPolicy);
   const total = reserveTotal(reserves);
   const contributionProfitCents = recommendedPriceCents - c.landedCostCents - total;
   const contributionMarginBps = Math.floor((contributionProfitCents * 10_000) / recommendedPriceCents);
@@ -212,6 +212,7 @@ export function prepareCommercialization(
   existingSpecifications: string,
   input: CommercializationInput,
   nowMs = Date.now(),
+  pricingPolicy: CartPricingPolicy = currentCartPricingPolicy(),
 ): PreparedCommercialization {
   if (isInternalCertificationSpecifications(existingSpecifications)) throw new Error("CERTIFICATION_PRODUCT_IMMUTABLE");
 
@@ -226,7 +227,6 @@ export function prepareCommercialization(
   const c = costs(input);
   const sellingPriceCents = positive(input.sellingPriceCents, "selling_price_cents");
   const inventoryConfidenceBps = bps(input.inventoryConfidenceBps, "inventory_confidence_bps");
-  const pricingPolicy = currentCartPricingPolicy();
   const reserves = buildReserves(sellingPriceCents, c.acquisitionReserveCents, pricingPolicy);
   // Profit tiers are deliberately anchored to true landed cost only.
   const minimumProfitCents = minimumSafeProfitCents(c.landedCostCents);
