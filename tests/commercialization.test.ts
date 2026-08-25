@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { prepareCommercialization, recommendCommercialPrice } from "../src/lib/commercialization";
+import {
+  CANONICAL_PRICING_POLICY_VERSION,
+  prepareCommercialization,
+  recommendCommercialPrice,
+} from "../src/lib/commercialization";
+import { minimumSafeProfitCents } from "../src/lib/cart-pricing";
 
 const NOW = Date.parse("2026-08-24T20:30:00Z");
 
@@ -25,21 +30,28 @@ function goodInput() {
   };
 }
 
-test("verified profitable supplier offer becomes commerce-ready", () => {
+test("verified profitable supplier offer becomes commerce-ready under canonical pricing V2", () => {
   const result = prepareCommercialization("{}", goodInput(), NOW);
   assert.equal(result.landedCostCents, 3300);
   assert.equal(result.commerceEnabled, true);
   assert.equal(result.decision.allowed, true);
-  assert.ok((result.decision.contributionProfitCents ?? 0) >= 500);
-  assert.ok((result.decision.contributionMarginBps ?? 0) >= 1000);
+  assert.ok((result.decision.contributionProfitCents ?? 0) >= minimumSafeProfitCents(3300));
 
   const specifications = JSON.parse(result.specifications);
   assert.equal(specifications.supplierOfferV1.supplierName, "Verified Supplier");
   assert.equal(specifications.supplierOfferV1.costBreakdown.landedCostCents, 3300);
   assert.equal(specifications.commerceV1.resaleAllowed, true);
+  assert.equal(specifications.commerceV1.minContributionMarginBps, 0);
+  assert.equal(specifications.commerceV1.reserves.chargebackCents, 0);
+  assert.equal(specifications.commerceV1.reserves.fraudCents, 0);
+  assert.equal(specifications.commerceV1.reserves.supportCents, 0);
+  assert.equal(specifications.commerceV1.reserves.fulfillmentCents, 0);
+  assert.equal(specifications.commerceV2.pricingPolicyVersion, CANONICAL_PRICING_POLICY_VERSION);
+  assert.equal(specifications.commerceV2.maximumLossReserveBps, 200);
+  assert.equal(specifications.commerceV2.rounding, "next_49_or_99_only");
 });
 
-test("dynamic pricing recommendation includes variable reserves and clears floors", () => {
+test("price recommendation uses one payment allowance, one pooled loss reserve, and attributable cost", () => {
   const input = goodInput();
   const result = recommendCommercialPrice({
     itemCostCents: input.itemCostCents,
@@ -50,14 +62,19 @@ test("dynamic pricing recommendation includes variable reserves and clears floor
     acquisitionReserveCents: 250,
   });
   assert.equal(result.landedCostCents, 3300);
-  assert.ok(result.reserveTotalCents >= 250);
+  assert.equal(result.reserves.acquisitionCents, 250);
+  assert.equal(result.reserves.chargebackCents, 0);
+  assert.equal(result.reserves.fraudCents, 0);
+  assert.equal(result.reserves.supportCents, 0);
+  assert.equal(result.reserves.fulfillmentCents, 0);
+  assert.equal(result.reserveTotalCents, result.reserves.paymentCents + result.reserves.returnsCents + 250);
   assert.ok(result.recommendedPriceCents >= result.minimumSafePriceCents);
-  assert.ok(result.contributionProfitCents >= 500);
-  assert.ok(result.contributionMarginBps >= 1000);
-  assert.equal(result.recommendedPriceCents % 100, 99);
+  assert.ok(result.contributionProfitCents >= result.minimumProfitCents);
+  assert.ok([49, 99].includes(result.recommendedPriceCents % 100));
+  assert.equal(result.pricingPolicyVersion, CANONICAL_PRICING_POLICY_VERSION);
 });
 
-test("dynamic pricing refuses to sacrifice profit to match an unsafe market price", () => {
+test("safe pricing flags an unsafe market comparison instead of sacrificing profit", () => {
   const result = recommendCommercialPrice({
     itemCostCents: 8000,
     shippingCents: 500,
@@ -70,8 +87,7 @@ test("dynamic pricing refuses to sacrifice profit to match an unsafe market pric
   });
   assert.equal(result.marketCompatible, false);
   assert.match(result.reasons.join(","), /safe_price_exceeds_market_ceiling/);
-  assert.ok(result.contributionProfitCents >= 500);
-  assert.ok(result.contributionMarginBps >= 1000);
+  assert.ok(result.contributionProfitCents >= result.minimumProfitCents);
 });
 
 test("stale supplier price blocks commerce-ready state", () => {
@@ -94,10 +110,10 @@ test("weak inventory confidence blocks commerce-ready state", () => {
   assert.match(result.decision.reasons.join(","), /inventory_confidence_below_floor/);
 });
 
-test("insufficient contribution profit blocks commerce-ready state", () => {
+test("insufficient tiered contribution profit blocks commerce-ready state", () => {
   const result = prepareCommercialization(
     "{}",
-    { ...goodInput(), sellingPriceCents: 4000 },
+    { ...goodInput(), sellingPriceCents: 3800 },
     NOW,
   );
   assert.equal(result.commerceEnabled, false);
