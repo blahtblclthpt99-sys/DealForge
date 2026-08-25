@@ -6,8 +6,10 @@ import {
   classifyCandidate,
   ingestCandidate,
   isValidAsin,
+  productEngineDashboard,
   publishCandidate,
   retryCandidate,
+  runProductEngine,
   scoreCandidate,
   setEnginePaused,
   validateCandidate,
@@ -93,6 +95,87 @@ test("master pause stops processing", async () => {
   const result = await validateCandidate(candidate.id);
   assert.deepEqual(result, { paused: true });
   assert.equal((await prisma.productCandidate.findUniqueOrThrow({ where: { id: candidate.id } })).state, "discovered");
+});
+
+test("active candidate lease prevents duplicate stage execution", async () => {
+  const { candidate } = await ingestCandidate({ asin: TEST_ASINS[0], sourceType: "owner_asin", title: "USB-C wall charger", brand: "Example", category: "electronics" }, "test-owner");
+  await prisma.productEngineWorkerState.create({
+    data: {
+      worker: `__lock__:candidate:${candidate.id}`,
+      status: "lease:test-holder",
+      healthy: true,
+      lastHeartbeatAt: new Date(Date.now() + 60_000),
+    },
+  });
+
+  const result = await validateCandidate(candidate.id);
+  assert.equal("state" in result ? result.state : "paused", "discovered");
+  assert.equal((await prisma.productCandidate.findUniqueOrThrow({ where: { id: candidate.id } })).state, "discovered");
+  assert.equal(await prisma.productEngineAudit.count({ where: { candidateId: candidate.id, action: "candidate_stage_busy" } }), 1);
+});
+
+test("publisher lease enforces one Product Engine catalog writer", async () => {
+  const { candidate } = await ingestCandidate({ asin: TEST_ASINS[1], sourceType: "owner_asin", title: "USB-C charger", brand: "Example", category: "electronics" }, "test-owner");
+  await validateCandidate(candidate.id);
+  await classifyOne(candidate.id);
+  await prisma.productEngineWorkerState.create({
+    data: {
+      worker: "__lock__:publisher",
+      status: "lease:test-holder",
+      healthy: true,
+      lastHeartbeatAt: new Date(Date.now() + 60_000),
+    },
+  });
+
+  const result = await publishCandidate(candidate.id);
+  assert.equal("state" in result ? result.state : "paused", "classified");
+  assert.equal(await prisma.product.count({ where: { asin: TEST_ASINS[1] } }), 0);
+  assert.equal(await prisma.productEngineAudit.count({ where: { candidateId: candidate.id, action: "publisher_single_writer_busy" } }), 1);
+});
+
+test("run lease skips overlapping Product Engine runs", async () => {
+  await prisma.productEngineWorkerState.create({
+    data: {
+      worker: "__lock__:run",
+      status: "lease:test-holder",
+      healthy: true,
+      lastHeartbeatAt: new Date(Date.now() + 60_000),
+    },
+  });
+
+  const result = await runProductEngine("test-owner");
+  assert.deepEqual(result, { paused: false, processed: 0, busy: true });
+  assert.equal(await prisma.productEngineAudit.count({ where: { action: "engine_run_skipped_busy" } }), 1);
+});
+
+test("expired candidate lease is reclaimed and released", async () => {
+  const { candidate } = await ingestCandidate({ asin: TEST_ASINS[2], sourceType: "owner_asin", title: "USB-C charger", brand: "Example", category: "electronics" }, "test-owner");
+  const lockKey = `__lock__:candidate:${candidate.id}`;
+  await prisma.productEngineWorkerState.create({
+    data: {
+      worker: lockKey,
+      status: "lease:expired-holder",
+      healthy: false,
+      lastHeartbeatAt: new Date(Date.now() - 60_000),
+    },
+  });
+
+  const result = await validateCandidate(candidate.id);
+  assert.equal("state" in result ? result.state : "paused", "validated");
+  assert.equal(await prisma.productEngineWorkerState.count({ where: { worker: lockKey } }), 0);
+});
+
+test("Product Engine dashboard hides internal lease records", async () => {
+  await prisma.productEngineWorkerState.create({
+    data: {
+      worker: "__lock__:run",
+      status: "lease:test-holder",
+      healthy: true,
+      lastHeartbeatAt: new Date(Date.now() + 60_000),
+    },
+  });
+  const dashboard = await productEngineDashboard();
+  assert.equal(dashboard.workers.some((worker) => worker.worker.startsWith("__lock__:")), false);
 });
 
 test("pipeline failures back off into dead-letter and can be retried", async () => {
