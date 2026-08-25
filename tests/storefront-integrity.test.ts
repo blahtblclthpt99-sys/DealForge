@@ -28,3 +28,23 @@ test("wishlist optimism rolls back when the server rejects the mutation", async 
   assert.match(source, /savingWishlist/);
   assert.match(source, /aria-pressed=\{liked\}/);
 });
+
+test("product detail wishlist preserves the real return path across login", async () => {
+  const source = await readFile("src/components/wishlist-button.tsx", "utf8");
+  assert.doesNotMatch(source, /next=\/product\//);
+  assert.match(source, /window\.location\.pathname/);
+  assert.match(source, /window\.location\.search/);
+  assert.match(source, /encodeURIComponent\(current\)/);
+  assert.match(source, /setLiked\(previous\)/);
+});
+
+test("login page contains no packaged credentials and constrains next redirects to the same origin", async () => {
+  const source = await readFile("src/app/login/page.tsx", "utf8");
+  assert.doesNotMatch(source, /DemoUser123!/);
+  assert.doesNotMatch(source, /demo@dealforge\.com/);
+  assert.doesNotMatch(source, /admin@dealforge\.com/);
+  assert.match(source, /safeLoginRedirect/);
+  assert.match(source, /target\.origin !== origin/);
+  assert.match(source, /value\.startsWith\("\/\/"\)/);
+  assert.match(source, /safeLoginRedirect\(searchParams\.get\("next"\), window\.location\.origin\)/);
+});
