@@ -237,11 +237,11 @@ CREATE INDEX IF NOT EXISTS "SavingsFundEntry_refundId_createdAt_idx" ON "Savings
 CREATE INDEX IF NOT EXISTS "SavingsFundEntry_dryRun_createdAt_idx" ON "SavingsFundEntry"("dryRun", "createdAt");
 
 CREATE OR REPLACE FUNCTION "prevent_savings_fund_entry_mutation"()
-RETURNS trigger
-LANGUAGE plpgsql
-AS 'BEGIN
-  RAISE EXCEPTION ''SavingsFundEntry is append-only'';
-END;';
+RETURNS trigger AS $$
+BEGIN
+  RAISE EXCEPTION 'SavingsFundEntry is append-only';
+END;
+$$ LANGUAGE plpgsql;
 
 DROP TRIGGER IF EXISTS "SavingsFundEntry_prevent_update" ON "SavingsFundEntry";
 CREATE TRIGGER "SavingsFundEntry_prevent_update"
