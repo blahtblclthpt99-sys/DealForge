@@ -6,9 +6,17 @@ import {
   attributableCostFromSpecifications,
   calculateCustomerFriendlyPrice,
 } from "@/lib/cart-pricing";
+import {
+  isCertificationCatalogId,
+  isCertificationCatalogMode,
+  isCertificationCatalogProduct,
+  isLegacyStripeCertificationProduct,
+  isStripeTestMode,
+  LEGACY_STRIPE_CERTIFICATION_PRODUCT_ID,
+} from "@/lib/certification-catalog";
 import { checkCheckoutExposure } from "@/lib/checkout-exposure";
 import { prisma } from "@/lib/db";
-import { evaluateCommerceGate } from "@/lib/commerce-gate";
+import { evaluateCertificationCommerceGate, evaluateCommerceGate } from "@/lib/commerce-gate";
 import {
   buildOrderSupplierSnapshot,
   serializeOrderSupplierSnapshot,
@@ -20,7 +28,7 @@ import { resolvePublicAppOrigin } from "@/lib/url-security";
 
 export const runtime = "nodejs";
 
-const CERTIFICATION_PRODUCT_ID = "cert_test_75c_20260822_v2";
+const CERTIFICATION_PRODUCT_ID = LEGACY_STRIPE_CERTIFICATION_PRODUCT_ID;
 const TERMINAL_CHECKOUT_STATUSES = new Set(["paid", "refunded", "partially_refunded", "canceled"]);
 const MAX_CHECKOUT_BODY_BYTES = 32 * 1024;
 
@@ -114,10 +122,6 @@ function commerceEnabled() {
   return process.env.COMMERCE_ENABLED === "true";
 }
 
-function stripeTestMode() {
-  return (process.env.STRIPE_SECRET_KEY || "").trim().startsWith("sk_test_");
-}
-
 function isInternalCertificationProduct(specifications: string) {
   try {
     const parsed = JSON.parse(specifications) as { internalCertification?: unknown };
@@ -148,9 +152,13 @@ export async function POST(request: Request) {
       );
     }
 
-    certificationAttempt =
+    const legacyCertificationAttempt =
       parsed.data.items.length > 0 &&
       parsed.data.items.every((item) => item.productId === CERTIFICATION_PRODUCT_ID);
+    const catalogCertificationAttempt =
+      parsed.data.items.length > 0 &&
+      parsed.data.items.every((item) => isCertificationCatalogId(item.productId));
+    certificationAttempt = legacyCertificationAttempt || catalogCertificationAttempt;
 
     stage = "session";
     const sessionUser = await readSession();
@@ -201,26 +209,41 @@ export async function POST(request: Request) {
     }
 
     stage = "commerce_gate";
-    const certificationOnly =
-      certificationAttempt &&
+    const catalogCertificationOnly =
+      isCertificationCatalogMode() &&
+      catalogCertificationAttempt &&
       products.length > 0 &&
-      products.every((product) => isInternalCertificationProduct(product.specifications));
-    const certificationBypass = certificationOnly && stripeTestMode();
-    if (!commerceEnabled() && !certificationBypass) {
+      products.every(isCertificationCatalogProduct);
+    const legacyCertificationOnly =
+      legacyCertificationAttempt &&
+      products.length > 0 &&
+      products.every(isLegacyStripeCertificationProduct);
+    const certificationOnly = catalogCertificationOnly || legacyCertificationOnly;
+
+    if (isCertificationCatalogMode() && !catalogCertificationOnly) {
+      return NextResponse.json({ error: "PRODUCT_NOT_IN_CERTIFICATION_CATALOG" }, { status: 409 });
+    }
+    if (certificationOnly && !isStripeTestMode()) {
+      return NextResponse.json({ error: "CERTIFICATION_REQUIRES_TEST_MODE" }, { status: 409 });
+    }
+    if (!commerceEnabled() && !(certificationOnly && isStripeTestMode())) {
       return NextResponse.json({ error: "COMMERCE_DISABLED" }, { status: 503 });
     }
 
     stage = "commercial_gate";
     for (const product of products) {
-      if (certificationOnly && isInternalCertificationProduct(product.specifications) && stripeTestMode()) continue;
-      const decision = evaluateCommerceGate({
+      if (legacyCertificationOnly && isLegacyStripeCertificationProduct(product) && isStripeTestMode()) continue;
+      const input = {
         commerceEnabled: product.commerceEnabled,
         availability: product.availability,
         sellingPriceCents: product.sellingPriceCents,
         landedCostCents: product.landedCostCents,
         priceVerifiedAt: product.priceVerifiedAt,
         specifications: product.specifications,
-      });
+      };
+      const decision = catalogCertificationOnly
+        ? evaluateCertificationCommerceGate(input)
+        : evaluateCommerceGate(input);
       if (!decision.allowed) {
         console.warn("checkout.commercial_gate.blocked", {
           productId: product.id,
@@ -235,7 +258,7 @@ export async function POST(request: Request) {
     stage = "persisted_offer_binding";
     const supplierSnapshotByProductId = new Map<string, string>();
     for (const product of products) {
-      if (certificationOnly && isInternalCertificationProduct(product.specifications) && stripeTestMode()) {
+      if (certificationOnly && isStripeTestMode()) {
         supplierSnapshotByProductId.set(product.id, "{}");
         continue;
       }
@@ -268,8 +291,14 @@ export async function POST(request: Request) {
     const productById = new Map(products.map((product) => [product.id, product]));
     const pricedItems = requestedItems.map((item) => {
       const product = productById.get(item.productId)!;
-      const certificationProduct = isInternalCertificationProduct(product.specifications) && stripeTestMode();
-      if (isInternalCertificationProduct(product.specifications) && !stripeTestMode()) {
+      const internalCertification = isInternalCertificationProduct(product.specifications);
+      const legacyCertificationProduct = legacyCertificationOnly && isLegacyStripeCertificationProduct(product);
+      const catalogCertificationProduct = catalogCertificationOnly && isCertificationCatalogProduct(product);
+
+      if (internalCertification && !legacyCertificationProduct && !catalogCertificationProduct) {
+        throw new Error("CERTIFICATION_PRODUCT_NOT_AUTHORIZED");
+      }
+      if (internalCertification && !isStripeTestMode()) {
         throw new Error("CERTIFICATION_REQUIRES_TEST_MODE");
       }
       if (
@@ -283,7 +312,7 @@ export async function POST(request: Request) {
       }
 
       let unitPriceCents = product.sellingPriceCents;
-      if (!certificationProduct) {
+      if (!legacyCertificationProduct) {
         if (
           !Number.isSafeInteger(product.landedCostCents) ||
           !product.landedCostCents ||
@@ -391,7 +420,7 @@ export async function POST(request: Request) {
     stage = "pre_stripe_supplier_revalidation";
     for (const item of pricedItems) {
       const product = item.product;
-      if (certificationOnly && isInternalCertificationProduct(product.specifications) && stripeTestMode()) continue;
+      if (certificationOnly && isStripeTestMode()) continue;
       const binding = await checkPersistedOfferBinding({
         productId: product.id,
         currency: product.currency,
@@ -429,7 +458,7 @@ export async function POST(request: Request) {
       })),
       successUrl: `${base}/checkout/success?order=${encodeURIComponent(order.orderNumber)}`,
       cancelUrl: `${base}/checkout/cancel?order=${encodeURIComponent(order.orderNumber)}`,
-      cardOnly: certificationOnly && stripeTestMode(),
+      cardOnly: certificationOnly && isStripeTestMode(),
     });
 
     if (!stripeSession.id || !stripeSession.url) {
@@ -459,7 +488,8 @@ export async function POST(request: Request) {
       message.startsWith("PRODUCT_NOT_PURCHASABLE") ||
       message === "PRODUCT_PRICE_NO_LONGER_SAFE" ||
       message === "QUANTITY_LIMIT_EXCEEDED" ||
-      message === "CERTIFICATION_REQUIRES_TEST_MODE"
+      message === "CERTIFICATION_REQUIRES_TEST_MODE" ||
+      message === "CERTIFICATION_PRODUCT_NOT_AUTHORIZED"
     ) {
       return NextResponse.json({ error: message.split(":")[0] }, { status: 409 });
     }
