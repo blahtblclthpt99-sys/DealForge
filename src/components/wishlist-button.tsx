@@ -15,9 +15,12 @@ export function WishlistButton({
   const [busy, setBusy] = useState(false);
 
   async function toggle() {
+    if (busy) return;
     setBusy(true);
-    const next = !liked;
+    const previous = liked;
+    const next = !previous;
     setLiked(next);
+
     try {
       const res = await fetch("/api/wishlist", {
         method: "POST",
@@ -25,12 +28,14 @@ export function WishlistButton({
         body: JSON.stringify({ productId, action: next ? "add" : "remove" }),
       });
       if (res.status === 401) {
-        window.location.href = `/login?next=/product/`;
+        setLiked(previous);
+        const current = `${window.location.pathname}${window.location.search}`;
+        window.location.href = `/login?next=${encodeURIComponent(current)}`;
         return;
       }
-      if (!res.ok) setLiked(!next);
+      if (!res.ok) setLiked(previous);
     } catch {
-      setLiked(!next);
+      setLiked(previous);
     } finally {
       setBusy(false);
     }
@@ -41,8 +46,9 @@ export function WishlistButton({
       type="button"
       disabled={busy}
       onClick={toggle}
+      aria-pressed={liked}
       className={cn(
-        "inline-flex items-center gap-2 rounded-full border border-card-border bg-card px-5 py-3 text-sm font-semibold transition hover:border-forest/40",
+        "inline-flex items-center gap-2 rounded-full border border-card-border bg-card px-5 py-3 text-sm font-semibold transition hover:border-forest/40 disabled:cursor-wait disabled:opacity-60",
         liked ? "text-red-500" : "text-forest-ink",
       )}
     >
