@@ -64,9 +64,9 @@ export function checkCheckoutExposure(
     return invalid();
   }
 
-  let unitCount = 0n;
-  let customerTotalCents = 0n;
-  let supplierExposureCents = 0n;
+  let unitCount = BigInt(0);
+  let customerTotalCents = BigInt(0);
+  let supplierExposureCents = BigInt(0);
   const maxLineQuantity = BigInt(limits.maxLineQuantity);
   const maxUnitCount = BigInt(limits.maxUnitCount);
   const maxCustomerTotalCents = BigInt(limits.maxCustomerTotalCents);
