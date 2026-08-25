@@ -20,12 +20,7 @@ jobs:
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-      DATABASE_URL: ${{ secrets.DATABASE_URL }}
-      AUTH_SECRET: ${{ secrets.AUTH_SECRET }}
-      STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
-      STRIPE_WEBHOOK_SECRET_LIVE: ${{ secrets.STRIPE_WEBHOOK_SECRET_LIVE }}
       STRIPE_WEBHOOK_SECRET_TEST: ${{ secrets.STRIPE_WEBHOOK_SECRET_TEST }}
-      STRIPE_WEBHOOK_SECRET_LEGACY: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
       WORKERS_CI_COMMIT_SHA: ${{ github.sha }}
       GH_TOKEN: ${{ github.token }}
 
@@ -37,43 +32,21 @@ jobs:
             -f state=pending -f context=cloudflare-production-deploy \
             -f description='Cloudflare production deployment in progress'
 
-      - name: Validate complete production secret contract
+      - name: Validate deployment-owned secret sources
         shell: bash
         run: |
           set -euo pipefail
-
-          required=(
-            CLOUDFLARE_API_TOKEN
-            CLOUDFLARE_ACCOUNT_ID
-            DATABASE_URL
-            AUTH_SECRET
-            STRIPE_SECRET_KEY
-            STRIPE_WEBHOOK_SECRET_TEST
-          )
-
-          for name in "${required[@]}"; do
+          for name in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID STRIPE_WEBHOOK_SECRET_TEST; do
             value="${!name:-}"
             [[ -n "$value" ]] || { echo "::error::${name} missing"; exit 1; }
             echo "::add-mask::$value"
           done
-
-          [[ "$STRIPE_SECRET_KEY" == sk_test_* || "$STRIPE_SECRET_KEY" == sk_live_* ]] || {
-            echo '::error::STRIPE_SECRET_KEY has an invalid mode prefix'; exit 1;
-          }
           [[ "$STRIPE_WEBHOOK_SECRET_TEST" == whsec_* ]] || {
             echo '::error::STRIPE_WEBHOOK_SECRET_TEST missing or invalid'; exit 1;
           }
-
-          for name in STRIPE_WEBHOOK_SECRET_LIVE STRIPE_WEBHOOK_SECRET_LEGACY; do
-            value="${!name:-}"
-            [[ -n "$value" ]] || continue
-            echo "::add-mask::$value"
-            [[ "$value" == whsec_* ]] || { echo "::error::${name} must start with whsec_."; exit 1; }
-          done
-
           gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
             -f state=success -f context=cloudflare-deploy-credentials \
-            -f description='Complete Cloudflare runtime secret contract present'
+            -f description='Deployment credentials and webhook secret present'
 
       - uses: actions/checkout@v4
         with:
@@ -104,7 +77,7 @@ jobs:
             -f state=success -f context=cloudflare-deploy-build \
             -f description='Cloudflare Worker build succeeded'
 
-      - name: Deploy exact main revision with complete runtime secrets
+      - name: Deploy exact main revision while preserving Cloudflare runtime secrets
         shell: bash
         run: |
           set -euo pipefail
@@ -112,33 +85,24 @@ jobs:
             -f state=pending -f context=cloudflare-deploy-publish \
             -f description='Publishing Worker to Cloudflare'
 
+          # Cloudflare owns DATABASE_URL, AUTH_SECRET, and STRIPE_SECRET_KEY.
+          # Wrangler preserves existing secrets omitted from --secrets-file and
+          # validates wrangler.jsonc secrets.required before completing deploy.
           secrets_file="$(mktemp)"
           trap 'rm -f "$secrets_file"' EXIT
           chmod 600 "$secrets_file"
 
           SECRETS_FILE="$secrets_file" node <<'NODE'
           const fs = require('fs');
-
-          const sourceToBinding = {
-            DATABASE_URL: 'DATABASE_URL',
-            AUTH_SECRET: 'AUTH_SECRET',
-            STRIPE_SECRET_KEY: 'STRIPE_SECRET_KEY',
-            STRIPE_WEBHOOK_SECRET_LIVE: 'STRIPE_WEBHOOK_SECRET_LIVE',
-            STRIPE_WEBHOOK_SECRET_TEST: 'STRIPE_WEBHOOK_SECRET_TEST',
-            STRIPE_WEBHOOK_SECRET_LEGACY: 'STRIPE_WEBHOOK_SECRET',
-          };
-
-          const secrets = {};
-          for (const [source, binding] of Object.entries(sourceToBinding)) {
-            const value = (process.env[source] || '').trim();
-            if (value) secrets[binding] = value;
+          const webhook = (process.env.STRIPE_WEBHOOK_SECRET_TEST || '').trim();
+          if (!webhook.startsWith('whsec_')) {
+            throw new Error('STRIPE_WEBHOOK_SECRET_TEST missing or invalid');
           }
-
-          for (const name of ['DATABASE_URL', 'AUTH_SECRET', 'STRIPE_SECRET_KEY', 'STRIPE_WEBHOOK_SECRET_TEST']) {
-            if (!secrets[name]) throw new Error(`${name} missing from deploy secret contract`);
-          }
-
-          fs.writeFileSync(process.env.SECRETS_FILE, JSON.stringify(secrets), { mode: 0o600 });
+          fs.writeFileSync(
+            process.env.SECRETS_FILE,
+            JSON.stringify({ STRIPE_WEBHOOK_SECRET_TEST: webhook }),
+            { mode: 0o600 },
+          );
           NODE
 
           npx wrangler deploy --secrets-file "$secrets_file"
@@ -154,11 +118,8 @@ jobs:
           base='https://www.deal-forge.sale'
 
           health_code=$(curl --retry 5 --retry-all-errors --retry-delay 2 -sS -o /tmp/health-body -w '%{http_code}' "$base/api/health")
-          echo "health HTTP $health_code"
-          cat /tmp/health-body
-          echo
-
           db_state=$(node -e "const fs=require('fs');try{const j=JSON.parse(fs.readFileSync('/tmp/health-body','utf8'));process.stdout.write(String(j.database||'unknown'))}catch{process.stdout.write('invalid_response')}")
+          echo "health HTTP $health_code database=$db_state"
           if [[ "$health_code" == '200' && "$db_state" == 'ok' ]]; then
             gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
               -f state=success -f context=cloudflare-live-health \
@@ -167,6 +128,7 @@ jobs:
               -f state=success -f context=cloudflare-db-ok \
               -f description='Cloudflare Worker connected to Neon'
           else
+            cat /tmp/health-body
             gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
               -f state=failure -f context=cloudflare-live-health \
               -f description="Health/database check failed (${health_code}/${db_state})"
