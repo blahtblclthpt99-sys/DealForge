@@ -1,16 +1,23 @@
-FROM node:20-alpine AS deps
+FROM node:24-alpine AS deps
 WORKDIR /app
+ENV PRISMA_DATABASE_PROVIDER=postgresql
 COPY package.json package-lock.json ./
+# package.json postinstall runs scripts/prisma-generate.mjs, so copy the
+# generator and both schemas before npm ci instead of relying on files that
+# are only present in the later full-source copy.
+COPY scripts/prisma-generate.mjs ./scripts/prisma-generate.mjs
+COPY prisma/schema.prisma prisma/schema.postgres.prisma ./prisma/
 RUN npm ci
 
-FROM node:20-alpine AS builder
+FROM node:24-alpine AS builder
 WORKDIR /app
 ENV NEXT_TELEMETRY_DISABLED=1
+ENV PRISMA_DATABASE_PROVIDER=postgresql
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN npm run build
 
-FROM node:20-alpine AS runner
+FROM node:24-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
