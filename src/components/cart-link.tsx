@@ -2,22 +2,32 @@
 
 import Link from "next/link";
 import { ShoppingCart } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useSyncExternalStore } from "react";
 import { CART_CHANGED_EVENT, cartCount, readCart } from "@/lib/cart-client";
 
-export function CartLink({ compact = false }: { compact?: boolean }) {
-  const [count, setCount] = useState(0);
+function subscribeToCart(onStoreChange: () => void) {
+  window.addEventListener(CART_CHANGED_EVENT, onStoreChange);
+  window.addEventListener("storage", onStoreChange);
+  return () => {
+    window.removeEventListener(CART_CHANGED_EVENT, onStoreChange);
+    window.removeEventListener("storage", onStoreChange);
+  };
+}
 
-  useEffect(() => {
-    const refresh = () => setCount(cartCount(readCart()));
-    refresh();
-    window.addEventListener(CART_CHANGED_EVENT, refresh);
-    window.addEventListener("storage", refresh);
-    return () => {
-      window.removeEventListener(CART_CHANGED_EVENT, refresh);
-      window.removeEventListener("storage", refresh);
-    };
-  }, []);
+function getCartCountSnapshot() {
+  return cartCount(readCart());
+}
+
+function getServerCartCountSnapshot() {
+  return 0;
+}
+
+export function CartLink({ compact = false }: { compact?: boolean }) {
+  const count = useSyncExternalStore(
+    subscribeToCart,
+    getCartCountSnapshot,
+    getServerCartCountSnapshot,
+  );
 
   return (
     <Link
