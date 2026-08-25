@@ -58,7 +58,7 @@ test("cart calculates the lowest safe price and exposes savings against the publ
   assert.ok(decision.estimatedContributionProfitCents >= decision.minimumProfitCents);
 });
 
-test("explicit attributable cost is preserved across V2 and legacy V1 metadata", () => {
+test("only V2 can promote an acquisition amount into attributable customer pricing", () => {
   assert.equal(
     attributableCostFromSpecifications(JSON.stringify({
       commerceV2: { attributableAcquisitionCostCents: 275 },
@@ -70,7 +70,7 @@ test("explicit attributable cost is preserved across V2 and legacy V1 metadata",
     attributableCostFromSpecifications(JSON.stringify({
       commerceV1: { reserves: { acquisitionCents: 125, supportCents: 500, fraudCents: 500 } },
     })),
-    125,
+    0,
   );
   assert.equal(attributableCostFromSpecifications("not-json"), 0);
 });
