@@ -20,6 +20,9 @@ jobs:
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      AUTH_SECRET: ${{ secrets.AUTH_SECRET }}
+      STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
       STRIPE_WEBHOOK_SECRET_TEST: ${{ secrets.STRIPE_WEBHOOK_SECRET_TEST }}
       WORKERS_CI_COMMIT_SHA: ${{ github.sha }}
       GH_TOKEN: ${{ github.token }}
@@ -36,17 +39,20 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for name in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID STRIPE_WEBHOOK_SECRET_TEST; do
+          for name in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID DATABASE_URL AUTH_SECRET STRIPE_SECRET_KEY STRIPE_WEBHOOK_SECRET_TEST; do
             value="${!name:-}"
             [[ -n "$value" ]] || { echo "::error::${name} missing"; exit 1; }
             echo "::add-mask::$value"
           done
+          [[ "$STRIPE_SECRET_KEY" == sk_test_* || "$STRIPE_SECRET_KEY" == sk_live_* ]] || {
+            echo '::error::STRIPE_SECRET_KEY missing or invalid'; exit 1;
+          }
           [[ "$STRIPE_WEBHOOK_SECRET_TEST" == whsec_* ]] || {
             echo '::error::STRIPE_WEBHOOK_SECRET_TEST missing or invalid'; exit 1;
           }
           gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
             -f state=success -f context=cloudflare-deploy-credentials \
-            -f description='Deployment credentials and webhook secret present'
+            -f description='Deployment credentials and required runtime secrets present'
 
       - uses: actions/checkout@v4
         with:
@@ -77,7 +83,7 @@ jobs:
             -f state=success -f context=cloudflare-deploy-build \
             -f description='Cloudflare Worker build succeeded'
 
-      - name: Deploy exact main revision while preserving Cloudflare runtime secrets
+      - name: Deploy exact main revision with complete required runtime secret contract
         shell: bash
         run: |
           set -euo pipefail
@@ -85,24 +91,31 @@ jobs:
             -f state=pending -f context=cloudflare-deploy-publish \
             -f description='Publishing Worker to Cloudflare'
 
-          # Cloudflare owns DATABASE_URL, AUTH_SECRET, and STRIPE_SECRET_KEY.
-          # Wrangler preserves existing secrets omitted from --secrets-file and
-          # validates wrangler.jsonc secrets.required before completing deploy.
           secrets_file="$(mktemp)"
           trap 'rm -f "$secrets_file"' EXIT
           chmod 600 "$secrets_file"
 
           SECRETS_FILE="$secrets_file" node <<'NODE'
           const fs = require('fs');
-          const webhook = (process.env.STRIPE_WEBHOOK_SECRET_TEST || '').trim();
-          if (!webhook.startsWith('whsec_')) {
-            throw new Error('STRIPE_WEBHOOK_SECRET_TEST missing or invalid');
+          const names = [
+            'DATABASE_URL',
+            'AUTH_SECRET',
+            'STRIPE_SECRET_KEY',
+            'STRIPE_WEBHOOK_SECRET_TEST',
+          ];
+          const payload = {};
+          for (const name of names) {
+            const value = (process.env[name] || '').trim();
+            if (!value) throw new Error(`${name} missing`);
+            payload[name] = value;
           }
-          fs.writeFileSync(
-            process.env.SECRETS_FILE,
-            JSON.stringify({ STRIPE_WEBHOOK_SECRET_TEST: webhook }),
-            { mode: 0o600 },
-          );
+          if (!/^sk_(test|live)_/.test(payload.STRIPE_SECRET_KEY)) {
+            throw new Error('STRIPE_SECRET_KEY invalid');
+          }
+          if (!payload.STRIPE_WEBHOOK_SECRET_TEST.startsWith('whsec_')) {
+            throw new Error('STRIPE_WEBHOOK_SECRET_TEST invalid');
+          }
+          fs.writeFileSync(process.env.SECRETS_FILE, JSON.stringify(payload), { mode: 0o600 });
           NODE
 
           npx wrangler deploy --secrets-file "$secrets_file"
