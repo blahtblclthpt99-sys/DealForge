@@ -3,6 +3,9 @@ import { isDirectResaleSourceClass } from "./source-policy";
 export type SupplierOfferCandidate = {
   id: string;
   supplierId: string;
+  supplierName?: string;
+  offerKey?: string;
+  sourceUrl?: string | null;
   supplierActive: boolean;
   offerActive: boolean;
   sourceClass: string;
