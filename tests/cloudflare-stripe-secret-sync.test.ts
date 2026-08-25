@@ -15,6 +15,20 @@ test("Cloudflare webhook sync preserves Stripe secret modes and the legacy fallb
   assert.doesNotMatch(source, /write_secret STRIPE_WEBHOOK_SECRET_TEST "\$\{STRIPE_WEBHOOK_SECRET_LEGACY:-\}"/);
 });
 
+test("Cloudflare secret-mutating workflows serialize and deploy secret changes immediately", async () => {
+  const sync = await readFile(".github/workflows/cloudflare-stripe-secret-sync.yml", "utf8");
+  const deploy = await readFile(".github/workflows/cloudflare-production-deploy.yml", "utf8");
+  const certification = await readFile(".github/workflows/inventory-adapter-certification.yml", "utf8");
+
+  for (const source of [sync, deploy, certification]) {
+    assert.match(source, /group: dealforge-cloudflare-production/);
+    assert.match(source, /cancel-in-progress: false/);
+  }
+
+  assert.match(sync, /wrangler secret put "\$cloudflare_name" --name dealforge/);
+  assert.doesNotMatch(sync, /wrangler versions secret put/);
+});
+
 test("production deploy supplies the complete required Cloudflare runtime secret contract atomically", async () => {
   const source = await readFile(".github/workflows/cloudflare-production-deploy.yml", "utf8");
 

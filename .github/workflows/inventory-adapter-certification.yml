@@ -1,16 +1,6 @@
 name: Inventory Adapter Certification
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - '.github/workflows/inventory-adapter-certification.yml'
-      - 'src/app/api/internal/inventory-adapter-certification/**'
-      - 'src/lib/inventory-adapter-auth.ts'
-      - 'src/lib/db.ts'
-      - 'prisma/migrations/20260825163500_inventory_adapter_nonce_v1/**'
-      - 'scripts/certify-inventory-adapter.mjs'
-      - 'scripts/check-inventory-adapter-schema.ts'
   workflow_dispatch:
 
 permissions:
@@ -18,7 +8,7 @@ permissions:
   statuses: write
 
 concurrency:
-  group: dealforge-inventory-adapter-certification
+  group: dealforge-cloudflare-production
   cancel-in-progress: false
 
 jobs:
@@ -68,14 +58,14 @@ jobs:
       - name: Verify production adapter schema contract
         run: npx tsx scripts/check-inventory-adapter-schema.ts
 
-      - name: Wait for certification endpoint and prove adapters are disabled
+      - name: Prove adapters are disabled before certification
         shell: bash
         run: |
           set -euo pipefail
           base="$DEALFORGE_BASE_URL"
           ready=0
 
-          for attempt in $(seq 1 40); do
+          for attempt in $(seq 1 20); do
             code=$(curl -sS -o /tmp/adapter-preflight-body -w '%{http_code}' \
               -X POST "$base/api/internal/inventory-adapter-certification" \
               -H 'content-type: application/json' \
@@ -87,11 +77,11 @@ jobs:
               ready=1
               break
             fi
-            sleep 3
+            sleep 2
           done
 
           if [[ "$ready" != '1' ]]; then
-            echo '::error::Certification endpoint did not reach the expected disabled-by-default state.'
+            echo '::error::Certification requires adapters to be disabled before a temporary credential is provisioned.'
             exit 1
           fi
 
@@ -135,24 +125,13 @@ jobs:
       - name: Certify signed request and durable replay rejection
         run: node scripts/certify-inventory-adapter.mjs
 
-      - name: Remove one-time adapter credential
+      - name: Remove one-time adapter credential with deployed-version semantics
         if: always()
         shell: bash
         run: |
           set -euo pipefail
           [[ "${CERT_CLEANUP_ARMED:-0}" == '1' ]] || exit 0
-
-          code=$(curl -sS -o /tmp/adapter-secret-delete-body -w '%{http_code}' \
-            -X DELETE \
-            "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/workers/scripts/dealforge/secrets/INVENTORY_ADAPTER_SECRETS_JSON" \
-            -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
-            -H 'content-type: application/json' || true)
-
-          if [[ "$code" != '200' && "$code" != '404' ]]; then
-            echo "::error::Cloudflare adapter-secret cleanup failed with HTTP ${code}."
-            cat /tmp/adapter-secret-delete-body
-            exit 1
-          fi
+          printf '{"INVENTORY_ADAPTER_SECRETS_JSON":null}\n' | npx wrangler secret bulk --name dealforge
 
       - name: Prove adapters returned to disabled state
         if: always()
