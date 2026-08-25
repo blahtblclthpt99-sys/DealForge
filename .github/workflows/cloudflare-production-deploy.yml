@@ -20,29 +20,60 @@ jobs:
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      AUTH_SECRET: ${{ secrets.AUTH_SECRET }}
+      STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
       STRIPE_WEBHOOK_SECRET_LIVE: ${{ secrets.STRIPE_WEBHOOK_SECRET_LIVE }}
       STRIPE_WEBHOOK_SECRET_TEST: ${{ secrets.STRIPE_WEBHOOK_SECRET_TEST }}
       STRIPE_WEBHOOK_SECRET_LEGACY: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
       WORKERS_CI_COMMIT_SHA: ${{ github.sha }}
       GH_TOKEN: ${{ github.token }}
+
     steps:
       - name: Mark deployment pending
         shell: bash
         run: |
-          gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=pending -f context=cloudflare-production-deploy -f description='Cloudflare production deployment in progress'
+          gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
+            -f state=pending -f context=cloudflare-production-deploy \
+            -f description='Cloudflare production deployment in progress'
 
-      - name: Check deployment credentials
+      - name: Validate complete production secret contract
         shell: bash
         run: |
           set -euo pipefail
-          [[ -n "${CLOUDFLARE_API_TOKEN:-}" ]] || { echo '::error::CLOUDFLARE_API_TOKEN missing'; exit 1; }
-          [[ -n "${CLOUDFLARE_ACCOUNT_ID:-}" ]] || { echo '::error::CLOUDFLARE_ACCOUNT_ID missing'; exit 1; }
-          [[ "${STRIPE_WEBHOOK_SECRET_TEST:-}" == whsec_* ]] || { echo '::error::STRIPE_WEBHOOK_SECRET_TEST missing or invalid'; exit 1; }
 
-      - name: Mark credentials valid
-        shell: bash
-        run: |
-          gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=success -f context=cloudflare-deploy-credentials -f description='Cloudflare deployment credentials present'
+          required=(
+            CLOUDFLARE_API_TOKEN
+            CLOUDFLARE_ACCOUNT_ID
+            DATABASE_URL
+            AUTH_SECRET
+            STRIPE_SECRET_KEY
+            STRIPE_WEBHOOK_SECRET_TEST
+          )
+
+          for name in "${required[@]}"; do
+            value="${!name:-}"
+            [[ -n "$value" ]] || { echo "::error::${name} missing"; exit 1; }
+            echo "::add-mask::$value"
+          done
+
+          [[ "$STRIPE_SECRET_KEY" == sk_test_* || "$STRIPE_SECRET_KEY" == sk_live_* ]] || {
+            echo '::error::STRIPE_SECRET_KEY has an invalid mode prefix'; exit 1;
+          }
+          [[ "$STRIPE_WEBHOOK_SECRET_TEST" == whsec_* ]] || {
+            echo '::error::STRIPE_WEBHOOK_SECRET_TEST missing or invalid'; exit 1;
+          }
+
+          for name in STRIPE_WEBHOOK_SECRET_LIVE STRIPE_WEBHOOK_SECRET_LEGACY; do
+            value="${!name:-}"
+            [[ -n "$value" ]] || continue
+            echo "::add-mask::$value"
+            [[ "$value" == whsec_* ]] || { echo "::error::${name} must start with whsec_."; exit 1; }
+          done
+
+          gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
+            -f state=success -f context=cloudflare-deploy-credentials \
+            -f description='Complete Cloudflare runtime secret contract present'
 
       - uses: actions/checkout@v4
         with:
@@ -56,21 +87,12 @@ jobs:
       - name: Install locked dependencies
         run: npm ci --no-fund --no-audit
 
-      - name: Validate Stripe webhook secret sources
-        shell: bash
-        run: |
-          set -euo pipefail
-          for name in STRIPE_WEBHOOK_SECRET_LIVE STRIPE_WEBHOOK_SECRET_TEST STRIPE_WEBHOOK_SECRET_LEGACY; do
-            value="${!name:-}"
-            [[ -n "$value" ]] || continue
-            echo "::add-mask::$value"
-            [[ "$value" == whsec_* ]] || { echo "::error::${name} must start with whsec_."; exit 1; }
-          done
-
       - name: Mark build pending
         shell: bash
         run: |
-          gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=pending -f context=cloudflare-deploy-build -f description='Cloudflare Worker build in progress'
+          gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
+            -f state=pending -f context=cloudflare-deploy-build \
+            -f description='Cloudflare Worker build in progress'
 
       - name: Build Cloudflare Worker
         run: npm run cf:build
@@ -78,49 +100,57 @@ jobs:
       - name: Mark build successful
         shell: bash
         run: |
-          gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=success -f context=cloudflare-deploy-build -f description='Cloudflare Worker build succeeded'
+          gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
+            -f state=success -f context=cloudflare-deploy-build \
+            -f description='Cloudflare Worker build succeeded'
 
-      - name: Mark deploy pending
-        shell: bash
-        run: |
-          gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=pending -f context=cloudflare-deploy-publish -f description='Publishing Worker to Cloudflare'
-
-      - name: Deploy exact main revision with webhook secret
+      - name: Deploy exact main revision with complete runtime secrets
         shell: bash
         run: |
           set -euo pipefail
+          gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
+            -f state=pending -f context=cloudflare-deploy-publish \
+            -f description='Publishing Worker to Cloudflare'
+
           secrets_file="$(mktemp)"
           trap 'rm -f "$secrets_file"' EXIT
           chmod 600 "$secrets_file"
+
           SECRETS_FILE="$secrets_file" node <<'NODE'
           const fs = require('fs');
-          const names = ['STRIPE_WEBHOOK_SECRET_LIVE', 'STRIPE_WEBHOOK_SECRET_TEST', 'STRIPE_WEBHOOK_SECRET_LEGACY'];
-          const mapped = {
+
+          const sourceToBinding = {
+            DATABASE_URL: 'DATABASE_URL',
+            AUTH_SECRET: 'AUTH_SECRET',
+            STRIPE_SECRET_KEY: 'STRIPE_SECRET_KEY',
             STRIPE_WEBHOOK_SECRET_LIVE: 'STRIPE_WEBHOOK_SECRET_LIVE',
             STRIPE_WEBHOOK_SECRET_TEST: 'STRIPE_WEBHOOK_SECRET_TEST',
             STRIPE_WEBHOOK_SECRET_LEGACY: 'STRIPE_WEBHOOK_SECRET',
           };
+
           const secrets = {};
-          for (const source of names) {
+          for (const [source, binding] of Object.entries(sourceToBinding)) {
             const value = (process.env[source] || '').trim();
-            if (value) secrets[mapped[source]] = value;
+            if (value) secrets[binding] = value;
           }
-          if (!(secrets.STRIPE_WEBHOOK_SECRET_TEST || '').startsWith('whsec_')) {
-            throw new Error('STRIPE_WEBHOOK_SECRET_TEST missing or invalid');
+
+          for (const name of ['DATABASE_URL', 'AUTH_SECRET', 'STRIPE_SECRET_KEY', 'STRIPE_WEBHOOK_SECRET_TEST']) {
+            if (!secrets[name]) throw new Error(`${name} missing from deploy secret contract`);
           }
+
           fs.writeFileSync(process.env.SECRETS_FILE, JSON.stringify(secrets), { mode: 0o600 });
           NODE
-          npx wrangler deploy --secrets-file "$secrets_file"
 
-      - name: Mark smoke test pending
-        shell: bash
-        run: |
-          gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=pending -f context=cloudflare-live-smoke -f description='Testing deployed DealForge routes'
+          npx wrangler deploy --secrets-file "$secrets_file"
 
       - name: Smoke-test live DealForge routes
         shell: bash
         run: |
           set -euo pipefail
+          gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
+            -f state=pending -f context=cloudflare-live-smoke \
+            -f description='Testing deployed DealForge routes'
+
           base='https://www.deal-forge.sale'
 
           health_code=$(curl --retry 5 --retry-all-errors --retry-delay 2 -sS -o /tmp/health-body -w '%{http_code}' "$base/api/health")
@@ -129,71 +159,42 @@ jobs:
           echo
 
           db_state=$(node -e "const fs=require('fs');try{const j=JSON.parse(fs.readFileSync('/tmp/health-body','utf8'));process.stdout.write(String(j.database||'unknown'))}catch{process.stdout.write('invalid_response')}")
-          case "$db_state" in
-            ok)
-              gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=success -f context=cloudflare-db-ok -f description='Cloudflare Worker connected to Neon'
-              ;;
-            not_configured)
-              gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=failure -f context=cloudflare-db-not-configured -f description='DATABASE_URL missing or invalid in Cloudflare runtime'
-              ;;
-            unreachable)
-              gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=failure -f context=cloudflare-db-unreachable -f description='DATABASE_URL present but one database transport failed'
-              ;;
-            *)
-              gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=failure -f context=cloudflare-db-health-invalid -f description='Health response did not expose a valid database state'
-              ;;
-          esac
-
-          neon_state=$(node -e "const fs=require('fs');try{const j=JSON.parse(fs.readFileSync('/tmp/health-body','utf8'));process.stdout.write(String(j.diagnostics?.neonHttp||'unknown'))}catch{process.stdout.write('unknown')}")
-          neon_error=$(node -e "const fs=require('fs');try{const j=JSON.parse(fs.readFileSync('/tmp/health-body','utf8'));process.stdout.write(String(j.diagnostics?.neonHttpError||'none'))}catch{process.stdout.write('unknown')}")
-          prisma_state=$(node -e "const fs=require('fs');try{const j=JSON.parse(fs.readFileSync('/tmp/health-body','utf8'));process.stdout.write(String(j.diagnostics?.prismaAdapter||'unknown'))}catch{process.stdout.write('unknown')}")
-          prisma_error=$(node -e "const fs=require('fs');try{const j=JSON.parse(fs.readFileSync('/tmp/health-body','utf8'));process.stdout.write(String(j.diagnostics?.prismaAdapterError||'none'))}catch{process.stdout.write('unknown')}")
-          tx_state=$(node -e "const fs=require('fs');try{const j=JSON.parse(fs.readFileSync('/tmp/health-body','utf8'));process.stdout.write(String(j.diagnostics?.prismaTransaction||'unknown'))}catch{process.stdout.write('unknown')}")
-          tx_error=$(node -e "const fs=require('fs');try{const j=JSON.parse(fs.readFileSync('/tmp/health-body','utf8'));process.stdout.write(String(j.diagnostics?.prismaTransactionError||'none'))}catch{process.stdout.write('unknown')}")
-
-          if [[ "$neon_state" == 'ok' ]]; then
-            gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=success -f context=cloudflare-neon-http -f description='Direct Neon serverless HTTP query succeeded'
+          if [[ "$health_code" == '200' && "$db_state" == 'ok' ]]; then
+            gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
+              -f state=success -f context=cloudflare-live-health \
+              -f description='Live health and database checks passed'
+            gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
+              -f state=success -f context=cloudflare-db-ok \
+              -f description='Cloudflare Worker connected to Neon'
           else
-            gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=failure -f context=cloudflare-neon-http -f description="Direct Neon HTTP failed (${neon_error})"
-            gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=failure -f context="cloudflare-neon-${neon_error}" -f description='Sanitized Neon HTTP failure class'
-          fi
-
-          if [[ "$prisma_state" == 'ok' ]]; then
-            gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=success -f context=cloudflare-prisma-adapter -f description='Prisma Neon adapter query succeeded'
-          else
-            gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=failure -f context=cloudflare-prisma-adapter -f description="Prisma Neon adapter failed (${prisma_error})"
-            gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=failure -f context="cloudflare-prisma-${prisma_error}" -f description='Sanitized Prisma adapter failure class'
-          fi
-
-          if [[ "$tx_state" == 'ok' ]]; then
-            gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=success -f context=cloudflare-prisma-transaction -f description='Prisma interactive transaction succeeded'
-          else
-            gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=failure -f context=cloudflare-prisma-transaction -f description="Prisma transaction failed (${tx_error})"
-            gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=failure -f context="cloudflare-prisma-tx-${tx_error}" -f description='Sanitized Prisma transaction failure class'
-          fi
-
-          if [[ "$health_code" == '200' ]]; then
-            gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=success -f context=cloudflare-live-health -f description='Live /api/health returned HTTP 200'
-          else
-            gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=failure -f context=cloudflare-live-health -f description="Live /api/health returned HTTP ${health_code}"
+            gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
+              -f state=failure -f context=cloudflare-live-health \
+              -f description="Health/database check failed (${health_code}/${db_state})"
             exit 1
           fi
 
           cert_code=$(curl --retry 5 --retry-all-errors --retry-delay 2 -sS -o /tmp/cert-body -w '%{http_code}' "$base/stripe-certification")
           echo "stripe-certification HTTP $cert_code"
           if [[ "$cert_code" == '200' ]]; then
-            gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=success -f context=cloudflare-live-cert-route -f description='Live /stripe-certification returned HTTP 200'
+            gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
+              -f state=success -f context=cloudflare-live-cert-route \
+              -f description='Live /stripe-certification returned HTTP 200'
           else
             cat /tmp/cert-body
-            echo
-            gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=failure -f context=cloudflare-live-cert-route -f description="Live /stripe-certification returned HTTP ${cert_code}"
+            gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
+              -f state=failure -f context=cloudflare-live-cert-route \
+              -f description="Live /stripe-certification returned HTTP ${cert_code}"
             exit 1
           fi
 
           webhook_code='000'
           webhook_error='unknown'
           for attempt in 1 2 3 4 5 6 7 8; do
-            webhook_code=$(curl -sS -o /tmp/webhook-body -w '%{http_code}' -X POST "$base/api/stripe/webhook" -H 'content-type: application/json' -H 'stripe-signature: t=1,v1=deadbeef' --data '{}' || true)
+            webhook_code=$(curl -sS -o /tmp/webhook-body -w '%{http_code}' \
+              -X POST "$base/api/stripe/webhook" \
+              -H 'content-type: application/json' \
+              -H 'stripe-signature: t=1,v1=deadbeef' \
+              --data '{}' || true)
             webhook_error=$(node -e "const fs=require('fs');try{const j=JSON.parse(fs.readFileSync('/tmp/webhook-body','utf8'));process.stdout.write(String(j.error||'none'))}catch{process.stdout.write('invalid_response')}")
             echo "webhook bogus-signature attempt ${attempt}: HTTP $webhook_code (${webhook_error})"
             [[ "$webhook_code" == '400' && "$webhook_error" == 'INVALID_STRIPE_SIGNATURE' ]] && break
@@ -201,28 +202,34 @@ jobs:
           done
 
           if [[ "$webhook_code" == '400' && "$webhook_error" == 'INVALID_STRIPE_SIGNATURE' ]]; then
-            gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=success -f context=cloudflare-live-webhook-secret -f description='Live webhook runtime secret is configured'
-          elif [[ "$webhook_code" == '503' ]]; then
-            gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=failure -f context=cloudflare-live-webhook-secret -f description='Stripe runtime secret unavailable after propagation window'
-            exit 1
+            gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
+              -f state=success -f context=cloudflare-live-webhook-secret \
+              -f description='Live webhook runtime secret is configured'
           else
-            gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=failure -f context=cloudflare-live-webhook-secret -f description="Webhook probe returned ${webhook_code}/${webhook_error} after propagation window"
+            gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
+              -f state=failure -f context=cloudflare-live-webhook-secret \
+              -f description="Webhook probe returned ${webhook_code}/${webhook_error}"
             exit 1
           fi
 
-      - name: Mark smoke test successful
-        shell: bash
-        run: |
-          gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=success -f context=cloudflare-live-smoke -f description='Live DealForge routes and webhook runtime configuration verified'
+          gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
+            -f state=success -f context=cloudflare-live-smoke \
+            -f description='Live DealForge routes and webhook runtime configuration verified'
 
       - name: Mark deploy successful
         shell: bash
         run: |
-          gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=success -f context=cloudflare-deploy-publish -f description='Cloudflare Worker publish succeeded'
-          gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=success -f context=cloudflare-production-deploy -f description='Cloudflare production deployment succeeded'
+          gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
+            -f state=success -f context=cloudflare-deploy-publish \
+            -f description='Cloudflare Worker publish succeeded'
+          gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
+            -f state=success -f context=cloudflare-production-deploy \
+            -f description='Cloudflare production deployment succeeded'
 
       - name: Mark deployment failed
         if: failure()
         shell: bash
         run: |
-          gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=failure -f context=cloudflare-production-deploy -f description='Cloudflare production deployment failed'
+          gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
+            -f state=failure -f context=cloudflare-production-deploy \
+            -f description='Cloudflare production deployment failed'
