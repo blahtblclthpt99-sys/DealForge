@@ -45,6 +45,7 @@ export default async function ProductPage({ params }: Props) {
 
   const [similar, related] = await Promise.all([getSimilarProducts(product), getRelatedProducts(product)]);
   const direct = product.purchaseMode === "direct" && product.commerceReady;
+  const certificationProduct = product.retailer === "dealforge-test";
   const save = product.priceEstimated ? null : discountLabel(product.discountPercent);
   const qnty = formatQuantityLabel(product.quantity);
 
@@ -68,6 +69,10 @@ export default async function ProductPage({ params }: Props) {
             {direct ? (
               <span className="inline-flex items-center gap-1 rounded-full bg-forest/10 px-3 py-1 font-medium text-forest">
                 <ShieldCheck className="h-3.5 w-3.5" /> Sold by DealForge
+              </span>
+            ) : certificationProduct ? (
+              <span className="inline-flex items-center gap-1 rounded-full bg-forest/10 px-3 py-1 font-medium text-forest">
+                Certification item
               </span>
             ) : product.priceEstimated ? (
               <span className="inline-flex items-center gap-1 rounded-full bg-forest/10 px-3 py-1 font-medium text-forest">
@@ -95,6 +100,8 @@ export default async function ProductPage({ params }: Props) {
               </div>
               {direct ? (
                 <p className="mt-1 text-xs text-forest-muted">DealForge selling price. Supplier economics are revalidated again when checkout starts.</p>
+              ) : certificationProduct ? (
+                <p className="mt-1 text-xs text-forest-muted">Certification checkout is available only while DealForge is connected to Stripe test mode.</p>
               ) : product.priceEstimated ? (
                 <p className="mt-1 text-xs text-forest-muted">Estimated DealForge selling price based on DealForge reserve, profit, and margin logic. Final selling price is confirmed before DealForge checkout is enabled.</p>
               ) : product.priceVerifiedAt ? (
@@ -112,19 +119,27 @@ export default async function ProductPage({ params }: Props) {
           <p className="mt-6 text-sm leading-relaxed text-forest-muted">{product.description}</p>
 
           <div className="mt-8 flex flex-wrap gap-3">
-            <BuyButton
-              productId={product.id}
-              retailer={product.retailer}
-              purchaseMode={product.purchaseMode}
-              customerEmail={session?.email ?? ""}
-              affiliateLabel="View source listing"
-            />
+            {direct || !certificationProduct ? (
+              <BuyButton
+                productId={product.id}
+                retailer={product.retailer}
+                purchaseMode={product.purchaseMode}
+                customerEmail={session?.email ?? ""}
+                affiliateLabel="View source listing"
+              />
+            ) : (
+              <span className="inline-flex items-center rounded-full border border-card-border px-4 py-2 text-sm font-medium text-forest-muted">
+                Test checkout currently unavailable
+              </span>
+            )}
             <WishlistButton productId={product.id} initial={wishlist.includes(product.id)} />
           </div>
           <p className="mt-3 text-[11px] leading-relaxed text-forest-muted/60">
             {direct
               ? "Your payment is processed through DealForge secure checkout. Order status is confirmed from verified payment events."
-              : "This product is not yet enabled for DealForge checkout. The displayed DealForge estimate is not a checkout quote; the source listing remains available for reference."}
+              : certificationProduct
+                ? "This internal certification item has no external source checkout."
+                : "This product is not yet enabled for DealForge checkout. The displayed DealForge estimate is not a checkout quote; the source listing remains available for reference."}
           </p>
 
           {Object.keys(product.specifications).length > 0 && (
@@ -138,7 +153,7 @@ export default async function ProductPage({ params }: Props) {
             </div>
           )}
 
-          {!direct ? (
+          {!direct && !certificationProduct ? (
             <a href={`/go/${product.id}`} target="_blank" rel="noopener noreferrer sponsored nofollow" className="mt-6 inline-flex items-center gap-2 text-sm text-forest hover:underline">
               View source listing <ExternalLink className="h-3.5 w-3.5" />
             </a>
