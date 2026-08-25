@@ -88,35 +88,51 @@ function parsePolicy(specifications: string): CommercePolicyV1 | null {
     const sourceVerifiedAt = typeof policy.sourceVerifiedAt === "string" ? policy.sourceVerifiedAt : "";
     const persistedPriceVerifiedAt = supplierPriceVerifiedAt(root);
     if (!sourceClass || parseTimestamp(sourceVerifiedAt) === null) return null;
+
+    const maxSourceAgeDays = isSafePositiveInteger(policy.maxSourceAgeDays) ? policy.maxSourceAgeDays : null;
+    const maxPriceAgeMinutes = isSafePositiveInteger(policy.maxPriceAgeMinutes) ? policy.maxPriceAgeMinutes : null;
+    const inventoryConfidenceBps = isBasisPoints(policy.inventoryConfidenceBps) ? policy.inventoryConfidenceBps : null;
+    const minInventoryConfidenceBps = isBasisPoints(policy.minInventoryConfidenceBps) ? policy.minInventoryConfidenceBps : null;
+    const minContributionProfitCents = isSafePositiveInteger(policy.minContributionProfitCents)
+      ? policy.minContributionProfitCents
+      : null;
+    const minContributionMarginBps = isBasisPoints(policy.minContributionMarginBps)
+      ? policy.minContributionMarginBps
+      : null;
+
     if (policy.resaleAllowed !== true) {
       return {
         sourceClass,
         resaleAllowed: false,
         sourceVerifiedAt,
         supplierPriceVerifiedAt: persistedPriceVerifiedAt,
-        maxSourceAgeDays: isSafePositiveInteger(policy.maxSourceAgeDays) ? policy.maxSourceAgeDays : 0,
-        maxPriceAgeMinutes: isSafePositiveInteger(policy.maxPriceAgeMinutes) ? policy.maxPriceAgeMinutes : 0,
-        inventoryConfidenceBps: isBasisPoints(policy.inventoryConfidenceBps) ? policy.inventoryConfidenceBps : 0,
-        minInventoryConfidenceBps: isBasisPoints(policy.minInventoryConfidenceBps) ? policy.minInventoryConfidenceBps : 10_000,
-        minContributionProfitCents: isSafePositiveInteger(policy.minContributionProfitCents) ? policy.minContributionProfitCents : Number.MAX_SAFE_INTEGER,
-        minContributionMarginBps: isBasisPoints(policy.minContributionMarginBps) ? policy.minContributionMarginBps : 10_000,
+        maxSourceAgeDays: maxSourceAgeDays ?? 0,
+        maxPriceAgeMinutes: maxPriceAgeMinutes ?? 0,
+        inventoryConfidenceBps: inventoryConfidenceBps ?? 0,
+        minInventoryConfidenceBps: minInventoryConfidenceBps ?? 10_000,
+        minContributionProfitCents: minContributionProfitCents ?? Number.MAX_SAFE_INTEGER,
+        minContributionMarginBps: minContributionMarginBps ?? 10_000,
         reserves: Object.fromEntries(
-          RESERVE_KEYS.map((key) => [key, isSafeNonNegativeInteger(reservesObject[key]) ? reservesObject[key] : Number.MAX_SAFE_INTEGER]),
+          RESERVE_KEYS.map((key) => {
+            const value = reservesObject[key];
+            return [key, isSafeNonNegativeInteger(value) ? value : Number.MAX_SAFE_INTEGER];
+          }),
         ) as Record<ReserveKey, number>,
       };
     }
 
-    if (!isSafePositiveInteger(policy.maxSourceAgeDays) || policy.maxSourceAgeDays > 365) return null;
-    if (!isSafePositiveInteger(policy.maxPriceAgeMinutes) || policy.maxPriceAgeMinutes > 10_080) return null;
-    if (!isBasisPoints(policy.inventoryConfidenceBps)) return null;
-    if (!isBasisPoints(policy.minInventoryConfidenceBps)) return null;
-    if (!isSafePositiveInteger(policy.minContributionProfitCents)) return null;
-    if (!isBasisPoints(policy.minContributionMarginBps)) return null;
+    if (maxSourceAgeDays === null || maxSourceAgeDays > 365) return null;
+    if (maxPriceAgeMinutes === null || maxPriceAgeMinutes > 10_080) return null;
+    if (inventoryConfidenceBps === null) return null;
+    if (minInventoryConfidenceBps === null) return null;
+    if (minContributionProfitCents === null) return null;
+    if (minContributionMarginBps === null) return null;
 
     const reserves = {} as Record<ReserveKey, number>;
     for (const key of RESERVE_KEYS) {
-      if (!isSafeNonNegativeInteger(reservesObject[key])) return null;
-      reserves[key] = reservesObject[key];
+      const value = reservesObject[key];
+      if (!isSafeNonNegativeInteger(value)) return null;
+      reserves[key] = value;
     }
 
     return {
@@ -124,12 +140,12 @@ function parsePolicy(specifications: string): CommercePolicyV1 | null {
       resaleAllowed: true,
       sourceVerifiedAt,
       supplierPriceVerifiedAt: persistedPriceVerifiedAt,
-      maxSourceAgeDays: policy.maxSourceAgeDays,
-      maxPriceAgeMinutes: policy.maxPriceAgeMinutes,
-      inventoryConfidenceBps: policy.inventoryConfidenceBps,
-      minInventoryConfidenceBps: policy.minInventoryConfidenceBps,
-      minContributionProfitCents: policy.minContributionProfitCents,
-      minContributionMarginBps: policy.minContributionMarginBps,
+      maxSourceAgeDays,
+      maxPriceAgeMinutes,
+      inventoryConfidenceBps,
+      minInventoryConfidenceBps,
+      minContributionProfitCents,
+      minContributionMarginBps,
       reserves,
     };
   } catch {
@@ -197,7 +213,11 @@ export function evaluateCommerceGate(
 
   let contributionProfitCents: number | null = null;
   let contributionMarginBps: number | null = null;
-  if (isSafePositiveInteger(input.sellingPriceCents) && isSafePositiveInteger(input.landedCostCents) && Number.isSafeInteger(reserveTotalCents)) {
+  if (
+    isSafePositiveInteger(input.sellingPriceCents) &&
+    isSafePositiveInteger(input.landedCostCents) &&
+    Number.isSafeInteger(reserveTotalCents)
+  ) {
     contributionProfitCents = input.sellingPriceCents - input.landedCostCents - reserveTotalCents;
     contributionMarginBps = Math.floor((contributionProfitCents * 10_000) / input.sellingPriceCents);
     if (contributionProfitCents < policy.minContributionProfitCents) reasons.push("contribution_profit_below_floor");
