@@ -31,11 +31,12 @@ test("adapter requests have durable replay protection", async () => {
 test("machine route authenticates raw bytes before JSON parsing", async () => {
   const route = await readFile("src/app/api/internal/inventory-adapter/route.ts", "utf8");
   const rawIndex = route.indexOf("const rawBody = await readRawBody(req)");
-  const authIndex = route.indexOf("authenticateInventoryAdapterRequest");
+  const authIndex = route.indexOf("await authenticateInventoryAdapterRequest({ headers: req.headers, body: rawBody })");
   const parseIndex = route.indexOf("JSON.parse(rawBody)");
   assert.ok(rawIndex >= 0);
   assert.ok(authIndex >= 0);
   assert.ok(parseIndex >= 0);
+  assert.ok(rawIndex < authIndex, "raw body must be captured before signature verification");
   assert.ok(authIndex < parseIndex, "signature verification must happen before JSON parsing/action execution");
   assert.match(route, /MAX_BODY_BYTES = 24 \* 1024/);
   assert.match(route, /Cache-Control": "no-store"/);
@@ -44,7 +45,10 @@ test("machine route authenticates raw bytes before JSON parsing", async () => {
 test("machine observations are bound to the exact authenticated leased offer", async () => {
   const route = await readFile("src/app/api/internal/inventory-adapter/route.ts", "utf8");
   const lease = await readFile("src/lib/inventory-recheck-lease.ts", "utf8");
-  assert.doesNotMatch(route, /observationSchema[\s\S]*supplierOfferId:/);
+  const schemaStart = route.indexOf("const observationSchema");
+  const schemaEnd = route.indexOf("const observeCompleteSchema");
+  const observationSchemaSource = route.slice(schemaStart, schemaEnd);
+  assert.doesNotMatch(observationSchemaSource, /supplierOfferId/);
   assert.match(route, /resolveInventoryRecheckLease/);
   assert.match(route, /sourceKey: identity\.sourceKey/);
   assert.match(route, /supplierOfferId: lease\.supplierOfferId/);
