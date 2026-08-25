@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
 import { requireAdmin } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { analyzeOrderOperations } from "@/lib/order-operations";
@@ -6,6 +7,17 @@ import { analyzeOrderProfit } from "@/lib/profit-analytics";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+type RefundFinancialDbRow = {
+  refundId: string;
+  kind: string;
+  amountCents: number;
+  feeCents: number;
+  netCents: number;
+  currency: string;
+  transactionType: string;
+  balanceTransactionId: string;
+};
 
 function noStore(response: NextResponse) {
   response.headers.set("Cache-Control", "private, no-store, max-age=0");
@@ -50,6 +62,7 @@ export async function GET() {
       },
       refunds: {
         select: {
+          id: true,
           idempotencyKey: true,
           status: true,
           amountCents: true,
@@ -87,6 +100,26 @@ export async function GET() {
     },
   });
 
+  const refundIds = orders.flatMap((order) => order.refunds.map((refund) => refund.id));
+  const refundFinancialRows = refundIds.length
+    ? await prisma.$queryRaw<RefundFinancialDbRow[]>(
+        Prisma.sql`
+          SELECT
+            "refundId", "kind", "amountCents", "feeCents", "netCents", "currency",
+            "transactionType", "providerBalanceTransactionId" AS "balanceTransactionId"
+          FROM "RefundFinancialEvent"
+          WHERE "refundId" IN (${Prisma.join(refundIds)})
+          ORDER BY "createdAt" ASC
+        `,
+      )
+    : [];
+  const refundFinancialByRefundId = new Map<string, RefundFinancialDbRow[]>();
+  for (const row of refundFinancialRows) {
+    const rows = refundFinancialByRefundId.get(row.refundId) || [];
+    rows.push(row);
+    refundFinancialByRefundId.set(row.refundId, rows);
+  }
+
   const operations = orders.map((order) => {
     const operational = analyzeOrderOperations({
       totalCents: order.totalCents,
@@ -97,13 +130,20 @@ export async function GET() {
         procurementIntent: item.procurementIntent,
       })),
     });
+    const profitRefunds = order.refunds.map((refund) => ({
+      idempotencyKey: refund.idempotencyKey,
+      status: refund.status,
+      amountCents: refund.amountCents,
+      currency: refund.currency,
+      financialEvents: refundFinancialByRefundId.get(refund.id) || [],
+    }));
     const profit = analyzeOrderProfit({
       subtotalCents: order.subtotalCents,
       shippingCents: order.shippingCents,
       taxCents: order.taxCents,
       totalCents: order.totalCents,
       currency: order.currency,
-      refunds: order.refunds,
+      refunds: profitRefunds,
       payments: order.payments,
       items: order.items.map((item) => ({
         id: item.id,
@@ -156,7 +196,10 @@ export async function GET() {
       acc.netKnownSupplierCostCents += order.profit.supplier.netKnownSupplierCostCents;
       acc.acceptedLossCents += order.profit.supplier.acceptedLossCents;
       acc.remainingRecoveryExposureCents += order.profit.supplier.remainingRecoveryExposureCents;
+      acc.chargeProcessingFeeCents += order.profit.paymentProcessing.chargeFeeCents;
+      acc.refundProcessingFeeCents += order.profit.paymentProcessing.refundFeeCents;
       acc.knownPaymentProcessingFeeCents += order.profit.paymentProcessing.knownFeeCents;
+      acc.reconciledSucceededRefundCount += order.profit.paymentProcessing.reconciledSucceededRefundCount;
       acc.contributionBeforeTaxAndPaymentFeesCents +=
         order.profit.contribution.contributionBeforeTaxAndPaymentFeesCents;
       acc.openRecoveryCaseCount += order.profit.recovery.openRecoveryCaseCount;
@@ -192,7 +235,10 @@ export async function GET() {
       netKnownSupplierCostCents: 0,
       acceptedLossCents: 0,
       remainingRecoveryExposureCents: 0,
+      chargeProcessingFeeCents: 0,
+      refundProcessingFeeCents: 0,
       knownPaymentProcessingFeeCents: 0,
+      reconciledSucceededRefundCount: 0,
       contributionBeforeTaxAndPaymentFeesCents: 0,
       certifiedOrderContributionCents: 0,
       openRecoveryCaseCount: 0,
@@ -208,12 +254,12 @@ export async function GET() {
         name: "order_contribution",
         certifiedRequires: [
           "actual supplier costs",
-          "authoritative payment processing fees",
+          "authoritative charge and refund payment-processing fees",
           "known tax liability",
-          "no pending refunds",
+          "no pending or failed refunds",
           "closed valid recovery cases",
         ],
-        note: "Accepted unrecovered loss is disclosure of supplier cost not recovered and is never subtracted twice.",
+        note: "Refund principal reduces customer receipts once; only verified Stripe refund-side fees increase payment-processing cost.",
       },
       summary,
       orders: operations,

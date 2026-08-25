@@ -25,8 +25,19 @@ type ProfitLineView = {
   procurementIntent: ProfitProcurementView | null;
 };
 
+type RefundFinancialView = {
+  kind: string;
+  amountCents: number;
+  feeCents: number;
+  netCents: number;
+  currency: string;
+  transactionType: string;
+  balanceTransactionId?: string;
+};
+
 type ProfitRefundView = RecoveryRefundView & {
   currency: string;
+  financialEvents?: RefundFinancialView[];
 };
 
 type PaymentFeeRecord = {
@@ -98,6 +109,30 @@ export function authoritativePaymentFee(payment: PaymentView): PaymentFeeRecord 
   };
 }
 
+function validSucceededRefundFinancialEvent(
+  refund: ProfitRefundView,
+  orderCurrency: string,
+) {
+  const events = refund.financialEvents || [];
+  const debitEvents = events.filter((event) => event.kind === "refund_balance");
+  const failureEvents = events.filter((event) => event.kind === "refund_failure_balance");
+  if (debitEvents.length !== 1 || failureEvents.length !== 0) return null;
+  const event = debitEvents[0];
+  if (
+    event.currency.toLowerCase() !== orderCurrency ||
+    !Number.isSafeInteger(event.amountCents) ||
+    event.amountCents !== -refund.amountCents ||
+    !Number.isSafeInteger(event.feeCents) ||
+    event.feeCents < 0 ||
+    !Number.isSafeInteger(event.netCents) ||
+    event.netCents !== event.amountCents - event.feeCents ||
+    !["refund", "payment_refund"].includes(event.transactionType)
+  ) {
+    return null;
+  }
+  return event;
+}
+
 export function analyzeOrderProfit(input: {
   subtotalCents: number;
   shippingCents: number;
@@ -115,12 +150,17 @@ export function analyzeOrderProfit(input: {
   const refundCurrencyMismatchCount = activeRefunds.filter(
     (refund) => refund.currency.toLowerCase() !== orderCurrency,
   ).length;
-  const succeededRefundCents = input.refunds
-    .filter((refund) => refund.status === "succeeded" && refund.currency.toLowerCase() === orderCurrency)
-    .reduce((sum, refund) => sum + refund.amountCents, 0);
+  const succeededRefunds = input.refunds.filter(
+    (refund) => refund.status === "succeeded" && refund.currency.toLowerCase() === orderCurrency,
+  );
+  const succeededRefundCents = succeededRefunds.reduce(
+    (sum, refund) => sum + refund.amountCents,
+    0,
+  );
   const pendingRefundCents = input.refunds
     .filter((refund) => refund.status === "pending" && refund.currency.toLowerCase() === orderCurrency)
     .reduce((sum, refund) => sum + refund.amountCents, 0);
+  const failedRefundCount = input.refunds.filter((refund) => refund.status === "failed").length;
   const activeRefundExposureCents = succeededRefundCents + pendingRefundCents;
   const refundLedgerValid = refundCurrencyMismatchCount === 0 && activeRefundExposureCents <= input.totalCents;
   const netCustomerReceiptsCents = Math.max(0, input.totalCents - succeededRefundCents);
@@ -216,22 +256,30 @@ export function analyzeOrderProfit(input: {
     succeededPayments.length === 1 &&
     succeededPaymentAmountCents === input.totalCents;
 
-  let knownPaymentProcessingFeeCents = 0;
+  let chargeProcessingFeeCents = 0;
   let authoritativePaymentFeeCount = 0;
   for (const payment of succeededPayments) {
     const record = authoritativePaymentFee(payment);
     if (!record || record.currency !== orderCurrency) continue;
-    knownPaymentProcessingFeeCents += record.feeCents;
+    chargeProcessingFeeCents += record.feeCents;
     authoritativePaymentFeeCount += 1;
   }
   const chargeProcessingFeeComplete =
     paymentLedgerValid && authoritativePaymentFeeCount === succeededPayments.length;
-  // v1 certifies the original charge fee. A succeeded refund can introduce a
-  // separate Stripe balance impact, so refunded orders stay incomplete until a
-  // later refund-adjustment journal records that side of payment processing.
-  const refundProcessingAdjustmentComplete = succeededRefundCents === 0;
+
+  let refundProcessingFeeCents = 0;
+  let reconciledSucceededRefundCount = 0;
+  for (const refund of succeededRefunds) {
+    const event = validSucceededRefundFinancialEvent(refund, orderCurrency);
+    if (!event) continue;
+    refundProcessingFeeCents += event.feeCents;
+    reconciledSucceededRefundCount += 1;
+  }
+  const refundProcessingAdjustmentComplete =
+    reconciledSucceededRefundCount === succeededRefunds.length;
   const paymentProcessingCostComplete =
-    chargeProcessingFeeComplete && refundProcessingAdjustmentComplete;
+    chargeProcessingFeeComplete && refundProcessingAdjustmentComplete && failedRefundCount === 0;
+  const knownPaymentProcessingFeeCents = chargeProcessingFeeCents + refundProcessingFeeCents;
 
   // Collected tax is a liability, not contribution. Once a taxable order is partially/full refunded,
   // the exact retained tax liability is not inferred from a lump-sum refund without authoritative tax allocation.
@@ -252,6 +300,7 @@ export function analyzeOrderProfit(input: {
   if (!refundProcessingAdjustmentComplete) {
     finalizationReasons.push("REFUND_PROCESSING_ADJUSTMENT_UNKNOWN");
   }
+  if (failedRefundCount > 0) finalizationReasons.push("REFUND_FAILED_REQUIRES_MANUAL_REVIEW");
   if (!taxLiabilityComplete) finalizationReasons.push("REFUND_TAX_ALLOCATION_UNKNOWN");
   if (pendingRefundCents > 0) finalizationReasons.push("REFUND_PENDING");
   if (!recoveryAccountingValid) finalizationReasons.push("RECOVERY_ACCOUNTING_INVALID");
@@ -274,6 +323,7 @@ export function analyzeOrderProfit(input: {
       metric: "order_contribution",
       excludes: ["marketing_cac", "support_overhead", "chargeback_loss_unless_recorded_elsewhere"],
       acceptedLossTreatment: "disclosure_only_not_double_counted",
+      refundPrincipalTreatment: "reduces_customer_receipts_only_not_processing_cost",
     },
     integrity: {
       orderTotalBreakdownValid,
@@ -313,7 +363,12 @@ export function analyzeOrderProfit(input: {
       succeededPaymentAmountCents,
       authoritativeFeeCount: authoritativePaymentFeeCount,
       chargeFeeComplete: chargeProcessingFeeComplete,
+      chargeFeeCents: chargeProcessingFeeCents,
+      succeededRefundCount: succeededRefunds.length,
+      reconciledSucceededRefundCount,
+      failedRefundCount,
       refundAdjustmentComplete: refundProcessingAdjustmentComplete,
+      refundFeeCents: refundProcessingFeeCents,
       complete: paymentProcessingCostComplete,
       knownFeeCents: knownPaymentProcessingFeeCents,
     },
