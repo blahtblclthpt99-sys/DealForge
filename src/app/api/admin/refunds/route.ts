@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { requireAdmin } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import {
   evaluateRefundProcurementInterlock,
@@ -8,8 +7,16 @@ import {
   refundInterlockEventKey,
 } from "@/lib/refund-procurement-interlock";
 import { createStripeRefund } from "@/lib/stripe-commerce";
+import { readLimitedJson } from "@/lib/request-json";
+import {
+  isSameOriginRefundMutation,
+  requireRefundOwner,
+} from "@/lib/refund-authorization";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+const MAX_REFUND_REQUEST_BYTES = 16 * 1024;
 
 const PostPurchaseExceptionSchema = z.object({
   acknowledgeIrreversibleFulfillment: z.literal(true),
@@ -29,22 +36,46 @@ const RefundSchema = z.object({
   idempotencyKey: z.string().trim().min(12).max(128).regex(/^[A-Za-z0-9:_-]+$/),
   reason: z.enum(["duplicate", "fraudulent", "requested_by_customer"]).optional(),
   postPurchaseException: PostPurchaseExceptionSchema.optional(),
-});
+}).strict();
+
+function noStore(response: NextResponse) {
+  response.headers.set("Cache-Control", "private, no-store, max-age=0");
+  response.headers.set("Referrer-Policy", "no-referrer");
+  return response;
+}
 
 export async function POST(request: Request) {
-  let admin;
+  let owner;
   try {
-    admin = await requireAdmin();
+    owner = await requireRefundOwner();
   } catch (error) {
     const status = error instanceof Error && error.message === "UNAUTHORIZED" ? 401 : 403;
-    return NextResponse.json({ error: status === 401 ? "UNAUTHORIZED" : "FORBIDDEN" }, { status });
+    return noStore(
+      NextResponse.json({ error: status === 401 ? "UNAUTHORIZED" : "FORBIDDEN" }, { status }),
+    );
   }
 
-  const parsed = RefundSchema.safeParse(await request.json());
+  if (!isSameOriginRefundMutation(request)) {
+    return noStore(NextResponse.json({ error: "INVALID_ORIGIN" }, { status: 403 }));
+  }
+
+  const read = await readLimitedJson(request, MAX_REFUND_REQUEST_BYTES);
+  if (!read.ok) {
+    return noStore(
+      NextResponse.json(
+        { error: read.error === "BODY_TOO_LARGE" ? "REFUND_REQUEST_TOO_LARGE" : "INVALID_REFUND_REQUEST" },
+        { status: read.error === "BODY_TOO_LARGE" ? 413 : 400 },
+      ),
+    );
+  }
+
+  const parsed = RefundSchema.safeParse(read.value);
   if (!parsed.success) {
-    return NextResponse.json(
-      { error: "INVALID_REFUND_REQUEST", details: parsed.error.flatten() },
-      { status: 400 },
+    return noStore(
+      NextResponse.json(
+        { error: "INVALID_REFUND_REQUEST", details: parsed.error.flatten() },
+        { status: 400 },
+      ),
     );
   }
 
@@ -53,23 +84,25 @@ export async function POST(request: Request) {
   });
   if (existing) {
     if (existing.orderId !== parsed.data.orderId || existing.amountCents !== parsed.data.amountCents) {
-      return NextResponse.json({ error: "REFUND_KEY_CONFLICT" }, { status: 409 });
+      return noStore(NextResponse.json({ error: "REFUND_KEY_CONFLICT" }, { status: 409 }));
     }
-    return NextResponse.json({
-      refundId: existing.providerRefundId,
-      status: existing.status,
-      amountCents: existing.amountCents,
-      duplicate: true,
-    });
+    return noStore(
+      NextResponse.json({
+        refundId: existing.providerRefundId,
+        status: existing.status,
+        amountCents: existing.amountCents,
+        duplicate: true,
+      }),
+    );
   }
 
   const order = await prisma.order.findUnique({
     where: { id: parsed.data.orderId },
     include: { payments: true, refunds: true, procurementIntents: true },
   });
-  if (!order) return NextResponse.json({ error: "ORDER_NOT_FOUND" }, { status: 404 });
+  if (!order) return noStore(NextResponse.json({ error: "ORDER_NOT_FOUND" }, { status: 404 }));
   if (!order.stripePaymentIntentId || !["paid", "partially_refunded"].includes(order.status)) {
-    return NextResponse.json({ error: "ORDER_NOT_REFUNDABLE" }, { status: 409 });
+    return noStore(NextResponse.json({ error: "ORDER_NOT_REFUNDABLE" }, { status: 409 }));
   }
 
   const interlock = evaluateRefundProcurementInterlock(
@@ -77,9 +110,11 @@ export async function POST(request: Request) {
     parsed.data.postPurchaseException,
   );
   if (!interlock.ok) {
-    return NextResponse.json(
-      { error: interlock.reason, blockedProcurementIntentIds: interlock.intentIds },
-      { status: 409 },
+    return noStore(
+      NextResponse.json(
+        { error: interlock.reason, blockedProcurementIntentIds: interlock.intentIds },
+        { status: 409 },
+      ),
     );
   }
 
@@ -88,7 +123,7 @@ export async function POST(request: Request) {
       candidate.providerPaymentId === order.stripePaymentIntentId && candidate.status === "succeeded",
   );
   if (!payment) {
-    return NextResponse.json({ error: "SUCCEEDED_PAYMENT_NOT_FOUND" }, { status: 409 });
+    return noStore(NextResponse.json({ error: "SUCCEEDED_PAYMENT_NOT_FOUND" }, { status: 409 }));
   }
 
   const alreadyRefunded = order.refunds
@@ -96,9 +131,11 @@ export async function POST(request: Request) {
     .reduce((sum, refund) => sum + refund.amountCents, 0);
   const remaining = order.totalCents - alreadyRefunded;
   if (parsed.data.amountCents > remaining) {
-    return NextResponse.json(
-      { error: "REFUND_EXCEEDS_REMAINING_AMOUNT", remainingCents: remaining },
-      { status: 409 },
+    return noStore(
+      NextResponse.json(
+        { error: "REFUND_EXCEEDS_REMAINING_AMOUNT", remainingCents: remaining },
+        { status: 409 },
+      ),
     );
   }
 
@@ -137,7 +174,7 @@ export async function POST(request: Request) {
             eventKey: refundInterlockEventKey(intentId, parsed.data.idempotencyKey),
             procurementIntentId: intentId,
             type: "REFUND_INTERLOCK_HOLD",
-            actor: `admin:${admin.id}`,
+            actor: `owner:${owner.id}`,
             detail: JSON.stringify({
               refundIdempotencyKey: parsed.data.idempotencyKey,
               amountCents: parsed.data.amountCents,
@@ -163,7 +200,7 @@ export async function POST(request: Request) {
             eventKey: postPurchaseRefundExceptionEventKey(intentId, parsed.data.idempotencyKey),
             procurementIntentId: intentId,
             type: "POST_PURCHASE_REFUND_EXCEPTION_APPROVED",
-            actor: `admin:${admin.id}`,
+            actor: `owner:${owner.id}`,
             detail: JSON.stringify({
               refundIdempotencyKey: parsed.data.idempotencyKey,
               amountCents: parsed.data.amountCents,
@@ -202,22 +239,24 @@ export async function POST(request: Request) {
         currency: stripeRefund.currency.toLowerCase(),
         status: stripeRefund.status || "pending",
         reason: parsed.data.reason,
-        requestedBy: admin.email,
+        requestedBy: owner.email,
       },
     });
 
-    return NextResponse.json(
-      {
-        refundId: refund.providerRefundId,
-        status: refund.status,
-        amountCents: refund.amountCents,
-        procurementInterlock: interlock.exceptionIntentIds.length > 0 ? "post_purchase_exception" : "hold",
-        recoveryPlan:
-          interlock.exceptionIntentIds.length > 0
-            ? parsed.data.postPurchaseException?.recoveryPlan || null
-            : null,
-      },
-      { status: 201 },
+    return noStore(
+      NextResponse.json(
+        {
+          refundId: refund.providerRefundId,
+          status: refund.status,
+          amountCents: refund.amountCents,
+          procurementInterlock: interlock.exceptionIntentIds.length > 0 ? "post_purchase_exception" : "hold",
+          recoveryPlan:
+            interlock.exceptionIntentIds.length > 0
+              ? parsed.data.postPurchaseException?.recoveryPlan || null
+              : null,
+        },
+        { status: 201 },
+      ),
     );
   } catch (error) {
     const message = error instanceof Error ? error.message : "UNKNOWN";
@@ -225,9 +264,9 @@ export async function POST(request: Request) {
       message.startsWith("REFUND_") ||
       message.startsWith("POST_PURCHASE_")
     ) {
-      return NextResponse.json({ error: "REFUND_STATE_CONFLICT" }, { status: 409 });
+      return noStore(NextResponse.json({ error: "REFUND_STATE_CONFLICT" }, { status: 409 }));
     }
     console.error("refund.create.failed", { orderId: order.id, error: message });
-    return NextResponse.json({ error: "REFUND_UNAVAILABLE" }, { status: 502 });
+    return noStore(NextResponse.json({ error: "REFUND_UNAVAILABLE" }, { status: 502 }));
   }
 }
