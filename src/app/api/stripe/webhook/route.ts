@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
+import { ensureProcurementIntentsForPaidOrder } from "@/lib/procurement-intents";
 import {
   assertStripeEventMode,
   expectedStripeLivemode,
@@ -166,6 +167,8 @@ async function markPaymentSucceeded(
       paidAt: order.paidAt || new Date(),
     },
   });
+
+  await ensureProcurementIntentsForPaidOrder(tx, orderId);
 }
 
 async function markPaymentFailed(

@@ -293,26 +293,27 @@ model ProductEngineAudit {
 }
 
 model Order {
-  id                      String      @id @default(cuid())
-  orderNumber             String      @unique
-  checkoutKey             String      @unique
+  id                      String              @id @default(cuid())
+  orderNumber             String              @unique
+  checkoutKey             String              @unique
   userId                  String?
   email                   String
-  currency                String      @default("usd")
-  status                  String      @default("pending_payment")
+  currency                String              @default("usd")
+  status                  String              @default("pending_payment")
   subtotalCents           Int
-  shippingCents           Int         @default(0)
-  taxCents                Int         @default(0)
+  shippingCents           Int                 @default(0)
+  taxCents                Int                 @default(0)
   totalCents              Int
-  stripeCheckoutSessionId String?     @unique
-  stripePaymentIntentId   String?     @unique
+  stripeCheckoutSessionId String?             @unique
+  stripePaymentIntentId   String?             @unique
   paidAt                  DateTime?
   canceledAt              DateTime?
-  createdAt               DateTime    @default(now())
-  updatedAt               DateTime    @updatedAt
+  createdAt               DateTime            @default(now())
+  updatedAt               DateTime            @updatedAt
   items                   OrderItem[]
   payments                Payment[]
   refunds                 Refund[]
+  procurementIntents      ProcurementIntent[]
 
   @@index([userId, createdAt])
   @@index([email, createdAt])
@@ -320,21 +321,64 @@ model Order {
 }
 
 model OrderItem {
-  id               String   @id @default(cuid())
-  orderId          String
-  order            Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  productId        String
-  productSlug      String
-  title            String
-  quantity         Int
-  unitPriceCents   Int
-  lineTotalCents   Int
-  landedCostCents  Int?
-  supplierSnapshot String   @default("{}")
-  createdAt        DateTime @default(now())
+  id                String             @id @default(cuid())
+  orderId           String
+  order             Order              @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId         String
+  productSlug       String
+  title             String
+  quantity          Int
+  unitPriceCents    Int
+  lineTotalCents    Int
+  landedCostCents   Int?
+  supplierSnapshot  String             @default("{}")
+  createdAt         DateTime           @default(now())
+  procurementIntent ProcurementIntent?
 
   @@index([orderId])
   @@index([productId])
+}
+
+model ProcurementIntent {
+  id                     String             @id @default(cuid())
+  idempotencyKey         String             @unique
+  orderId                String
+  order                  Order              @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  orderItemId            String             @unique
+  orderItem              OrderItem          @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+  status                 String             @default("awaiting_review")
+  executionMode          String             @default("manual_only")
+  supplierSnapshot       String
+  quantity               Int
+  expectedUnitCostCents  Int?
+  expectedTotalCostCents Int?
+  currency               String
+  blockedReason          String?
+  approvedByUserId       String?
+  approvedAt             DateTime?
+  supplierOrderReference String?
+  actualTotalCostCents   Int?
+  executedAt             DateTime?
+  createdAt              DateTime           @default(now())
+  updatedAt              DateTime           @updatedAt
+  events                 ProcurementEvent[]
+
+  @@index([orderId, status])
+  @@index([status, createdAt])
+}
+
+model ProcurementEvent {
+  id                  String            @id @default(cuid())
+  eventKey            String            @unique
+  procurementIntentId String
+  procurementIntent   ProcurementIntent @relation(fields: [procurementIntentId], references: [id], onDelete: Cascade)
+  type                String
+  actor               String
+  detail              String            @default("{}")
+  createdAt           DateTime          @default(now())
+
+  @@index([procurementIntentId, createdAt])
+  @@index([type, createdAt])
 }
 
 model Payment {
