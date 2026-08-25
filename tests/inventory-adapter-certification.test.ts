@@ -80,32 +80,6 @@ test("Cloudflare certification is manual, serialized, exact-revision, ephemeral,
   assert.doesNotMatch(workflow, /INVENTORY_ADAPTER_SECRETS_JSON:\s*\$\{\{\s*secrets\./);
 });
 
-test("one-time dispatcher uses main only while it is still the exact deployed revision", async () => {
-  const workflow = await readFile(".github/workflows/inventory-adapter-certification-dispatch-once.yml", "utf8");
-
-  assert.match(workflow, /cloudflare-production-deploy/);
-  assert.match(workflow, /branches\/main/);
-  assert.match(workflow, /main_sha/);
-  assert.match(workflow, /post_sha/);
-  assert.match(workflow, /--ref main/);
-  assert.match(workflow, /inventory-adapter-certification\.yml/);
-  assert.doesNotMatch(workflow, /--ref "\$GITHUB_SHA"/);
-});
-
-test("one-time recovery waits for Cloudflare mutators then proves the adapter secret is absent", async () => {
-  const workflow = await readFile(".github/workflows/inventory-adapter-stranded-secret-cleanup-once.yml", "utf8");
-
-  assert.match(workflow, /cloudflare-production-deploy/);
-  assert.match(workflow, /cloudflare-stripe-secret-sync/);
-  assert.match(workflow, /deploy.*success/);
-  assert.match(workflow, /stripe.*success/);
-  assert.match(workflow, /wrangler secret list --name dealforge --format json/);
-  assert.match(workflow, /wrangler secret bulk --name dealforge/);
-  assert.match(workflow, /INVENTORY_ADAPTER_SECRETS_JSON/);
-  assert.match(workflow, /ADAPTER_AUTH_NOT_CONFIGURED/);
-  assert.match(workflow, /inventory-adapter-secret-cleanup/);
-});
-
 test("production Cloudflare deploy fails closed when adapter replay schema is missing", async () => {
   const workflow = await readFile(".github/workflows/cloudflare-production-deploy.yml", "utf8");
   const schemaCheck = workflow.indexOf("Verify critical production schema contracts");
