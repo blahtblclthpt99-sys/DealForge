@@ -10,6 +10,7 @@ import {
   retrieveStripeBalanceTransaction,
   stripeWebhookSecret,
   verifyStripeSignature,
+  type StripeBalanceTransaction,
   type StripeEvent,
 } from "@/lib/stripe-commerce";
 import {
@@ -18,6 +19,12 @@ import {
   validateStripeFeeEvidence,
   type StripeFeeEvidence,
 } from "@/lib/stripe-fee-reconciliation";
+import {
+  persistRefundFinancialEvidence,
+  validateRefundFinancialEvidence,
+  type RefundFinancialEvidence,
+  type RefundFinancialKind,
+} from "@/lib/refund-financial-reconciliation";
 
 export const runtime = "nodejs";
 
@@ -252,7 +259,7 @@ async function reconcileRefund(
     }
   }
 
-  await tx.refund.upsert({
+  const savedRefund = await tx.refund.upsert({
     where: { providerRefundId: refundId },
     create: {
       orderId: order.id,
@@ -289,7 +296,7 @@ async function reconcileRefund(
             : order.status,
     },
   });
-  return order.id;
+  return { orderId: order.id, refundId: savedRefund.id };
 }
 
 async function prepareStripeFeeEvidence(event: StripeEvent): Promise<StripeFeeEvidence | null> {
@@ -310,6 +317,45 @@ async function prepareStripeFeeEvidence(event: StripeEvent): Promise<StripeFeeEv
   });
   if (!validated.ok) throw new Error(validated.reason);
   return validated.evidence;
+}
+
+async function balanceTransactionFromValue(value: unknown) {
+  if (!value) return null;
+  if (typeof value === "string") {
+    return retrieveStripeBalanceTransaction(value);
+  }
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    const transaction = value as StripeBalanceTransaction;
+    if (!transaction.id) return null;
+    return transaction;
+  }
+  return null;
+}
+
+async function prepareRefundFinancialEvidence(event: StripeEvent): Promise<RefundFinancialEvidence[]> {
+  if (!["refund.created", "refund.updated", "refund.failed"].includes(event.type)) return [];
+  const object = event.data.object;
+  const evidence: RefundFinancialEvidence[] = [];
+
+  const candidates: Array<{ kind: RefundFinancialKind; value: unknown }> = [
+    { kind: "refund_balance", value: object.balance_transaction },
+    { kind: "refund_failure_balance", value: object.failure_balance_transaction },
+  ];
+
+  for (const candidate of candidates) {
+    if (!candidate.value) continue;
+    const balanceTransaction = await balanceTransactionFromValue(candidate.value);
+    if (!balanceTransaction) continue;
+    const validated = validateRefundFinancialEvidence({
+      refund: object,
+      balanceTransaction,
+      kind: candidate.kind,
+    });
+    if (!validated.ok) throw new Error(validated.reason);
+    evidence.push(validated.evidence);
+  }
+
+  return evidence;
 }
 
 async function reconcilePaymentFee(
@@ -359,6 +405,7 @@ async function processStripeEvent(
   tx: Prisma.TransactionClient,
   event: StripeEvent,
   feeEvidence: StripeFeeEvidence | null,
+  refundFinancialEvidence: RefundFinancialEvidence[],
 ) {
   const object = event.data.object;
   let orderId = await resolveOrderId(tx, object);
@@ -382,9 +429,18 @@ async function processStripeEvent(
       break;
     case "refund.created":
     case "refund.updated":
-    case "refund.failed":
-      orderId = await reconcileRefund(tx, object);
+    case "refund.failed": {
+      const refund = await reconcileRefund(tx, object);
+      orderId = refund.orderId;
+      for (const evidence of refundFinancialEvidence) {
+        await persistRefundFinancialEvidence(tx, {
+          refundId: refund.refundId,
+          providerEventId: event.id,
+          evidence,
+        });
+      }
       break;
+    }
     case "charge.succeeded":
     case "charge.updated":
       if (feeEvidence) orderId = await reconcilePaymentFee(tx, feeEvidence, event.id);
@@ -486,15 +542,21 @@ export async function POST(request: Request) {
   }
 
   try {
-    // Stripe fee evidence is fetched only for signed charge events and before the
-    // local event is claimed. A transient Stripe API failure therefore remains
-    // retryable and cannot leave a half-recorded fee journal entry.
+    // Financial evidence is fetched only after signature + livemode validation and
+    // before the local event is claimed. Transient Stripe API failures therefore
+    // remain retryable and cannot leave half-recorded financial truth.
     const feeEvidence = await prepareStripeFeeEvidence(event);
+    const refundFinancialEvidence = await prepareRefundFinancialEvidence(event);
     const result = await prisma.$transaction(async (tx) => {
       const claim = await claimStripeEvent(tx, event, rawBody);
       if (claim.duplicate) return { duplicate: true };
 
-      const orderId = await processStripeEvent(tx, event, feeEvidence);
+      const orderId = await processStripeEvent(
+        tx,
+        event,
+        feeEvidence,
+        refundFinancialEvidence,
+      );
       await tx.paymentEvent.update({
         where: { providerEventId: event.id },
         data: {
