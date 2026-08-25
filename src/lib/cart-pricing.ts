@@ -148,10 +148,10 @@ export function roundToFriendlyPrice(priceCents: number) {
 }
 
 /**
- * One canonical minimum-safe price calculation used by catalog recommendation,
- * cart quoting, and checkout validation. It covers true attributable cost, one
- * payment-cost allowance, the monthly pooled loss reserve, and the higher of
- * the tier's fixed-dollar or percentage contribution-profit floor.
+ * One canonical minimum-safe unit-price calculation used by catalog recommendation,
+ * cart quoting, and checkout validation. The profit tier is determined from true
+ * landed cost only. Explicit attributable per-order cost is then added separately,
+ * alongside one payment-cost allowance and the pooled loss reserve.
  */
 export function calculateMinimumSafeCustomerPrice(input: {
   landedCostCents: number;
@@ -165,7 +165,7 @@ export function calculateMinimumSafeCustomerPrice(input: {
     throw new Error("PRICING_BASIS_CENTS_INVALID");
   }
   const policy = validatePolicy(input.policy ?? currentCartPricingPolicy());
-  const minimumProfitCents = minimumSafeProfitCents(pricingBasisCents);
+  const minimumProfitCents = minimumSafeProfitCents(landedCostCents);
   const denominatorBps = 10_000 - policy.paymentRateBps - policy.lossReserveBps;
   const minimumSafePriceCents = Math.ceil(
     ((pricingBasisCents + minimumProfitCents + policy.paymentFixedCents) * 10_000) / denominatorBps,
@@ -195,8 +195,8 @@ export function calculateMinimumSafeCustomerPrice(input: {
  *
  * The catalog price is a ceiling, not the checkout authority. When an item enters
  * the cart, DealForge recalculates the lowest customer-friendly price that covers
- * true attributable cost, one payment-cost allowance, the current monthly pooled
- * loss reserve, and the tiered minimum safe contribution profit.
+ * true landed cost, explicit attributable cost, one payment-cost allowance, the
+ * current monthly pooled loss reserve, and the tiered minimum safe contribution profit.
  *
  * If the recalculated safe price is above the published price, the product is
  * blocked rather than surprising the customer with a higher cart price.
