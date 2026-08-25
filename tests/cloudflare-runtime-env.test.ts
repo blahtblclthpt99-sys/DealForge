@@ -24,10 +24,31 @@ test("Cloudflare runtime env bridge copies only string bindings", () => {
   assert.equal(target.NUMBER_BINDING, undefined);
 });
 
-test("custom Worker hydrates bindings before OpenNext fetch and scheduled execution", async () => {
+test("custom Worker hydrates Cloudflare bindings before OpenNext initializes", async () => {
   const source = await readFile("custom-worker.ts", "utf8");
 
+  assert.match(source, /import \{ env as cloudflareEnv \} from "cloudflare:workers"/);
   assert.match(source, /import \{ hydrateCloudflareProcessEnv \}/);
+
+  const initialHydration = source.indexOf(
+    "hydrateCloudflareProcessEnv(cloudflareEnv as Record<string, unknown>);",
+  );
+  const openNextImport = source.indexOf(
+    'await import("./.open-next/worker.js")',
+  );
+
+  assert.ok(initialHydration >= 0, "expected module-scope Cloudflare env hydration");
+  assert.ok(openNextImport > initialHydration, "OpenNext must load after env hydration");
+
+  assert.doesNotMatch(
+    source,
+    /import\s+nextWorker\s+from\s+["']\.\/\.open-next\/worker\.js["']/,
+  );
+  assert.doesNotMatch(
+    source,
+    /export\s*\{[^}]*DOQueueHandler[^}]*\}\s*from\s*["']\.\/\.open-next\/worker\.js["']/,
+  );
+
   assert.match(
     source,
     /async fetch\([\s\S]*?hydrateCloudflareProcessEnv\(env\);[\s\S]*?return handler\.fetch\(request, env, ctx\);/,
