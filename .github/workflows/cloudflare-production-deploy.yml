@@ -20,6 +20,9 @@ jobs:
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      STRIPE_WEBHOOK_SECRET_LIVE: ${{ secrets.STRIPE_WEBHOOK_SECRET_LIVE }}
+      STRIPE_WEBHOOK_SECRET_TEST: ${{ secrets.STRIPE_WEBHOOK_SECRET_TEST }}
+      STRIPE_WEBHOOK_SECRET_LEGACY: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
       WORKERS_CI_COMMIT_SHA: ${{ github.sha }}
       GH_TOKEN: ${{ github.token }}
     steps:
@@ -51,6 +54,34 @@ jobs:
 
       - name: Install locked dependencies
         run: npm ci --no-fund --no-audit
+
+      - name: Synchronize Stripe webhook secrets when GitHub sources exist
+        shell: bash
+        run: |
+          set -euo pipefail
+          synced=0
+
+          write_secret() {
+            local cloudflare_name="$1"
+            local source_name="$2"
+            local value="$3"
+            [[ -n "$value" ]] || return 0
+            if [[ "$value" != whsec_* ]]; then
+              echo "::error::${source_name} must start with whsec_."
+              exit 1
+            fi
+            echo "::add-mask::$value"
+            printf '%s' "$value" | npx wrangler secret put "$cloudflare_name" --name dealforge
+            synced=1
+          }
+
+          write_secret STRIPE_WEBHOOK_SECRET_LIVE STRIPE_WEBHOOK_SECRET_LIVE "${STRIPE_WEBHOOK_SECRET_LIVE:-}"
+          write_secret STRIPE_WEBHOOK_SECRET_TEST STRIPE_WEBHOOK_SECRET_TEST "${STRIPE_WEBHOOK_SECRET_TEST:-}"
+          write_secret STRIPE_WEBHOOK_SECRET STRIPE_WEBHOOK_SECRET "${STRIPE_WEBHOOK_SECRET_LEGACY:-}"
+
+          if [[ "$synced" == '0' ]]; then
+            echo '::notice::No GitHub webhook secret mirror is configured; preserving existing Cloudflare secrets and relying on live smoke validation.'
+          fi
 
       - name: Mark build pending
         shell: bash
@@ -152,29 +183,29 @@ jobs:
           fi
 
           webhook_code='000'
+          webhook_error='unknown'
           for attempt in 1 2 3 4 5 6 7 8; do
             webhook_code=$(curl -sS -o /tmp/webhook-body -w '%{http_code}' -X POST "$base/api/stripe/webhook" -H 'content-type: application/json' -H 'stripe-signature: t=1,v1=deadbeef' --data '{}' || true)
-            echo "webhook bogus-signature attempt ${attempt}: HTTP $webhook_code"
-            cat /tmp/webhook-body 2>/dev/null || true
-            echo
-            [[ "$webhook_code" == '400' ]] && break
+            webhook_error=$(node -e "const fs=require('fs');try{const j=JSON.parse(fs.readFileSync('/tmp/webhook-body','utf8'));process.stdout.write(String(j.error||'none'))}catch{process.stdout.write('invalid_response')}")
+            echo "webhook bogus-signature attempt ${attempt}: HTTP $webhook_code (${webhook_error})"
+            [[ "$webhook_code" == '400' && "$webhook_error" == 'INVALID_STRIPE_SIGNATURE' ]] && break
             sleep 3
           done
 
-          if [[ "$webhook_code" == '400' ]]; then
-            gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=success -f context=cloudflare-live-webhook-secret -f description='Live webhook route rejected invalid signature as expected'
+          if [[ "$webhook_code" == '400' && "$webhook_error" == 'INVALID_STRIPE_SIGNATURE' ]]; then
+            gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=success -f context=cloudflare-live-webhook-secret -f description='Live webhook runtime secret is configured'
           elif [[ "$webhook_code" == '503' ]]; then
             gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=failure -f context=cloudflare-live-webhook-secret -f description='Stripe runtime secret unavailable after propagation window'
             exit 1
           else
-            gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=failure -f context=cloudflare-live-webhook-secret -f description="Webhook probe returned unexpected HTTP ${webhook_code} after propagation window"
+            gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=failure -f context=cloudflare-live-webhook-secret -f description="Webhook probe returned ${webhook_code}/${webhook_error} after propagation window"
             exit 1
           fi
 
       - name: Mark smoke test successful
         shell: bash
         run: |
-          gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=success -f context=cloudflare-live-smoke -f description='Live DealForge routes and webhook secret verified'
+          gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=success -f context=cloudflare-live-smoke -f description='Live DealForge routes and webhook runtime configuration verified'
 
       - name: Mark deploy successful
         shell: bash
@@ -187,5 +218,3 @@ jobs:
         shell: bash
         run: |
           gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=failure -f context=cloudflare-production-deploy -f description='Cloudflare production deployment failed'
-
-# webhook smoke propagation hardening: 2026-08-24
