@@ -8,6 +8,8 @@ import {
   procurementEventKey,
   transitionProcurement,
 } from "@/lib/procurement-state-machine";
+import { hasActiveRefund } from "@/lib/refund-procurement-interlock";
+import { hasActivePostPurchaseException } from "@/lib/post-purchase-exceptions";
 import {
   createShipmentRecord,
   parseShipmentEventDetail,
@@ -92,9 +94,24 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       const current = await tx.procurementIntent.findUnique({
         where: { id },
         include: {
-          order: { select: { status: true, paidAt: true } },
+          order: {
+            select: {
+              status: true,
+              paidAt: true,
+              refunds: { select: { status: true } },
+            },
+          },
           events: {
-            where: { type: { in: ["RECORD_SHIPMENT", "MARK_DELIVERED"] } },
+            where: {
+              type: {
+                in: [
+                  "RECORD_SHIPMENT",
+                  "MARK_DELIVERED",
+                  "OPEN_POST_PURCHASE_EXCEPTION",
+                  "CLOSE_POST_PURCHASE_EXCEPTION",
+                ],
+              },
+            },
             orderBy: { createdAt: "asc" },
             select: { type: true, detail: true, createdAt: true },
           },
@@ -105,6 +122,12 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       if (current.blockedReason) throw new Error("PROCUREMENT_SOURCE_INTEGRITY_BLOCKED");
       if (current.order.status !== "paid" || !current.order.paidAt) {
         throw new Error("PROCUREMENT_ORDER_NOT_PAID");
+      }
+      if (hasActiveRefund(current.order.refunds)) {
+        throw new Error("SHIPMENT_BLOCKED_BY_ACTIVE_REFUND");
+      }
+      if (hasActivePostPurchaseException(current.events)) {
+        throw new Error("SHIPMENT_BLOCKED_BY_POST_PURCHASE_EXCEPTION");
       }
       if (!isProcurementStatus(current.status) || current.status !== parsed.data.expectedState) {
         throw new Error("PROCUREMENT_STATE_CONFLICT");
@@ -208,7 +231,13 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     const message = error instanceof Error ? error.message : "UNKNOWN";
     const notFound = message === "PROCUREMENT_INTENT_NOT_FOUND";
     const invalidInput = ["INVALID_SHIPMENT_TRACKING", "INVALID_DELIVERY_TIMESTAMP"].includes(message);
-    if (notFound || invalidInput || message.startsWith("PROCUREMENT_") || message.startsWith("SHIPMENT_") || message.startsWith("DELIVERY_")) {
+    if (
+      notFound ||
+      invalidInput ||
+      message.startsWith("PROCUREMENT_") ||
+      message.startsWith("SHIPMENT_") ||
+      message.startsWith("DELIVERY_")
+    ) {
       return noStore(
         NextResponse.json(
           { error: message },
