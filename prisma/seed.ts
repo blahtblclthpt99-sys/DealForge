@@ -105,7 +105,35 @@ function productImages(p: { image: string; images?: string[] }) {
   return Array.from(new Set(list));
 }
 
+function seedCredentials() {
+  const databaseUrl = (process.env.DATABASE_URL || "").trim();
+  const localDevelopment = process.env.NODE_ENV !== "production" && databaseUrl.startsWith("file:");
+  const adminEmail = (
+    process.env.ADMIN_EMAIL || (localDevelopment ? "local-admin@dealforge.test" : "")
+  ).trim().toLowerCase();
+  const adminPassword =
+    process.env.ADMIN_PASSWORD || (localDevelopment ? "LocalOnlyDealForgeAdmin2026!" : "");
+
+  if (!adminEmail || !adminEmail.includes("@") || adminPassword.length < 16) {
+    throw new Error(
+      "Protected DealForge seed requires explicit ADMIN_EMAIL and ADMIN_PASSWORD (16+ characters).",
+    );
+  }
+
+  const seedDemoUser = process.env.SEED_DEMO_USER === "true";
+  const demoEmail = (process.env.DEMO_USER_EMAIL || "").trim().toLowerCase();
+  const demoPassword = process.env.DEMO_USER_PASSWORD || "";
+  if (seedDemoUser && (!demoEmail || !demoEmail.includes("@") || demoPassword.length < 16)) {
+    throw new Error(
+      "SEED_DEMO_USER=true requires explicit DEMO_USER_EMAIL and DEMO_USER_PASSWORD (16+ characters).",
+    );
+  }
+
+  return { adminEmail, adminPassword, seedDemoUser, demoEmail, demoPassword };
+}
+
 async function main() {
+  const credentials = seedCredentials();
   const amazonCatalog = [
     ...loadJson<CatalogProduct[]>("prisma/amazon-catalog.json"),
     ...loadJsonOptional<CatalogProduct[]>("prisma/amazon-discovered.json", []),
@@ -291,23 +319,25 @@ async function main() {
     created += 1;
   }
 
-  const adminPassword = process.env.ADMIN_PASSWORD || "AdminDealForge2026!";
   await prisma.user.create({
     data: {
       name: "DealForge Admin",
-      email: (process.env.ADMIN_EMAIL || "admin@dealforge.com").toLowerCase(),
-      passwordHash: await bcrypt.hash(adminPassword, 12),
+      email: credentials.adminEmail,
+      passwordHash: await bcrypt.hash(credentials.adminPassword, 12),
       role: "admin",
     },
   });
-  await prisma.user.create({
-    data: {
-      name: "Demo Shopper",
-      email: "demo@dealforge.com",
-      passwordHash: await bcrypt.hash("DemoUser123!", 12),
-      role: "user",
-    },
-  });
+
+  if (credentials.seedDemoUser) {
+    await prisma.user.create({
+      data: {
+        name: "Demo Shopper",
+        email: credentials.demoEmail,
+        passwordHash: await bcrypt.hash(credentials.demoPassword, 12),
+        role: "user",
+      },
+    });
+  }
 
   await prisma.affiliateProvider.create({
     data: {
