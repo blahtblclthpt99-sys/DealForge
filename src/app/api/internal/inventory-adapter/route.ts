@@ -12,6 +12,7 @@ import {
   failInventoryRecheck,
 } from "@/lib/inventory-recheck";
 import { resolveInventoryRecheckLease } from "@/lib/inventory-recheck-lease";
+import { requirePersistedSupplierSourceAuthorization } from "@/lib/supplier-source-authorization";
 
 export const runtime = "nodejs";
 
@@ -114,7 +115,7 @@ function errorResponse(error: unknown) {
   ) {
     return NextResponse.json({ error: "ADAPTER_AUTH_FAILED" }, { status: 401, headers: { "Cache-Control": "no-store" } });
   }
-  if (message === "ADAPTER_SCOPE_FORBIDDEN") {
+  if (message === "ADAPTER_SCOPE_FORBIDDEN" || message === "ADAPTER_SOURCE_NOT_AUTHORIZED") {
     return NextResponse.json({ error: message }, { status: 403, headers: { "Cache-Control": "no-store" } });
   }
   if (message === "ADAPTER_REPLAY_DETECTED" || message === "RECHECK_LEASE_INVALID") {
@@ -123,7 +124,7 @@ function errorResponse(error: unknown) {
   if (message === "ADAPTER_BODY_TOO_LARGE") {
     return NextResponse.json({ error: message }, { status: 413, headers: { "Cache-Control": "no-store" } });
   }
-  if (message.startsWith("ADAPTER_") || message.startsWith("INVENTORY_")) {
+  if (message.startsWith("ADAPTER_") || message.startsWith("INVENTORY_") || message.startsWith("RECHECK_")) {
     return NextResponse.json({ error: message }, { status: 400, headers: { "Cache-Control": "no-store" } });
   }
   return NextResponse.json({ error: "ADAPTER_REQUEST_FAILED" }, { status: 500, headers: { "Cache-Control": "no-store" } });
@@ -134,9 +135,17 @@ export async function POST(req: Request) {
     const rawBody = await readRawBody(req);
     const identity = await authenticateInventoryAdapterRequest({ headers: req.headers, body: rawBody });
 
-    // Every valid signed machine request consumes the source-scoped request
-    // budget before JSON parsing or any inventory operation. Replay attempts
-    // have already failed during authentication and cannot reach this point.
+    // A valid signature proves adapter identity, not current supplier authority.
+    // Re-check live persisted source authorization on every operational request
+    // before rate budget consumption, queue access, or inventory mutation.
+    await requirePersistedSupplierSourceAuthorization(
+      identity.sourceKey,
+      "ADAPTER_SOURCE_NOT_AUTHORIZED",
+    );
+
+    // Every valid signed and currently authorized machine request consumes the
+    // source-scoped request budget before JSON parsing or inventory operation.
+    // Replay attempts have already failed during authentication.
     await consumeInventoryAdapterRateLimit({ identity, requestIncrement: 1, claimUnits: 0 });
 
     let json: unknown;
