@@ -17,6 +17,7 @@ if (!expected) throw new Error("SHIPPING_CERT_EXPECTED_DESTINATION_MISSING");
 
 const deadline = Date.now() + 90_000;
 let lastState = "not-found";
+let verified = false;
 
 try {
   while (Date.now() < deadline) {
@@ -35,20 +36,21 @@ try {
       continue;
     }
 
-    const event = order.destination
-      ? await prisma.paymentEvent.findUnique({ where: { providerEventId: order.destination.sourceEventId } })
+    const destination = order.destination;
+    const event = destination
+      ? await prisma.paymentEvent.findUnique({ where: { providerEventId: destination.sourceEventId } })
       : null;
+    const destinationCreatedAt = destination?.createdAt.getTime() ?? Number.POSITIVE_INFINITY;
 
     lastState = JSON.stringify({
       status: order.status,
       paid: Boolean(order.paidAt),
-      destination: Boolean(order.destination),
+      destination: Boolean(destination),
       event: event?.type ?? null,
       intents: order.procurementIntents.length,
       items: order.items.length,
     });
 
-    const destination = order.destination;
     const complete =
       order.status === "paid" &&
       Boolean(order.paidAt) &&
@@ -69,10 +71,10 @@ try {
       order.items.every(item => order.procurementIntents.some(intent => intent.orderItemId === item.id)) &&
       order.procurementIntents.every(intent =>
         intent.executionMode === "manual_only" &&
-        intent.createdAt.getTime() >= destination.createdAt.getTime(),
+        intent.createdAt.getTime() >= destinationCreatedAt,
       );
 
-    if (complete) {
+    if (complete && destination && event) {
       const evidence = {
         orderNumber: order.orderNumber,
         orderStatus: order.status,
@@ -88,16 +90,14 @@ try {
       };
       await writeFile("shipping-certification-evidence.json", JSON.stringify(evidence, null, 2));
       console.log(`Shipping destination certification verified for ${order.orderNumber}`);
-      process.exitCode = 0;
+      verified = true;
       break;
     }
 
     await new Promise(resolve => setTimeout(resolve, 2000));
   }
 
-  if (!process.exitCode && !(await readFile("shipping-certification-evidence.json", "utf8").catch(() => null))) {
-    throw new Error(`SHIPPING_CERTIFICATION_NOT_OBSERVED:${lastState}`);
-  }
+  if (!verified) throw new Error(`SHIPPING_CERTIFICATION_NOT_OBSERVED:${lastState}`);
 } finally {
   await prisma.$disconnect();
 }
