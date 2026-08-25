@@ -30,7 +30,7 @@ test("friendly pricing rounds only upward to .49 or .99", () => {
   assert.equal(roundToFriendlyPrice(3_599), 3_599);
 });
 
-test("canonical minimum-safe price includes only landed cost, attributable cost, payment cost, pooled loss reserve, and profit", () => {
+test("canonical minimum-safe price adds attributable cost without changing the landed-cost profit tier", () => {
   const decision = calculateMinimumSafeCustomerPrice({
     landedCostCents: 3_000,
     attributableCostCents: 250,
@@ -39,7 +39,7 @@ test("canonical minimum-safe price includes only landed cost, attributable cost,
 
   assert.equal(decision.pricingBasisCents, 3_250);
   assert.equal(decision.attributableCostCents, 250);
-  assert.equal(decision.minimumProfitCents, 390);
+  assert.equal(decision.minimumProfitCents, 360);
   assert.ok(decision.estimatedContributionProfitCents >= decision.minimumProfitCents);
   assert.ok([49, 99].includes(decision.customerPriceCents % 100));
 });
