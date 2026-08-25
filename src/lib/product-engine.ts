@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { prisma } from "@/lib/db";
 import { buildAmazonProductUrl } from "@/lib/affiliate/amazon-config";
 
@@ -8,6 +8,16 @@ export type EngineWorker = (typeof ENGINE_WORKERS)[number];
 const ASIN_RE = /^[A-Z0-9]{10}$/;
 const ALLOWED_SOURCE_TYPES = new Set(["owner_asin", "owner_special_link", "public_reference"]);
 const MAX_TEXT = 5000;
+const ENGINE_LEASE_MS = 5 * 60_000;
+const ENGINE_LOCK_PREFIX = "__lock__:";
+const RUN_LEASE_KEY = `${ENGINE_LOCK_PREFIX}run`;
+const PUBLISHER_LEASE_KEY = `${ENGINE_LOCK_PREFIX}publisher`;
+
+type EngineLease = {
+  key: string;
+  token: string;
+  expiresAt: Date;
+};
 
 export type CandidateInput = {
   asin: string;
@@ -109,6 +119,69 @@ async function audit(candidateId: string | null, actor: string, action: string, 
   await prisma.productEngineAudit.create({ data: { candidateId, actor, action, fromState: fromState ?? null, toState: toState ?? null, detail: JSON.stringify(detail) } });
 }
 
+function leaseStatus(token: string) {
+  return `lease:${token}`;
+}
+
+function candidateLeaseKey(id: string) {
+  return `${ENGINE_LOCK_PREFIX}candidate:${id}`;
+}
+
+async function acquireEngineLease(key: string, ttlMs = ENGINE_LEASE_MS): Promise<EngineLease | null> {
+  const now = new Date();
+  await prisma.productEngineWorkerState.upsert({
+    where: { worker: key },
+    create: { worker: key, status: "idle", healthy: true },
+    update: {},
+  });
+
+  const token = randomUUID();
+  const expiresAt = new Date(now.getTime() + ttlMs);
+  const claimed = await prisma.productEngineWorkerState.updateMany({
+    where: {
+      worker: key,
+      OR: [
+        { status: "idle" },
+        { lastHeartbeatAt: null },
+        { lastHeartbeatAt: { lte: now } },
+      ],
+    },
+    data: {
+      status: leaseStatus(token),
+      healthy: true,
+      lastHeartbeatAt: expiresAt,
+      lastRunAt: now,
+      lastError: null,
+    },
+  });
+
+  return claimed.count === 1 ? { key, token, expiresAt } : null;
+}
+
+async function tryRenewEngineLease(lease: EngineLease, ttlMs = ENGINE_LEASE_MS) {
+  const expiresAt = new Date(Date.now() + ttlMs);
+  const renewed = await prisma.productEngineWorkerState.updateMany({
+    where: { worker: lease.key, status: leaseStatus(lease.token) },
+    data: { lastHeartbeatAt: expiresAt },
+  });
+  if (renewed.count === 1) lease.expiresAt = expiresAt;
+  return renewed.count === 1;
+}
+
+async function renewEngineLease(lease: EngineLease, ttlMs = ENGINE_LEASE_MS) {
+  if (!(await tryRenewEngineLease(lease, ttlMs))) throw new Error("ENGINE_LEASE_LOST");
+}
+
+async function releaseEngineLease(lease: EngineLease) {
+  await prisma.productEngineWorkerState.deleteMany({
+    where: { worker: lease.key, status: leaseStatus(lease.token) },
+  });
+}
+
+function leaseLost(error: unknown) {
+  return error instanceof Error && error.message === "ENGINE_LEASE_LOST";
+}
+
 export async function getEngineConfig() {
   return prisma.productEngineConfig.upsert({ where: { id: "default" }, create: { id: "default" }, update: {} });
 }
@@ -171,13 +244,15 @@ async function touchWorker(worker: EngineWorker, success: boolean, error?: strin
   });
 }
 
-async function transition(id: string, actor: string, fromState: string, toState: string, data: Record<string, unknown> = {}) {
+async function transition(id: string, actor: string, fromState: string, toState: string, data: Record<string, unknown> = {}, lease?: EngineLease) {
+  if (lease) await renewEngineLease(lease);
   const candidate = await prisma.productCandidate.update({ where: { id }, data: { state: toState, ...data } });
   await audit(id, actor, "state_transition", fromState, toState, data);
   return candidate;
 }
 
-async function retryOrDeadLetter(candidate: { id: string; state: string; attemptCount: number; maxAttempts: number }, worker: EngineWorker, error: unknown) {
+async function retryOrDeadLetter(candidate: { id: string; state: string; attemptCount: number; maxAttempts: number }, worker: EngineWorker, error: unknown, lease?: EngineLease) {
+  if (lease) await renewEngineLease(lease);
   const message = error instanceof Error ? error.message.slice(0, 1000) : "Unknown pipeline error";
   const attempts = candidate.attemptCount + 1;
   const dead = attempts >= candidate.maxAttempts;
@@ -190,10 +265,21 @@ async function retryOrDeadLetter(candidate: { id: string; state: string; attempt
 export async function validateCandidate(id: string) {
   const config = await getEngineConfig();
   if (config.paused) return { paused: true } as const;
-  const candidate = await prisma.productCandidate.findUniqueOrThrow({ where: { id } });
+  let candidate = await prisma.productCandidate.findUniqueOrThrow({ where: { id } });
   if (!["discovered", "validating"].includes(candidate.state)) return candidate;
+
+  const lease = await acquireEngineLease(candidateLeaseKey(id));
+  if (!lease) {
+    await audit(id, "validator", "candidate_stage_busy", candidate.state, candidate.state, { stage: "validator" });
+    return prisma.productCandidate.findUniqueOrThrow({ where: { id } });
+  }
+
   try {
-    await transition(id, "validator", candidate.state, "validating");
+    candidate = await prisma.productCandidate.findUniqueOrThrow({ where: { id } });
+    if (!["discovered", "validating"].includes(candidate.state)) return candidate;
+    if ((await getEngineConfig()).paused) return { paused: true } as const;
+
+    await transition(id, "validator", candidate.state, "validating", {}, lease);
     const score = scoreCandidate(candidate);
     const reasons: string[] = [];
     if (!isValidAsin(candidate.asin)) reasons.push("invalid_asin");
@@ -201,38 +287,58 @@ export async function validateCandidate(id: string) {
     if (!candidate.titleCandidate) reasons.push("missing_title");
     if (!candidate.categoryCandidate) reasons.push("missing_category");
     if (candidate.variationKey) {
+      await renewEngineLease(lease);
       const variationCount = await prisma.productCandidate.count({ where: { variationKey: candidate.variationKey, state: { notIn: ["rejected", "dead_letter"] } } });
       if (variationCount > config.maxVariations) reasons.push("variation_spam");
     }
     if (score < config.acceptanceThreshold) reasons.push("below_threshold");
     if (reasons.length) {
-      const rejected = await transition(id, "validator", "validating", "rejected", { validationResult: "rejected", validationDetail: JSON.stringify({ reasons }), rejectionReason: reasons.join(","), score });
+      const rejected = await transition(id, "validator", "validating", "rejected", { validationResult: "rejected", validationDetail: JSON.stringify({ reasons }), rejectionReason: reasons.join(","), score }, lease);
       await touchWorker("validator", true);
       return rejected;
     }
-    const validated = await transition(id, "validator", "validating", "validated", { validationResult: "accepted", validationDetail: JSON.stringify({ reasons: [] }), score, rejectionReason: null });
+    const validated = await transition(id, "validator", "validating", "validated", { validationResult: "accepted", validationDetail: JSON.stringify({ reasons: [] }), score, rejectionReason: null }, lease);
     await touchWorker("validator", true);
     return validated;
   } catch (error) {
-    await retryOrDeadLetter(candidate, "validator", error);
+    if (!leaseLost(error) && await tryRenewEngineLease(lease)) {
+      await retryOrDeadLetter(candidate, "validator", error, lease);
+    }
     throw error;
+  } finally {
+    await releaseEngineLease(lease);
   }
 }
 
 export async function classifyOne(id: string) {
   const config = await getEngineConfig();
   if (config.paused) return { paused: true } as const;
-  const candidate = await prisma.productCandidate.findUniqueOrThrow({ where: { id } });
+  let candidate = await prisma.productCandidate.findUniqueOrThrow({ where: { id } });
   if (candidate.state !== "validated") return candidate;
+
+  const lease = await acquireEngineLease(candidateLeaseKey(id));
+  if (!lease) {
+    await audit(id, "classifier", "candidate_stage_busy", candidate.state, candidate.state, { stage: "classifier" });
+    return prisma.productCandidate.findUniqueOrThrow({ where: { id } });
+  }
+
   try {
+    candidate = await prisma.productCandidate.findUniqueOrThrow({ where: { id } });
+    if (candidate.state !== "validated") return candidate;
+    if ((await getEngineConfig()).paused) return { paused: true } as const;
+
     const normalizedCategory = classifyCandidate(candidate.titleCandidate ?? "", candidate.categoryCandidate ?? "");
     const classification = JSON.stringify({ category: normalizedCategory, version: 1 });
-    const classified = await transition(id, "classifier", "validated", "classified", { normalizedCategory, classification });
+    const classified = await transition(id, "classifier", "validated", "classified", { normalizedCategory, classification }, lease);
     await touchWorker("classifier", true);
     return classified;
   } catch (error) {
-    await retryOrDeadLetter(candidate, "classifier", error);
+    if (!leaseLost(error) && await tryRenewEngineLease(lease)) {
+      await retryOrDeadLetter(candidate, "classifier", error, lease);
+    }
     throw error;
+  } finally {
+    await releaseEngineLease(lease);
   }
 }
 
@@ -246,22 +352,47 @@ function parseImages(value: string) {
 export async function publishCandidate(id: string, actor = "publisher") {
   const config = await getEngineConfig();
   if (config.paused) return { paused: true } as const;
-  const candidate = await prisma.productCandidate.findUniqueOrThrow({ where: { id } });
-  if (!['classified', 'approved'].includes(candidate.state)) return candidate;
+  let candidate = await prisma.productCandidate.findUniqueOrThrow({ where: { id } });
+  if (!["classified", "approved"].includes(candidate.state)) return candidate;
+
+  const candidateLease = await acquireEngineLease(candidateLeaseKey(id));
+  if (!candidateLease) {
+    await audit(id, actor, "candidate_stage_busy", candidate.state, candidate.state, { stage: "publisher" });
+    return prisma.productCandidate.findUniqueOrThrow({ where: { id } });
+  }
+
+  let publisherLease: EngineLease | null = null;
   try {
+    candidate = await prisma.productCandidate.findUniqueOrThrow({ where: { id } });
+    if (!["classified", "approved"].includes(candidate.state)) return candidate;
+
+    publisherLease = await acquireEngineLease(PUBLISHER_LEASE_KEY);
+    if (!publisherLease) {
+      await audit(id, actor, "publisher_single_writer_busy", candidate.state, candidate.state);
+      return candidate;
+    }
+    if ((await getEngineConfig()).paused) return { paused: true } as const;
+
+    await renewEngineLease(candidateLease);
+    await renewEngineLease(publisherLease);
     if (!candidate.normalizedCategory || !candidate.titleCandidate) throw new Error("PUBLISH_METADATA_INCOMPLETE");
     const category = await prisma.category.findUnique({ where: { slug: candidate.normalizedCategory } });
     if (!category) {
-      const rejected = await transition(id, actor, candidate.state, "rejected", { rejectionReason: "unknown_category" });
+      const rejected = await transition(id, actor, candidate.state, "rejected", { rejectionReason: "unknown_category" }, candidateLease);
       await touchWorker("publisher", true);
       return rejected;
     }
+
+    await renewEngineLease(publisherLease);
     const publishedInCategory = await prisma.productCandidate.count({ where: { normalizedCategory: candidate.normalizedCategory, state: "published" } });
     if (publishedInCategory >= config.categoryQuota) {
-      const rejected = await transition(id, actor, candidate.state, "rejected", { rejectionReason: "category_quota" });
+      const rejected = await transition(id, actor, candidate.state, "rejected", { rejectionReason: "category_quota" }, candidateLease);
       await touchWorker("publisher", true);
       return rejected;
     }
+
+    await renewEngineLease(candidateLease);
+    await renewEngineLease(publisherLease);
     const existingProduct = await prisma.product.findFirst({ where: { asin: candidate.asin, retailer: "amazon" } });
     const images = parseImages(candidate.imagesCandidate);
     const product = existingProduct ?? await prisma.product.create({
@@ -288,58 +419,89 @@ export async function publishCandidate(id: string, actor = "publisher") {
         metadataVerifiedAt: null,
       },
     });
-    const published = await transition(id, actor, candidate.state, "published", { publishedProductId: product.id, publishedAt: new Date(), nextAttemptAt: null, lastError: null });
+
+    await renewEngineLease(publisherLease);
+    const published = await transition(id, actor, candidate.state, "published", { publishedProductId: product.id, publishedAt: new Date(), nextAttemptAt: null, lastError: null }, candidateLease);
     await prisma.productEngineConfig.update({ where: { id: "default" }, data: { lastPublishedAt: new Date() } });
     await touchWorker("publisher", true);
     return published;
   } catch (error) {
-    await retryOrDeadLetter(candidate, "publisher", error);
+    if (!leaseLost(error) && await tryRenewEngineLease(candidateLease)) {
+      await retryOrDeadLetter(candidate, "publisher", error, candidateLease);
+    }
     throw error;
+  } finally {
+    if (publisherLease) await releaseEngineLease(publisherLease);
+    await releaseEngineLease(candidateLease);
   }
 }
 
 export async function runProductEngine(actor = "owner") {
-  const config = await getEngineConfig();
-  if (config.paused) return { paused: true, processed: 0 };
-  await prisma.productEngineConfig.update({ where: { id: "default" }, data: { lastRunAt: new Date() } });
-  for (const scout of ["scout-a", "scout-b"] as const) await touchWorker(scout, true);
-  const due = await prisma.productCandidate.findMany({
-    where: { state: { in: ["discovered", "validating", "validated", "classified", "approved"] }, OR: [{ nextAttemptAt: null }, { nextAttemptAt: { lte: new Date() } }] },
-    orderBy: { createdAt: "asc" },
-    take: Math.min(50, Math.max(1, config.maxConcurrency * 5)),
-  });
-  const concurrency = Math.min(10, Math.max(1, config.maxConcurrency));
-  for (let i = 0; i < due.length; i += concurrency) {
-    if ((await getEngineConfig()).paused) break;
-    await Promise.all(due.slice(i, i + concurrency).map(async (row) => {
-      try {
-        let current = await prisma.productCandidate.findUniqueOrThrow({ where: { id: row.id } });
-        if (["discovered", "validating"].includes(current.state)) await validateCandidate(current.id);
-        current = await prisma.productCandidate.findUniqueOrThrow({ where: { id: row.id } });
-        if (current.state === "validated") await classifyOne(current.id);
-        current = await prisma.productCandidate.findUniqueOrThrow({ where: { id: row.id } });
-        if (["classified", "approved"].includes(current.state)) await publishCandidate(current.id);
-      } catch {
-        // Stage-specific retry/dead-letter handling already recorded the failure.
-      }
-    }));
+  const initialConfig = await getEngineConfig();
+  if (initialConfig.paused) return { paused: true, processed: 0, busy: false };
+
+  const runLease = await acquireEngineLease(RUN_LEASE_KEY);
+  if (!runLease) {
+    await audit(null, actor, "engine_run_skipped_busy", null, null);
+    return { paused: false, processed: 0, busy: true };
   }
-  await audit(null, actor, "engine_run_completed", null, null, { discovered: due.length });
-  return { paused: false, processed: due.length };
+
+  try {
+    const config = await getEngineConfig();
+    if (config.paused) return { paused: true, processed: 0, busy: false };
+    await prisma.productEngineConfig.update({ where: { id: "default" }, data: { lastRunAt: new Date() } });
+    for (const scout of ["scout-a", "scout-b"] as const) await touchWorker(scout, true);
+    const due = await prisma.productCandidate.findMany({
+      where: { state: { in: ["discovered", "validating", "validated", "classified", "approved"] }, OR: [{ nextAttemptAt: null }, { nextAttemptAt: { lte: new Date() } }] },
+      orderBy: { createdAt: "asc" },
+      take: Math.min(50, Math.max(1, config.maxConcurrency * 5)),
+    });
+    const concurrency = Math.min(10, Math.max(1, config.maxConcurrency));
+    for (let i = 0; i < due.length; i += concurrency) {
+      await renewEngineLease(runLease);
+      if ((await getEngineConfig()).paused) break;
+      await Promise.all(due.slice(i, i + concurrency).map(async (row) => {
+        try {
+          let current = await prisma.productCandidate.findUniqueOrThrow({ where: { id: row.id } });
+          if (["discovered", "validating"].includes(current.state)) await validateCandidate(current.id);
+          current = await prisma.productCandidate.findUniqueOrThrow({ where: { id: row.id } });
+          if (current.state === "validated") await classifyOne(current.id);
+          current = await prisma.productCandidate.findUniqueOrThrow({ where: { id: row.id } });
+          if (["classified", "approved"].includes(current.state)) await publishCandidate(current.id);
+        } catch {
+          // Stage-specific retry/dead-letter handling already recorded the failure.
+        }
+      }));
+    }
+    await audit(null, actor, "engine_run_completed", null, null, { discovered: due.length });
+    return { paused: false, processed: due.length, busy: false };
+  } finally {
+    await releaseEngineLease(runLease);
+  }
 }
 
 export async function retryCandidate(id: string, actor: string) {
   const candidate = await prisma.productCandidate.findUniqueOrThrow({ where: { id } });
   if (!["dead_letter", "rejected"].includes(candidate.state)) throw new Error("NOT_RETRYABLE");
-  const next = await prisma.productCandidate.update({ where: { id }, data: { state: "discovered", validationResult: "pending", rejectionReason: null, lastError: null, deadLetteredAt: null, nextAttemptAt: null, attemptCount: 0 } });
-  await audit(id, actor, "candidate_retried", candidate.state, "discovered");
-  return next;
+
+  const lease = await acquireEngineLease(candidateLeaseKey(id));
+  if (!lease) throw new Error("CANDIDATE_BUSY");
+  try {
+    const current = await prisma.productCandidate.findUniqueOrThrow({ where: { id } });
+    if (!["dead_letter", "rejected"].includes(current.state)) throw new Error("NOT_RETRYABLE");
+    await renewEngineLease(lease);
+    const next = await prisma.productCandidate.update({ where: { id }, data: { state: "discovered", validationResult: "pending", rejectionReason: null, lastError: null, deadLetteredAt: null, nextAttemptAt: null, attemptCount: 0 } });
+    await audit(id, actor, "candidate_retried", current.state, "discovered");
+    return next;
+  } finally {
+    await releaseEngineLease(lease);
+  }
 }
 
 export async function productEngineDashboard() {
   const [config, workers, candidates, audits] = await Promise.all([
     getEngineConfig(),
-    prisma.productEngineWorkerState.findMany({ orderBy: { worker: "asc" } }),
+    prisma.productEngineWorkerState.findMany({ where: { worker: { in: [...ENGINE_WORKERS] } }, orderBy: { worker: "asc" } }),
     prisma.productCandidate.findMany({ orderBy: { createdAt: "desc" }, take: 250 }),
     prisma.productEngineAudit.findMany({ orderBy: { createdAt: "desc" }, take: 100 }),
   ]);
