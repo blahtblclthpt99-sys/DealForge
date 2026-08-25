@@ -77,7 +77,16 @@ test("private admin endpoint owns dry-run simulation and never enables releases"
   assert.match(route, /automaticReleaseEnabled: false/);
 });
 
-test("Savings Fund migration makes the phase-A ledger append-only", async () => {
+test("ledger reconciliation uses monotonic per-order revision keys", async () => {
+  const ledger = await readFile("src/lib/savings-fund-ledger.ts", "utf8");
+  assert.match(ledger, /COUNT\(\*\) AS "entryCount"/);
+  assert.match(ledger, /const nextRevision = before\.entryCount \+ 1/);
+  assert.match(ledger, /revision:\$\{nextRevision\}/);
+  assert.match(ledger, /ON CONFLICT\("entryKey"\) DO NOTHING/);
+  assert.match(ledger, /SAVINGS_FUND_RECONCILIATION_CONCURRENT_CHANGE/);
+});
+
+test("Savings Fund migration makes the phase-A ledger append-only and forbids releases", async () => {
   const migration = await readFile(
     "prisma/migrations/20260825120000_customer_savings_fund_phase_a/migration.sql",
     "utf8",
@@ -85,6 +94,10 @@ test("Savings Fund migration makes the phase-A ledger append-only", async () => 
   assert.match(migration, /SavingsFundEntry/);
   assert.match(migration, /BEFORE UPDATE ON "SavingsFundEntry"/);
   assert.match(migration, /BEFORE DELETE ON "SavingsFundEntry"/);
+  assert.match(migration, /SavingsFundEntry_phase_a_type/);
+  assert.match(migration, /'accrual', 'reversal', 'adjustment'/);
+  assert.doesNotMatch(migration, /'release'/);
+  assert.doesNotMatch(migration, /'allocation'/);
   assert.match(migration, /SavingsFundEntry_phase_a_dry_run/);
   assert.match(migration, /CHECK \("dryRun" = TRUE\)/);
 });
