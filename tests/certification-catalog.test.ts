@@ -23,6 +23,22 @@ test("certification storefront defaults closed around the allowlist", async () =
   assert.match(products, /certificationCatalogScopeKey\(\)/);
 });
 
+test("certification fixture installer is explicit, test-mode-only, collision-safe, and refreshable", async () => {
+  const installer = await readFile("scripts/install-certification-catalog.ts", "utf8");
+  const packageJson = await readFile("package.json", "utf8");
+  assert.match(installer, /CERTIFICATION_CATALOG_ONLY_MUST_BE_EXPLICIT_TRUE/);
+  assert.match(installer, /CERTIFICATION_FIXTURES_REQUIRE_STRIPE_TEST_MODE/);
+  assert.match(installer, /CERTIFICATION_FIXTURE_WRITE_NOT_ENABLED/);
+  assert.match(installer, /CERTIFICATION_FIXTURE_ID_COLLISION/);
+  assert.match(installer, /recognizedExistingFixture/);
+  assert.match(installer, /prisma\.product\.update/);
+  assert.match(installer, /prisma\.product\.create/);
+  assert.match(installer, /retailer: "dealforge-test"/);
+  assert.match(installer, /internalCertification = true/);
+  assert.match(installer, /certificationCatalog = true/);
+  assert.match(packageJson, /certification:install-catalog/);
+});
+
 test("cart quote and add-ons reject parked catalog products in certification mode", async () => {
   const quote = await readFile("src/app/api/cart/quote/route.ts", "utf8");
   const addons = await readFile("src/app/api/cart/addons/route.ts", "utf8");
