@@ -47,7 +47,7 @@ export type ProcurementIntentSeed = {
   blockedReason: typeof PROCUREMENT_BLOCKED_REASON | null;
 };
 
-function nonEmptyString(value: unknown) {
+function nonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
 }
 
@@ -85,7 +85,7 @@ export function parseProcurementSupplierSnapshot(raw: string): SnapshotV1 | null
       inventoryConfidenceBps > 10_000 ||
       !nonEmptyString(value.availability) ||
       !nonEmptyString(value.currency) ||
-      !/^[a-z]{3}$/.test((value.currency as string).toLowerCase()) ||
+      !/^[a-z]{3}$/.test(value.currency.toLowerCase()) ||
       !positiveSafeInteger(breakdown.itemCostCents) ||
       !nonNegativeSafeInteger(breakdown.shippingCents) ||
       !nonNegativeSafeInteger(breakdown.taxCents) ||
@@ -116,26 +116,26 @@ export function deriveProcurementIntentSeed(
 ): ProcurementIntentSeed {
   const currency = orderCurrency.trim().toLowerCase();
   const snapshot = parseProcurementSupplierSnapshot(item.supplierSnapshot);
-  const quantityValid = positiveSafeInteger(item.quantity);
-  const unitCostValid = positiveSafeInteger(item.landedCostCents);
+  const quantity = positiveSafeInteger(item.quantity) ? item.quantity : null;
+  const unitCostCents = positiveSafeInteger(item.landedCostCents) ? item.landedCostCents : null;
   const snapshotMatches =
     snapshot !== null &&
     snapshot.currency.toLowerCase() === currency &&
-    unitCostValid &&
-    snapshot.costBreakdown.landedCostCents === item.landedCostCents;
+    unitCostCents !== null &&
+    snapshot.costBreakdown.landedCostCents === unitCostCents;
   const expectedTotalCostCents =
-    quantityValid && unitCostValid ? item.quantity * item.landedCostCents : null;
+    quantity !== null && unitCostCents !== null ? quantity * unitCostCents : null;
   const totalValid =
     expectedTotalCostCents !== null &&
     Number.isSafeInteger(expectedTotalCostCents) &&
     expectedTotalCostCents > 0;
 
-  if (!/^[a-z]{3}$/.test(currency) || !quantityValid || !snapshotMatches || !totalValid) {
+  if (!/^[a-z]{3}$/.test(currency) || quantity === null || !snapshotMatches || !totalValid) {
     return {
       status: PROCUREMENT_BLOCKED_STATUS,
       executionMode: PROCUREMENT_EXECUTION_MODE,
       supplierSnapshot: item.supplierSnapshot,
-      quantity: quantityValid ? item.quantity : 0,
+      quantity: quantity ?? 0,
       expectedUnitCostCents: null,
       expectedTotalCostCents: null,
       currency: /^[a-z]{3}$/.test(currency) ? currency : "usd",
@@ -147,8 +147,8 @@ export function deriveProcurementIntentSeed(
     status: PROCUREMENT_READY_STATUS,
     executionMode: PROCUREMENT_EXECUTION_MODE,
     supplierSnapshot: item.supplierSnapshot,
-    quantity: item.quantity,
-    expectedUnitCostCents: item.landedCostCents,
+    quantity,
+    expectedUnitCostCents: unitCostCents,
     expectedTotalCostCents,
     currency,
     blockedReason: null,
