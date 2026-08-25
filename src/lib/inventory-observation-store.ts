@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { Prisma } from "@prisma/client";
 import { prisma } from "./db";
 import {
   buildInventoryObservationIdempotencyKey,
@@ -86,6 +87,21 @@ function normalizeInput(input: RecordInventoryObservationInput) {
   };
 }
 
+function rowToSnapshot(row: InventoryObservationRow): InventoryObservationSnapshot {
+  return {
+    supplierOfferId: row.supplierOfferId,
+    availability: row.availability,
+    quantity: row.quantity,
+    inventoryConfidenceBps: row.inventoryConfidenceBps,
+    observedPriceCents: row.observedPriceCents,
+    observedAt: row.observedAt,
+    expiresAt: row.expiresAt,
+    verificationMethod: row.verificationMethod,
+    provenance: row.provenance,
+    sourceHealth: row.sourceHealth,
+  };
+}
+
 /**
  * Append one normalized observation. The deterministic idempotency key makes
  * retries harmless while retaining an immutable history for freshness audits.
@@ -134,17 +150,38 @@ export async function readLatestInventoryObservation(
     LIMIT 1
   `;
   const row = rows[0];
-  if (!row) return null;
-  return {
-    supplierOfferId: row.supplierOfferId,
-    availability: row.availability,
-    quantity: row.quantity,
-    inventoryConfidenceBps: row.inventoryConfidenceBps,
-    observedPriceCents: row.observedPriceCents,
-    observedAt: row.observedAt,
-    expiresAt: row.expiresAt,
-    verificationMethod: row.verificationMethod,
-    provenance: row.provenance,
-    sourceHealth: row.sourceHealth,
-  };
+  return row ? rowToSnapshot(row) : null;
+}
+
+/**
+ * Bounded batch read for public catalog hydration. One query returns only the
+ * newest immutable observation for each requested exact persisted supplier
+ * offer. It is safe on both PostgreSQL and modern SQLite because it uses the
+ * standard ROW_NUMBER window function and parameterized Prisma values.
+ */
+export async function readLatestInventoryObservations(
+  supplierOfferIds: string[],
+): Promise<Map<string, InventoryObservationSnapshot>> {
+  const ids = Array.from(new Set(supplierOfferIds.map((id) => id.trim()).filter(Boolean))).slice(0, 250);
+  if (ids.length === 0) return new Map();
+
+  const rows = await prisma.$queryRaw<InventoryObservationRow[]>(Prisma.sql`
+    SELECT
+      "supplierOfferId", "availability", "quantity", "inventoryConfidenceBps", "observedPriceCents",
+      "observedAt", "expiresAt", "verificationMethod", "provenance", "sourceHealth"
+    FROM (
+      SELECT
+        "supplierOfferId", "availability", "quantity", "inventoryConfidenceBps", "observedPriceCents",
+        "observedAt", "expiresAt", "verificationMethod", "provenance", "sourceHealth",
+        ROW_NUMBER() OVER (
+          PARTITION BY "supplierOfferId"
+          ORDER BY "observedAt" DESC, "createdAt" DESC, "id" DESC
+        ) AS "inventoryRowNumber"
+      FROM "InventoryObservation"
+      WHERE "supplierOfferId" IN (${Prisma.join(ids)})
+    ) AS "rankedInventoryObservations"
+    WHERE "inventoryRowNumber" = 1
+  `);
+
+  return new Map(rows.map((row) => [row.supplierOfferId, rowToSnapshot(row)]));
 }
