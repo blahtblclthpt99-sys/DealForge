@@ -67,8 +67,9 @@ test("expired, zero-quantity, paused, and low-confidence evidence fail closed", 
 
 test("inventory operations are monotonic-safe and never auto-enable commerce", async () => {
   const operations = await readFile("src/lib/inventory-operations.ts", "utf8");
-  assert.match(operations, /commerceEnabled: false/);
-  assert.doesNotMatch(operations, /commerceEnabled:\s*true/);
+  assert.match(operations, /data:\s*{\s*commerceEnabled:\s*false,\s*availability,/s);
+  assert.doesNotMatch(operations, /data:\s*{\s*commerceEnabled:\s*true\b/s);
+  assert.match(operations, /commercePromoted:\s*false as const/);
   assert.match(operations, /recordInventoryObservation/);
   assert.match(operations, /readLatestInventoryObservation/);
   assert.match(operations, /inventory_product_demoted/);
