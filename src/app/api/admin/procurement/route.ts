@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/auth";
 import { prisma } from "@/lib/db";
+import { listRecoveryCases } from "@/lib/recovery-reconciliation";
 import { projectPublicShipment } from "@/lib/shipment-tracking";
 
 export const runtime = "nodejs";
@@ -72,6 +73,9 @@ export async function GET() {
           paidAt: true,
           totalCents: true,
           currency: true,
+          refunds: {
+            select: { idempotencyKey: true, status: true, amountCents: true },
+          },
         },
       },
       orderItem: {
@@ -85,9 +89,10 @@ export async function GET() {
       },
       events: {
         orderBy: { createdAt: "desc" },
-        take: 20,
+        take: 100,
         select: {
           id: true,
+          eventKey: true,
           type: true,
           actor: true,
           detail: true,
@@ -108,10 +113,22 @@ export async function GET() {
     const shipmentEvents = intent.events.filter(
       (event) => event.type === "RECORD_SHIPMENT" || event.type === "MARK_DELIVERED",
     );
+    const recoveryCases = listRecoveryCases({
+      events: intent.events,
+      refunds: intent.order.refunds,
+      actualTotalCostCents: intent.actualTotalCostCents,
+      intentQuantity: intent.quantity,
+    });
 
     return {
       ...intent,
       shipment: projectPublicShipment(shipmentEvents),
+      recovery: {
+        caseCount: recoveryCases.length,
+        openCaseCount: recoveryCases.filter((item) => item.ok && !item.closed).length,
+        cases: recoveryCases,
+        automaticRecoveryEnabled: false,
+      },
       economics: {
         reconciled: actual !== null,
         lineRevenueCents: revenue,
@@ -127,6 +144,7 @@ export async function GET() {
   return noStore(
     NextResponse.json({
       automaticSupplierPurchasingEnabled: false,
+      automaticRecoveryEnabled: false,
       executionMode: "manual_only",
       intents: reconciled,
     }),
