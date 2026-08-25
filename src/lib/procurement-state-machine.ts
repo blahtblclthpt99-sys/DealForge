@@ -3,6 +3,8 @@ export const PROCUREMENT_STATUSES = [
   "approved_manual",
   "hold",
   "supplier_ordered_manual",
+  "shipped",
+  "delivered",
   "cancelled",
 ] as const;
 
@@ -13,6 +15,8 @@ export const PROCUREMENT_ACTIONS = [
   "PLACE_HOLD",
   "RESUME_REVIEW",
   "RECORD_MANUAL_PURCHASE",
+  "RECORD_SHIPMENT",
+  "MARK_DELIVERED",
   "CANCEL",
 ] as const;
 
@@ -23,6 +27,8 @@ const allowedFrom: Record<ProcurementAction, readonly ProcurementStatus[]> = {
   PLACE_HOLD: ["awaiting_review", "approved_manual"],
   RESUME_REVIEW: ["hold"],
   RECORD_MANUAL_PURCHASE: ["approved_manual"],
+  RECORD_SHIPMENT: ["supplier_ordered_manual"],
+  MARK_DELIVERED: ["shipped"],
   CANCEL: ["awaiting_review", "approved_manual", "hold"],
 };
 
@@ -31,6 +37,8 @@ const nextStatus: Record<ProcurementAction, ProcurementStatus> = {
   PLACE_HOLD: "hold",
   RESUME_REVIEW: "awaiting_review",
   RECORD_MANUAL_PURCHASE: "supplier_ordered_manual",
+  RECORD_SHIPMENT: "shipped",
+  MARK_DELIVERED: "delivered",
   CANCEL: "cancelled",
 };
 
