@@ -11,6 +11,7 @@ function observation(overrides: Record<string, unknown> = {}) {
     availability: "in_stock",
     quantity: 4,
     inventoryConfidenceBps: 9300,
+    observedPriceCents: 2200,
     observedAt: new Date("2026-08-25T15:25:00.000Z"),
     expiresAt: new Date("2026-08-25T15:45:00.000Z"),
     verificationMethod: "supplier_feed",
@@ -75,6 +76,21 @@ test("inventory operations are monotonic-safe and never auto-enable commerce", a
   assert.match(operations, /inventory_product_demoted/);
   assert.match(operations, /MAX_SWEEP_OFFERS = 250/);
   assert.match(operations, /enginePaused/);
+});
+
+test("observed supplier price drift fails closed until commercialization is rerun", async () => {
+  const operations = await readFile("src/lib/inventory-operations.ts", "utf8");
+  const store = await readFile("src/lib/inventory-observation-store.ts", "utf8");
+  const freshness = await readFile("src/lib/inventory-freshness.ts", "utf8");
+
+  assert.match(freshness, /observedPriceCents\?: number \| null/);
+  assert.match(store, /"observedPriceCents"/);
+  assert.match(store, /observedPriceCents: row\.observedPriceCents/);
+  assert.match(operations, /observedPriceDrift/);
+  assert.match(operations, /observed_supplier_price_drift/);
+  assert.match(operations, /persistedItemCostCents: offer\.itemCostCents/);
+  assert.match(operations, /if \(!freshness\.promotable \|\| priceDrift\)/);
+  assert.doesNotMatch(operations, /itemCostCents:\s*latest\.observedPriceCents/);
 });
 
 test("owner inventory endpoint is bounded, same-origin, and authenticated", async () => {
