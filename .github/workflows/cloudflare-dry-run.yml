@@ -16,6 +16,8 @@ jobs:
     env:
       DATABASE_URL: postgresql://dealforge:ci-only@db.invalid/dealforge?sslmode=require
       AUTH_SECRET: ci-only-not-for-production-00000000000000000000000000000000
+      STRIPE_SECRET_KEY: sk_test_ci_only_dealforge
+      STRIPE_WEBHOOK_SECRET_TEST: whsec_ci_only_dealforge
       NEXT_PUBLIC_APP_URL: https://www.deal-forge.sale
       NEXT_PUBLIC_APP_NAME: DealForge
       GITHUB_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
