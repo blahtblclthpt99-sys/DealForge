@@ -4,7 +4,7 @@
  * Runtime link generation resolves environment values lazily so request-version
  * Cloudflare bindings cannot be replaced by an empty build-time snapshot.
  */
-type EbayAffiliateEnv = {
+type EbayAffiliateEnv = Record<string, string | undefined> & {
   EBAY_AFFILIATE_SID?: string;
   EBAY_AFFILIATE_TRACKING_ID?: string;
 };
