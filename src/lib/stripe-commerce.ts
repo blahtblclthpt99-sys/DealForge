@@ -117,6 +117,19 @@ function stripeSecretKey() {
 export function expectedStripeLivemode(secretKey = resolveStripeRuntimeValue("STRIPE_SECRET_KEY")) {
   if (secretKey.startsWith("sk_live_")) return true;
   if (secretKey.startsWith("sk_test_")) return false;
+
+  // Webhook verification must not falsely report "not configured" merely
+  // because the Stripe API key is not present in the same runtime boundary.
+  // A single mode-specific webhook secret is sufficient to establish expected
+  // event mode. If both are present, fail closed rather than guessing.
+  const liveWebhookSecret = resolveStripeRuntimeValue("STRIPE_WEBHOOK_SECRET_LIVE");
+  const testWebhookSecret = resolveStripeRuntimeValue("STRIPE_WEBHOOK_SECRET_TEST");
+  if (liveWebhookSecret && !testWebhookSecret) return true;
+  if (testWebhookSecret && !liveWebhookSecret) return false;
+  if (liveWebhookSecret && testWebhookSecret) {
+    throw new Error("STRIPE_WEBHOOK_MODE_AMBIGUOUS");
+  }
+
   throw new Error("STRIPE_SECRET_KEY_MODE_UNKNOWN");
 }
 
