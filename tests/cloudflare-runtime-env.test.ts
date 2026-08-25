@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { buildAliExpressAffiliateUrl } from "../src/lib/affiliate/aliexpress-config";
+import { buildAmazonProductUrl } from "../src/lib/affiliate/amazon-config";
+import { buildEbayAffiliateUrl } from "../src/lib/affiliate/ebay-config";
 import { hydrateCloudflareProcessEnv } from "../src/lib/cloudflare-runtime-env";
 
 test("Cloudflare runtime env bridge copies only string bindings", () => {
@@ -24,31 +27,10 @@ test("Cloudflare runtime env bridge copies only string bindings", () => {
   assert.equal(target.NUMBER_BINDING, undefined);
 });
 
-test("custom Worker hydrates Cloudflare bindings before OpenNext initializes", async () => {
+test("custom Worker hydrates bindings before OpenNext fetch and scheduled execution", async () => {
   const source = await readFile("custom-worker.ts", "utf8");
 
-  assert.match(source, /import \{ env as cloudflareEnv \} from "cloudflare:workers"/);
   assert.match(source, /import \{ hydrateCloudflareProcessEnv \}/);
-
-  const initialHydration = source.indexOf(
-    "hydrateCloudflareProcessEnv(cloudflareEnv as Record<string, unknown>);",
-  );
-  const openNextImport = source.indexOf(
-    'await import("./.open-next/worker.js")',
-  );
-
-  assert.ok(initialHydration >= 0, "expected module-scope Cloudflare env hydration");
-  assert.ok(openNextImport > initialHydration, "OpenNext must load after env hydration");
-
-  assert.doesNotMatch(
-    source,
-    /import\s+nextWorker\s+from\s+["']\.\/\.open-next\/worker\.js["']/,
-  );
-  assert.doesNotMatch(
-    source,
-    /export\s*\{[^}]*DOQueueHandler[^}]*\}\s*from\s*["']\.\/\.open-next\/worker\.js["']/,
-  );
-
   assert.match(
     source,
     /async fetch\([\s\S]*?hydrateCloudflareProcessEnv\(env\);[\s\S]*?return handler\.fetch\(request, env, ctx\);/,
@@ -58,4 +40,46 @@ test("custom Worker hydrates Cloudflare bindings before OpenNext initializes", a
     /async scheduled\([\s\S]*?hydrateCloudflareProcessEnv\(env\);[\s\S]*?resolveMaintenanceToken\(env\)/,
   );
   assert.doesNotMatch(source, /console\.(?:log|error).*STRIPE_WEBHOOK_SECRET/);
+});
+
+test("runtime affiliate links observe bindings hydrated after module initialization", () => {
+  const names = [
+    "AMAZON_ASSOCIATE_TAG",
+    "AMAZON_PARTNER_TAG",
+    "EBAY_AFFILIATE_SID",
+    "EBAY_AFFILIATE_TRACKING_ID",
+    "ALIEXPRESS_AFF_SHORT_KEY",
+    "ALIEXPRESS_TRACKING_ID",
+    "ALIEXPRESS_PUBLISHER_ID",
+  ] as const;
+  const before = new Map(names.map((name) => [name, process.env[name]]));
+
+  try {
+    hydrateCloudflareProcessEnv({
+      AMAZON_ASSOCIATE_TAG: "runtime-amazon-20",
+      EBAY_AFFILIATE_SID: "runtime-ebay-sid",
+      EBAY_AFFILIATE_TRACKING_ID: "runtime-ebay-campaign",
+      ALIEXPRESS_AFF_SHORT_KEY: "runtime-ali-key",
+      ALIEXPRESS_PUBLISHER_ID: "runtime-ali-publisher",
+    });
+
+    const amazon = new URL(buildAmazonProductUrl("b000test01"));
+    assert.equal(amazon.searchParams.get("tag"), "runtime-amazon-20");
+
+    const ebay = new URL(buildEbayAffiliateUrl({ itemId: "123456789" }));
+    assert.equal(ebay.hostname, "rover.ebay.com");
+    assert.equal(ebay.searchParams.get("customid"), "runtime-ebay-sid");
+    assert.equal(ebay.searchParams.get("campid"), "runtime-ebay-campaign");
+
+    const ali = new URL(buildAliExpressAffiliateUrl({ productId: "1005000000000" }));
+    assert.equal(ali.hostname, "s.click.aliexpress.com");
+    assert.equal(ali.searchParams.get("aff_short_key"), "runtime-ali-key");
+    assert.equal(ali.searchParams.get("af"), "runtime-ali-publisher");
+  } finally {
+    for (const name of names) {
+      const value = before.get(name);
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  }
 });
