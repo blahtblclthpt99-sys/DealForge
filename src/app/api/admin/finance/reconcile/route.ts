@@ -27,7 +27,13 @@ export const dynamic = "force-dynamic";
 
 type RefundFinancialCountRow = {
   refundId: string;
-  eventCount: bigint;
+  refundBalanceCount: bigint;
+  failureBalanceCount: bigint;
+};
+
+type RefundFinancialCounts = {
+  refundBalanceCount: number;
+  failureBalanceCount: number;
 };
 
 function noStore(response: NextResponse) {
@@ -125,17 +131,42 @@ async function refundEvidenceForStripeRefund(stripeRefund: StripeRefund) {
   return evidence;
 }
 
+function evidenceCounts(evidence: RefundFinancialEvidence[]): RefundFinancialCounts {
+  return {
+    refundBalanceCount: evidence.filter((item) => item.kind === "refund_balance").length,
+    failureBalanceCount: evidence.filter((item) => item.kind === "refund_failure_balance").length,
+  };
+}
+
+function refundIsFinanciallyComplete(
+  status: string,
+  counts: RefundFinancialCounts,
+) {
+  return status === "succeeded" && counts.refundBalanceCount === 1 && counts.failureBalanceCount === 0;
+}
+
 async function localRefundFinancialCounts(refundIds: string[]) {
-  if (refundIds.length === 0) return new Map<string, number>();
+  if (refundIds.length === 0) return new Map<string, RefundFinancialCounts>();
   const rows = await prisma.$queryRaw<RefundFinancialCountRow[]>(
     Prisma.sql`
-      SELECT "refundId", COUNT(*) AS "eventCount"
+      SELECT
+        "refundId",
+        COUNT(*) FILTER (WHERE "kind" = 'refund_balance') AS "refundBalanceCount",
+        COUNT(*) FILTER (WHERE "kind" = 'refund_failure_balance') AS "failureBalanceCount"
       FROM "RefundFinancialEvent"
       WHERE "refundId" IN (${Prisma.join(refundIds)})
       GROUP BY "refundId"
     `,
   );
-  return new Map(rows.map((row) => [row.refundId, Number(row.eventCount)]));
+  return new Map(
+    rows.map((row) => [
+      row.refundId,
+      {
+        refundBalanceCount: Number(row.refundBalanceCount),
+        failureBalanceCount: Number(row.failureBalanceCount),
+      },
+    ]),
+  );
 }
 
 export async function GET(request: Request) {
@@ -174,10 +205,15 @@ export async function GET(request: Request) {
       (payment) => payment.providerPaymentId === order.stripePaymentIntentId,
     );
     const refundFinancialCounts = await localRefundFinancialCounts(order.refunds.map((refund) => refund.id));
-    const succeededRefundsWithFinancialEvidence = order.refunds.filter(
-      (refund) => refund.status === "succeeded" && (refundFinancialCounts.get(refund.id) || 0) > 0,
-    ).length;
     const succeededRefundCount = order.refunds.filter((refund) => refund.status === "succeeded").length;
+    const succeededRefundsWithFinancialEvidence = order.refunds.filter((refund) => {
+      const counts = refundFinancialCounts.get(refund.id) || {
+        refundBalanceCount: 0,
+        failureBalanceCount: 0,
+      };
+      return refundIsFinanciallyComplete(refund.status, counts);
+    }).length;
+    const nonSucceededRefundCount = order.refunds.filter((refund) => refund.status !== "succeeded").length;
 
     const checks = {
       paymentIntentId: stripe.id === order.stripePaymentIntentId,
@@ -191,7 +227,7 @@ export async function GET(request: Request) {
       refunds: stripeRefundedCents === ledgerRefundedCents,
       feeEvidenceAvailable: feeLookup.evidence !== null,
       refundFinancialEvidence:
-        succeededRefundsWithFinancialEvidence === succeededRefundCount,
+        succeededRefundsWithFinancialEvidence === succeededRefundCount && nonSucceededRefundCount === 0,
     };
     const mismatches = Object.entries(checks)
       .filter(([, passed]) => !passed)
@@ -209,6 +245,7 @@ export async function GET(request: Request) {
         succeededRefundCents: ledgerRefundedCents,
         succeededRefundCount,
         succeededRefundsWithFinancialEvidence,
+        nonSucceededRefundCount,
       },
       stripe: {
         paymentIntentId: stripe.id,
@@ -295,6 +332,7 @@ export async function POST(request: Request) {
       if (updated.count !== 1) throw new Error("FEE_RECONCILIATION_CONCURRENT_CHANGE");
 
       let refundFinancialEventsRecorded = 0;
+      let financiallyCompleteRefunds = 0;
       for (const lookupRefund of refundLookups) {
         const local = await tx.refund.findUnique({ where: { id: lookupRefund.local.id } });
         if (!local) throw new Error("REFUND_FINANCIAL_LOCAL_REFUND_NOT_FOUND");
@@ -317,17 +355,30 @@ export async function POST(request: Request) {
           });
           refundFinancialEventsRecorded += 1;
         }
+        if (refundIsFinanciallyComplete(local.status, evidenceCounts(lookupRefund.financialEvidence))) {
+          financiallyCompleteRefunds += 1;
+        }
       }
 
-      return { paymentId: payment.id, evidence, refundFinancialEventsRecorded };
+      return {
+        paymentId: payment.id,
+        evidence,
+        refundFinancialEventsRecorded,
+        financiallyCompleteRefunds,
+      };
     });
 
+    const refundsFullyReconciled =
+      result.financiallyCompleteRefunds === order.refunds.length;
     return noStore(NextResponse.json({
-      reconciled: true,
+      reconciled: refundsFullyReconciled,
+      reason: refundsFullyReconciled ? null : "REFUND_FINANCIAL_EVIDENCE_INCOMPLETE",
       automaticSupplierPurchasingEnabled: false,
       paymentId: result.paymentId,
       fee: result.evidence,
       refundFinancialEventsRecorded: result.refundFinancialEventsRecorded,
+      financiallyCompleteRefunds: result.financiallyCompleteRefunds,
+      refundCount: order.refunds.length,
     }));
   } catch (error) {
     const message = error instanceof Error ? error.message : "UNKNOWN";
