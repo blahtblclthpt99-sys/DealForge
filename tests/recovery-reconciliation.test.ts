@@ -180,12 +180,13 @@ test("multiple post-purchase exceptions project as separate recovery cases", () 
   assert.equal(cases.length, 2);
 });
 
-test("admin recovery route is bounded, admin-only, idempotent, and row-lock serialized", () => {
+test("owner recovery route is bounded, owner-only, idempotent, and row-lock serialized", () => {
   const source = fs.readFileSync(
     path.join(process.cwd(), "src/app/api/admin/procurement/[id]/recovery/route.ts"),
     "utf8",
   );
-  assert.match(source, /requireAdmin/);
+  assert.match(source, /requireProcurementOwner/);
+  assert.match(source, /isSameOriginProcurementMutation\(request\)/);
   assert.match(source, /readLimitedJson\(request, 16 \* 1024\)/);
   assert.match(source, /RECOVERY_LOSS_REQUIRES_SUCCEEDED_REFUND/);
   assert.match(source, /RECOVERY_ACCOUNTING_EXCEEDS_SUPPLIER_COST/);

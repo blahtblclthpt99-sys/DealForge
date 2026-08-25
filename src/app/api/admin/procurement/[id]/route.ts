@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { requireAdmin } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import {
   isProcurementStatus,
@@ -11,6 +10,10 @@ import {
 } from "@/lib/procurement-state-machine";
 import { hasActiveRefund } from "@/lib/refund-procurement-interlock";
 import { readLimitedJson } from "@/lib/request-json";
+import {
+  isSameOriginProcurementMutation,
+  requireProcurementOwner,
+} from "@/lib/procurement-authorization";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -38,7 +41,7 @@ const ActionSchema = z.discriminatedUnion("action", [
 
 async function authorizeAdmin() {
   try {
-    return { admin: await requireAdmin(), response: null };
+    return { admin: await requireProcurementOwner(), response: null };
   } catch (error) {
     const status = error instanceof Error && error.message === "UNAUTHORIZED" ? 401 : 403;
     return {
@@ -60,6 +63,9 @@ function noStore(response: NextResponse) {
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
   const auth = await authorizeAdmin();
   if (auth.response || !auth.admin) return noStore(auth.response || NextResponse.json({ error: "FORBIDDEN" }, { status: 403 }));
+  if (!isSameOriginProcurementMutation(request)) {
+    return noStore(NextResponse.json({ error: "INVALID_ORIGIN" }, { status: 403 }));
+  }
 
   const read = await readLimitedJson(request, 16 * 1024);
   if (!read.ok) {
@@ -178,7 +184,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
           eventKey: procurementEventKey(current.id, parsed.data.action, nonce),
           procurementIntentId: current.id,
           type: parsed.data.action,
-          actor: `admin:${auth.admin.id}`,
+          actor: `owner:${auth.admin.id}`,
           detail: JSON.stringify({
             previousStatus: current.status,
             nextStatus: txTransition.next,

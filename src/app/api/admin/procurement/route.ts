@@ -1,15 +1,15 @@
 import { NextResponse } from "next/server";
-import { requireAdmin } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { listRecoveryCases } from "@/lib/recovery-reconciliation";
 import { projectPublicShipment } from "@/lib/shipment-tracking";
+import { requireProcurementOwner } from "@/lib/procurement-authorization";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 async function authorizeAdmin() {
   try {
-    return { admin: await requireAdmin(), response: null };
+    return { admin: await requireProcurementOwner(), response: null };
   } catch (error) {
     const status = error instanceof Error && error.message === "UNAUTHORIZED" ? 401 : 403;
     return {
