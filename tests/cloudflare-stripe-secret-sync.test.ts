@@ -27,19 +27,23 @@ test("Cloudflare webhook sync preserves Stripe secret modes and the legacy fallb
   );
 });
 
-test("production deploy synchronizes available webhook secrets before publishing", async () => {
+test("production deploy binds webhook secrets atomically to the published Worker version", async () => {
   const source = await readFile(".github/workflows/cloudflare-production-deploy.yml", "utf8");
 
-  const syncIndex = source.indexOf("Synchronize Stripe webhook secrets when GitHub sources exist");
-  const deployIndex = source.indexOf("Deploy exact main revision");
-  assert.ok(syncIndex >= 0, "missing webhook-secret synchronization step");
-  assert.ok(deployIndex >= 0, "missing production deploy step");
-  assert.ok(syncIndex < deployIndex, "webhook secrets must be synchronized before production publish");
+  const validateIndex = source.indexOf("Validate Stripe webhook secret sources");
+  const deployIndex = source.indexOf("Deploy exact main revision with webhook secret");
+  assert.ok(validateIndex >= 0, "missing webhook-secret validation step");
+  assert.ok(deployIndex >= 0, "missing atomic production deploy step");
+  assert.ok(validateIndex < deployIndex, "webhook secrets must be validated before production publish");
 
   assert.match(source, /STRIPE_WEBHOOK_SECRET_LIVE: \$\{\{ secrets\.STRIPE_WEBHOOK_SECRET_LIVE \}\}/);
-  assert.match(source, /write_secret STRIPE_WEBHOOK_SECRET_LIVE STRIPE_WEBHOOK_SECRET_LIVE/);
-  assert.match(source, /write_secret STRIPE_WEBHOOK_SECRET_TEST STRIPE_WEBHOOK_SECRET_TEST/);
-  assert.match(source, /write_secret STRIPE_WEBHOOK_SECRET STRIPE_WEBHOOK_SECRET/);
+  assert.match(source, /STRIPE_WEBHOOK_SECRET_TEST: \$\{\{ secrets\.STRIPE_WEBHOOK_SECRET_TEST \}\}/);
+  assert.match(source, /STRIPE_WEBHOOK_SECRET_LEGACY: \$\{\{ secrets\.STRIPE_WEBHOOK_SECRET \}\}/);
+  assert.match(source, /--secrets-file "\$secrets_file"/);
+  assert.match(source, /chmod 600 "\$secrets_file"/);
+  assert.match(source, /STRIPE_WEBHOOK_SECRET_LEGACY: 'STRIPE_WEBHOOK_SECRET'/);
+  assert.match(source, /STRIPE_WEBHOOK_SECRET_TEST missing or invalid/);
+  assert.doesNotMatch(source, /wrangler versions secret put/);
 });
 
 test("live smoke requires the webhook route to reach signature verification", async () => {
