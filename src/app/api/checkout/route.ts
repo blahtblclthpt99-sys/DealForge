@@ -2,7 +2,10 @@ import { randomBytes } from "node:crypto";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { readSession } from "@/lib/auth";
-import { calculateCustomerFriendlyPrice } from "@/lib/cart-pricing";
+import {
+  attributableCostFromSpecifications,
+  calculateCustomerFriendlyPrice,
+} from "@/lib/cart-pricing";
 import { checkCheckoutExposure } from "@/lib/checkout-exposure";
 import { prisma } from "@/lib/db";
 import { evaluateCommerceGate } from "@/lib/commerce-gate";
@@ -290,6 +293,7 @@ export async function POST(request: Request) {
         }
         const pricing = calculateCustomerFriendlyPrice({
           landedCostCents: product.landedCostCents,
+          attributableCostCents: attributableCostFromSpecifications(product.specifications),
           publishedPriceCents: product.sellingPriceCents,
         });
         if (!pricing.eligible) {

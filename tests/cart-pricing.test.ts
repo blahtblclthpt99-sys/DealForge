@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  attributableCostFromSpecifications,
   calculateCustomerFriendlyPrice,
+  calculateMinimumSafeCustomerPrice,
   minimumSafeProfitCents,
   roundToFriendlyPrice,
 } from "../src/lib/cart-pricing";
@@ -28,6 +30,20 @@ test("friendly pricing rounds only upward to .49 or .99", () => {
   assert.equal(roundToFriendlyPrice(3_599), 3_599);
 });
 
+test("canonical minimum-safe price adds attributable cost without changing the landed-cost profit tier", () => {
+  const decision = calculateMinimumSafeCustomerPrice({
+    landedCostCents: 3_000,
+    attributableCostCents: 250,
+    policy: POLICY,
+  });
+
+  assert.equal(decision.pricingBasisCents, 3_250);
+  assert.equal(decision.attributableCostCents, 250);
+  assert.equal(decision.minimumProfitCents, 360);
+  assert.ok(decision.estimatedContributionProfitCents >= decision.minimumProfitCents);
+  assert.ok([49, 99].includes(decision.customerPriceCents % 100));
+});
+
 test("cart calculates the lowest safe price and exposes savings against the published ceiling", () => {
   const decision = calculateCustomerFriendlyPrice({
     landedCostCents: 3_000,
@@ -40,6 +56,23 @@ test("cart calculates the lowest safe price and exposes savings against the publ
   assert.equal(decision.customerPriceCents, 3_599);
   assert.equal(decision.savingsCents, 1_401);
   assert.ok(decision.estimatedContributionProfitCents >= decision.minimumProfitCents);
+});
+
+test("only V2 can promote an acquisition amount into attributable customer pricing", () => {
+  assert.equal(
+    attributableCostFromSpecifications(JSON.stringify({
+      commerceV2: { attributableAcquisitionCostCents: 275 },
+      commerceV1: { reserves: { acquisitionCents: 999 } },
+    })),
+    275,
+  );
+  assert.equal(
+    attributableCostFromSpecifications(JSON.stringify({
+      commerceV1: { reserves: { acquisitionCents: 125, supportCents: 500, fraudCents: 500 } },
+    })),
+    0,
+  );
+  assert.equal(attributableCostFromSpecifications("not-json"), 0);
 });
 
 test("cart blocks instead of surprising the customer when the safe price exceeds the published price", () => {
