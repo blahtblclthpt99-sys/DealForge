@@ -4,6 +4,8 @@ export const STRIPE_FEE_WEBHOOK_SOURCE = "stripe_balance_transaction_webhook" as
 export type StripeFeeEvidence = {
   paymentIntentId: string;
   chargeId: string;
+  chargeAmountCents: number;
+  chargeCurrency: string;
   balanceTransactionId: string;
   feeCents: number;
   grossCents: number;
@@ -113,6 +115,8 @@ export function validateStripeFeeEvidence(input: {
     evidence: {
       paymentIntentId,
       chargeId,
+      chargeAmountCents: chargeAmount,
+      chargeCurrency,
       balanceTransactionId,
       feeCents,
       grossCents: balanceAmount,
