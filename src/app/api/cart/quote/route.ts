@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { calculateCustomerFriendlyPrice } from "@/lib/cart-pricing";
+import {
+  attributableCostFromSpecifications,
+  calculateCustomerFriendlyPrice,
+} from "@/lib/cart-pricing";
 import { evaluateCommerceGate } from "@/lib/commerce-gate";
 import { prisma } from "@/lib/db";
 import { checkPersistedOfferBinding } from "@/lib/persisted-offer-binding";
@@ -141,6 +144,7 @@ export async function POST(request: Request) {
 
       const pricing = calculateCustomerFriendlyPrice({
         landedCostCents: product.landedCostCents,
+        attributableCostCents: attributableCostFromSpecifications(product.specifications),
         publishedPriceCents: product.sellingPriceCents,
       });
       if (!pricing.eligible) {
