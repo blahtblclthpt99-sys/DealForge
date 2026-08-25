@@ -24,6 +24,7 @@ type InventoryObservationRow = {
   availability: string;
   quantity: number | null;
   inventoryConfidenceBps: number;
+  observedPriceCents: number | null;
   observedAt: Date;
   expiresAt: Date;
   verificationMethod: string;
@@ -125,7 +126,7 @@ export async function readLatestInventoryObservation(
   const normalizedOfferId = requiredText(supplierOfferId, "SUPPLIER_OFFER_ID", 128);
   const rows = await prisma.$queryRaw<InventoryObservationRow[]>`
     SELECT
-      "supplierOfferId", "availability", "quantity", "inventoryConfidenceBps",
+      "supplierOfferId", "availability", "quantity", "inventoryConfidenceBps", "observedPriceCents",
       "observedAt", "expiresAt", "verificationMethod", "provenance", "sourceHealth"
     FROM "InventoryObservation"
     WHERE "supplierOfferId" = ${normalizedOfferId}
@@ -139,6 +140,7 @@ export async function readLatestInventoryObservation(
     availability: row.availability,
     quantity: row.quantity,
     inventoryConfidenceBps: row.inventoryConfidenceBps,
+    observedPriceCents: row.observedPriceCents,
     observedAt: row.observedAt,
     expiresAt: row.expiresAt,
     verificationMethod: row.verificationMethod,
