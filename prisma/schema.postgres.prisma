@@ -315,10 +315,32 @@ model Order {
   payments                Payment[]
   refunds                 Refund[]
   procurementIntents      ProcurementIntent[]
+  destination             OrderDestination?
 
   @@index([userId, createdAt])
   @@index([email, createdAt])
   @@index([status, createdAt])
+}
+
+model OrderDestination {
+  id                      String   @id @default(cuid())
+  orderId                 String   @unique
+  order                   Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  source                  String   @default("stripe_checkout")
+  sourceEventId           String
+  stripeCheckoutSessionId String   @unique
+  name                    String
+  line1                   String
+  line2                   String?
+  city                    String
+  state                   String?
+  postalCode              String
+  country                 String
+  capturedAt              DateTime @default(now())
+  createdAt               DateTime @default(now())
+
+  @@index([country])
+  @@index([sourceEventId])
 }
 
 model OrderItem {
