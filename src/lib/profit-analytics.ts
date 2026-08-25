@@ -33,10 +33,18 @@ type PaymentFeeRecord = {
   feeCents: number;
   currency: string;
   source: (typeof AUTHORITATIVE_PAYMENT_FEE_SOURCES)[number];
+  chargeId: string;
+  balanceTransactionId: string;
+  grossCents: number;
+  netCents: number;
 };
 
 function safeNonNegativeInteger(value: unknown) {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : null;
+}
+
+function safeInteger(value: unknown) {
+  return typeof value === "number" && Number.isSafeInteger(value) ? value : null;
 }
 
 function parseJsonObject(value: string) {
@@ -55,15 +63,26 @@ export function authoritativePaymentFee(payment: PaymentView): PaymentFeeRecord 
   const meta = parseJsonObject(payment.meta);
   if (!meta) return null;
   const feeCents = safeNonNegativeInteger(meta.processingFeeCents);
+  const grossCents = safeInteger(meta.processingFeeGrossCents);
+  const netCents = safeInteger(meta.processingFeeNetCents);
   const source = meta.processingFeeSource;
+  const chargeId = meta.processingFeeChargeId;
+  const balanceTransactionId = meta.processingFeeBalanceTransactionId;
   const currency =
     typeof meta.processingFeeCurrency === "string"
       ? meta.processingFeeCurrency.trim().toLowerCase()
-      : payment.currency.trim().toLowerCase();
+      : "";
   if (
     feeCents === null ||
+    grossCents === null ||
+    netCents === null ||
+    netCents !== grossCents - feeCents ||
     typeof source !== "string" ||
     !(AUTHORITATIVE_PAYMENT_FEE_SOURCES as readonly string[]).includes(source) ||
+    typeof chargeId !== "string" ||
+    !/^ch_[A-Za-z0-9_]+$/.test(chargeId) ||
+    typeof balanceTransactionId !== "string" ||
+    !/^txn_[A-Za-z0-9_]+$/.test(balanceTransactionId) ||
     !/^[a-z]{3}$/.test(currency)
   ) {
     return null;
@@ -72,6 +91,10 @@ export function authoritativePaymentFee(payment: PaymentView): PaymentFeeRecord 
     feeCents,
     currency,
     source: source as PaymentFeeRecord["source"],
+    chargeId,
+    balanceTransactionId,
+    grossCents,
+    netCents,
   };
 }
 
@@ -160,10 +183,7 @@ export function analyzeOrderProfit(input: {
       if (!recovery.closed) openRecoveryCaseCount += 1;
     }
 
-    if (
-      actual !== null &&
-      intentRecoveredCents + intentAcceptedLossCents > actual
-    ) {
+    if (actual !== null && intentRecoveredCents + intentAcceptedLossCents > actual) {
       aggregateOverAccountedIntentCount += 1;
     }
   }
@@ -204,8 +224,14 @@ export function analyzeOrderProfit(input: {
     knownPaymentProcessingFeeCents += record.feeCents;
     authoritativePaymentFeeCount += 1;
   }
-  const paymentProcessingCostComplete =
+  const chargeProcessingFeeComplete =
     paymentLedgerValid && authoritativePaymentFeeCount === succeededPayments.length;
+  // v1 certifies the original charge fee. A succeeded refund can introduce a
+  // separate Stripe balance impact, so refunded orders stay incomplete until a
+  // later refund-adjustment journal records that side of payment processing.
+  const refundProcessingAdjustmentComplete = succeededRefundCents === 0;
+  const paymentProcessingCostComplete =
+    chargeProcessingFeeComplete && refundProcessingAdjustmentComplete;
 
   // Collected tax is a liability, not contribution. Once a taxable order is partially/full refunded,
   // the exact retained tax liability is not inferred from a lump-sum refund without authoritative tax allocation.
@@ -222,7 +248,10 @@ export function analyzeOrderProfit(input: {
   if (!refundLedgerValid) finalizationReasons.push("REFUND_LEDGER_INVALID");
   if (!paymentLedgerValid) finalizationReasons.push("PAYMENT_LEDGER_INVALID");
   if (!supplierCostComplete) finalizationReasons.push("SUPPLIER_COST_INCOMPLETE");
-  if (!paymentProcessingCostComplete) finalizationReasons.push("PAYMENT_PROCESSING_COST_UNKNOWN");
+  if (!chargeProcessingFeeComplete) finalizationReasons.push("PAYMENT_PROCESSING_COST_UNKNOWN");
+  if (!refundProcessingAdjustmentComplete) {
+    finalizationReasons.push("REFUND_PROCESSING_ADJUSTMENT_UNKNOWN");
+  }
   if (!taxLiabilityComplete) finalizationReasons.push("REFUND_TAX_ALLOCATION_UNKNOWN");
   if (pendingRefundCents > 0) finalizationReasons.push("REFUND_PENDING");
   if (!recoveryAccountingValid) finalizationReasons.push("RECOVERY_ACCOUNTING_INVALID");
@@ -283,6 +312,8 @@ export function analyzeOrderProfit(input: {
       succeededPaymentCount: succeededPayments.length,
       succeededPaymentAmountCents,
       authoritativeFeeCount: authoritativePaymentFeeCount,
+      chargeFeeComplete: chargeProcessingFeeComplete,
+      refundAdjustmentComplete: refundProcessingAdjustmentComplete,
       complete: paymentProcessingCostComplete,
       knownFeeCents: knownPaymentProcessingFeeCents,
     },
