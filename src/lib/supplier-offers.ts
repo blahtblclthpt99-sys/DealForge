@@ -1,3 +1,4 @@
+import { evaluateInventoryFreshness, type InventoryObservationSnapshot } from "./inventory-freshness";
 import { isDirectResaleSourceClass } from "./source-policy";
 
 export type SupplierOfferCandidate = {
@@ -21,6 +22,7 @@ export type SupplierOfferCandidate = {
   handlingCents: number;
   inventoryConfidenceBps: number;
   priority: number;
+  latestInventoryObservation?: InventoryObservationSnapshot | null;
 };
 
 export type SupplierSelectionPolicy = {
@@ -28,6 +30,7 @@ export type SupplierSelectionPolicy = {
   maxSourceAgeDays: number;
   maxPriceAgeMinutes: number;
   minInventoryConfidenceBps: number;
+  requireCurrentInventoryObservation?: boolean;
 };
 
 export type EvaluatedSupplierOffer = {
@@ -91,7 +94,6 @@ export function evaluateSupplierOffer(
   if (!offer.offerActive) reasons.push("offer_inactive");
   if (!isDirectResaleSourceClass(offer.sourceClass)) reasons.push("source_class_not_direct_resale");
   if (!offer.resaleAllowed) reasons.push("resale_not_verified");
-  if (offer.availability !== "in_stock") reasons.push("inventory_not_in_stock");
 
   if (!/^[a-z]{3}$/.test(expectedCurrency)) {
     reasons.push("currency_policy_invalid");
@@ -111,12 +113,23 @@ export function evaluateSupplierOffer(
     reasons.push("price_verification_stale_or_invalid");
   }
 
-  if (!safeBasisPoints(offer.inventoryConfidenceBps)) {
-    reasons.push("inventory_confidence_invalid");
-  } else if (!safeBasisPoints(policy.minInventoryConfidenceBps)) {
-    reasons.push("inventory_confidence_policy_invalid");
-  } else if (offer.inventoryConfidenceBps < policy.minInventoryConfidenceBps) {
-    reasons.push("inventory_confidence_below_floor");
+  const observationRequired = policy.requireCurrentInventoryObservation === true;
+  if (observationRequired) {
+    const freshness = evaluateInventoryFreshness(
+      offer.latestInventoryObservation,
+      { minInventoryConfidenceBps: policy.minInventoryConfidenceBps, requireCurrent: true },
+      nowMs,
+    );
+    reasons.push(...freshness.reasons);
+  } else {
+    if (offer.availability !== "in_stock") reasons.push("inventory_not_in_stock");
+    if (!safeBasisPoints(offer.inventoryConfidenceBps)) {
+      reasons.push("inventory_confidence_invalid");
+    } else if (!safeBasisPoints(policy.minInventoryConfidenceBps)) {
+      reasons.push("inventory_confidence_policy_invalid");
+    } else if (offer.inventoryConfidenceBps < policy.minInventoryConfidenceBps) {
+      reasons.push("inventory_confidence_below_floor");
+    }
   }
 
   if (!Number.isSafeInteger(offer.priority) || offer.priority < 0) reasons.push("priority_invalid");

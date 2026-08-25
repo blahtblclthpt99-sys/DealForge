@@ -4,6 +4,8 @@ import {
   MIN_INVENTORY_CONFIDENCE_BPS,
 } from "./commercialization";
 import { prisma } from "./db";
+import { readLatestInventoryObservation } from "./inventory-observation-store";
+import type { InventoryObservationSnapshot } from "./inventory-freshness";
 import {
   computeSupplierLandedCostCents,
   evaluateSupplierOffer,
@@ -36,6 +38,7 @@ export type LivePersistedOffer = {
   priceVerifiedAt: Date | null;
   inventoryConfidenceBps: number;
   priority: number;
+  latestInventoryObservation?: InventoryObservationSnapshot | null;
   supplier: {
     name: string;
     active: boolean;
@@ -207,6 +210,7 @@ export function evaluatePersistedOfferBinding(
     handlingCents: liveOffer.handlingCents,
     inventoryConfidenceBps: liveOffer.inventoryConfidenceBps,
     priority: liveOffer.priority,
+    latestInventoryObservation: liveOffer.latestInventoryObservation,
   };
 
   const eligibility = evaluateSupplierOffer(
@@ -216,10 +220,22 @@ export function evaluatePersistedOfferBinding(
       maxSourceAgeDays: MAX_SOURCE_AGE_DAYS,
       maxPriceAgeMinutes: MAX_PRICE_AGE_MINUTES,
       minInventoryConfidenceBps: MIN_INVENTORY_CONFIDENCE_BPS,
+      requireCurrentInventoryObservation: true,
     },
     nowMs,
   );
   reasons.push(...eligibility.reasons.map((reason) => `live_offer_${reason}`));
+
+  const observation = liveOffer.latestInventoryObservation;
+  if (observation && observation.supplierOfferId !== liveOffer.id) {
+    reasons.push("live_offer_inventory_observation_offer_mismatch");
+  }
+  if (observation && observation.availability.trim().toLowerCase() !== liveOffer.availability.trim().toLowerCase()) {
+    reasons.push("live_offer_inventory_observation_availability_drift");
+  }
+  if (observation && observation.inventoryConfidenceBps !== liveOffer.inventoryConfidenceBps) {
+    reasons.push("live_offer_inventory_observation_confidence_drift");
+  }
 
   const liveLandedCostCents = computeSupplierLandedCostCents(candidate);
   if (
@@ -241,7 +257,8 @@ export function evaluatePersistedOfferBinding(
 /**
  * Read-only checkout safety gate. The Product snapshot remains useful for audit,
  * but customer money cannot rely on it alone: the exact normalized supplier
- * offer referenced by the snapshot must still exist and remain eligible now.
+ * offer referenced by the snapshot must still exist, retain a current inventory
+ * observation, and remain eligible now.
  */
 export async function checkPersistedOfferBinding(
   input: PersistedOfferBindingInput,
@@ -283,5 +300,11 @@ export async function checkPersistedOfferBinding(
     },
   });
 
-  return evaluatePersistedOfferBinding(input, liveOffer, nowMs);
+  if (!liveOffer) return evaluatePersistedOfferBinding(input, null, nowMs);
+  const latestInventoryObservation = await readLatestInventoryObservation(liveOffer.id);
+  return evaluatePersistedOfferBinding(
+    input,
+    { ...liveOffer, latestInventoryObservation },
+    nowMs,
+  );
 }

@@ -10,6 +10,8 @@ import {
 const NOW = Date.parse("2026-08-25T01:30:00Z");
 const SOURCE_VERIFIED_AT = "2026-08-24T20:00:00.000Z";
 const PRICE_VERIFIED_AT = "2026-08-25T00:30:00.000Z";
+const INVENTORY_OBSERVED_AT = new Date("2026-08-25T01:20:00.000Z");
+const INVENTORY_EXPIRES_AT = new Date("2026-08-25T01:40:00.000Z");
 const LANDED_COST_CENTS = 2725;
 
 type LiveOverrides = Partial<Omit<LivePersistedOffer, "supplier">> & {
@@ -73,6 +75,17 @@ function liveOffer(overrides: LiveOverrides = {}): LivePersistedOffer {
     priceVerifiedAt: new Date(PRICE_VERIFIED_AT),
     inventoryConfidenceBps: 9300,
     priority: 100,
+    latestInventoryObservation: {
+      supplierOfferId: "offer-a",
+      availability: "in_stock",
+      quantity: 5,
+      inventoryConfidenceBps: 9300,
+      observedAt: INVENTORY_OBSERVED_AT,
+      expiresAt: INVENTORY_EXPIRES_AT,
+      verificationMethod: "supplier_feed",
+      provenance: "supplier.example/feed/item-a",
+      sourceHealth: "healthy",
+    },
     supplier: {
       name: "Verified Supplier",
       active: true,
@@ -88,11 +101,64 @@ function liveOffer(overrides: LiveOverrides = {}): LivePersistedOffer {
   };
 }
 
-test("exact live persisted supplier offer binding is accepted", () => {
+test("exact live persisted supplier offer plus current inventory observation is accepted", () => {
   const result = evaluatePersistedOfferBinding(input(), liveOffer(), NOW);
   assert.equal(result.allowed, true);
   assert.deepEqual(result.reasons, []);
   assert.equal(result.persistedOfferId, "offer-a");
+});
+
+test("missing or stale inventory observation fails closed before customer money", () => {
+  const missing = evaluatePersistedOfferBinding(input(), liveOffer({ latestInventoryObservation: null }), NOW);
+  assert.equal(missing.allowed, false);
+  assert.match(missing.reasons.join(","), /live_offer_inventory_observation_missing/);
+
+  const stale = evaluatePersistedOfferBinding(
+    input(),
+    liveOffer({
+      latestInventoryObservation: {
+        supplierOfferId: "offer-a",
+        availability: "in_stock",
+        quantity: 5,
+        inventoryConfidenceBps: 9300,
+        observedAt: new Date("2026-08-25T00:00:00.000Z"),
+        expiresAt: new Date("2026-08-25T01:00:00.000Z"),
+        verificationMethod: "supplier_feed",
+        provenance: "supplier.example/feed/item-a",
+        sourceHealth: "healthy",
+      },
+    }),
+    NOW,
+  );
+  assert.equal(stale.allowed, false);
+  assert.match(stale.reasons.join(","), /live_offer_inventory_observation_stale/);
+});
+
+test("inventory observation identity, availability, and confidence drift fail closed", () => {
+  const result = evaluatePersistedOfferBinding(
+    input(),
+    liveOffer({
+      latestInventoryObservation: {
+        supplierOfferId: "other-offer",
+        availability: "out_of_stock",
+        quantity: 0,
+        inventoryConfidenceBps: 8000,
+        observedAt: INVENTORY_OBSERVED_AT,
+        expiresAt: INVENTORY_EXPIRES_AT,
+        verificationMethod: "supplier_feed",
+        provenance: "supplier.example/feed/item-a",
+        sourceHealth: "healthy",
+      },
+    }),
+    NOW,
+  );
+  const reasons = result.reasons.join(",");
+  assert.equal(result.allowed, false);
+  assert.match(reasons, /live_offer_inventory_not_in_stock/);
+  assert.match(reasons, /live_offer_inventory_quantity_zero/);
+  assert.match(reasons, /live_offer_inventory_observation_offer_mismatch/);
+  assert.match(reasons, /live_offer_inventory_observation_availability_drift/);
+  assert.match(reasons, /live_offer_inventory_observation_confidence_drift/);
 });
 
 test("missing persisted provenance fails closed before checkout", () => {
@@ -184,6 +250,7 @@ test("stale normalized supplier verification is rejected independently of copied
 
 test("checkout is wired to persisted binding, bounded JSON, user ownership, and exact order economics", async () => {
   const route = await readFile("src/app/api/checkout/route.ts", "utf8");
+  const binding = await readFile("src/lib/persisted-offer-binding.ts", "utf8");
   assert.match(route, /checkPersistedOfferBinding/);
   assert.match(route, /PRODUCT_SUPPLIER_BINDING_FAILED/);
   assert.match(route, /persisted_offer_binding/);
@@ -193,4 +260,6 @@ test("checkout is wired to persisted binding, bounded JSON, user ownership, and 
   assert.match(route, /sameOrderEconomics/);
   assert.match(route, /item\.landedCostCents === live\.product\.landedCostCents/);
   assert.match(route, /order\.subtotalCents !== subtotalCents/);
+  assert.match(binding, /readLatestInventoryObservation/);
+  assert.match(binding, /requireCurrentInventoryObservation: true/);
 });
