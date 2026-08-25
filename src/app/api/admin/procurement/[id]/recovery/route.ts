@@ -131,6 +131,9 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
 
   const intent = await loadIntent(id);
   if (!intent) return noStore(NextResponse.json({ error: "PROCUREMENT_INTENT_NOT_FOUND" }, { status: 404 }));
+  if (intent.events.length >= 250) {
+    return noStore(NextResponse.json({ error: "RECOVERY_EVENT_HISTORY_LIMIT" }, { status: 409 }));
+  }
   const refund =
     intent.order.refunds.find((candidate) => candidate.idempotencyKey === refundIdempotencyKey) || null;
   const recovery = projectRecoveryReconciliation({
@@ -187,6 +190,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
         },
       });
       if (!intent) throw new Error("RECOVERY_INTENT_NOT_FOUND");
+      if (intent.events.length >= 250) throw new Error("RECOVERY_EVENT_HISTORY_LIMIT");
       if (!intent.actualTotalCostCents || intent.actualTotalCostCents <= 0) {
         throw new Error("RECOVERY_SUPPLIER_COST_UNKNOWN");
       }
@@ -197,6 +201,9 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
         ) || null;
       if (!refund || !["pending", "succeeded"].includes(refund.status)) {
         throw new Error("RECOVERY_REFUND_NOT_ACTIVE");
+      }
+      if (action.action === "ACCEPT_UNRECOVERED_LOSS" && refund.status !== "succeeded") {
+        throw new Error("RECOVERY_LOSS_REQUIRES_SUCCEEDED_REFUND");
       }
 
       const before = projectRecoveryReconciliation({
@@ -256,6 +263,12 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       }
 
       const now = new Date();
+      const locked = await tx.procurementIntent.updateMany({
+        where: { id: intent.id, updatedAt: intent.updatedAt },
+        data: { updatedAt: now },
+      });
+      if (locked.count !== 1) throw new Error("RECOVERY_CONCURRENT_CHANGE");
+
       const detail: Record<string, unknown> = {
         version: 1,
         refundIdempotencyKey: action.refundIdempotencyKey,
@@ -309,9 +322,8 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
         },
       });
 
-      const afterEvents = [...intent.events, created];
       const after = projectRecoveryReconciliation({
-        events: afterEvents,
+        events: [...intent.events, created],
         refund,
         refundIdempotencyKey: action.refundIdempotencyKey,
         actualTotalCostCents: intent.actualTotalCostCents,
@@ -333,12 +345,15 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     const message = error instanceof Error ? error.message : "UNKNOWN";
     const map: Record<string, number> = {
       RECOVERY_INTENT_NOT_FOUND: 404,
+      RECOVERY_EVENT_HISTORY_LIMIT: 409,
       RECOVERY_SUPPLIER_COST_UNKNOWN: 409,
       RECOVERY_REFUND_NOT_ACTIVE: 409,
+      RECOVERY_LOSS_REQUIRES_SUCCEEDED_REFUND: 409,
       RECOVERY_EXCEPTION_NOT_FOUND: 409,
       RECOVERY_EXCEPTION_EVENT_INVALID: 409,
       RECOVERY_KEY_CONFLICT: 409,
       RECOVERY_ALREADY_CLOSED: 409,
+      RECOVERY_CONCURRENT_CHANGE: 409,
       RECOVERY_RETURN_QUANTITY_EXCEEDS_PURCHASE: 422,
       RECOVERY_SUPPLIER_RETURN_QUANTITY_EXCEEDS_PURCHASE: 422,
       RECOVERY_SUPPLIER_RETURN_NOT_PLANNED: 422,
