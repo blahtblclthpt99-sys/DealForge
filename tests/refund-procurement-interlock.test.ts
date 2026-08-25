@@ -5,7 +5,9 @@ import path from "node:path";
 import {
   evaluateRefundProcurementInterlock,
   hasActiveRefund,
+  postPurchaseRefundExceptionEventKey,
   refundInterlockEventKey,
+  validatePostPurchaseRefundException,
 } from "../src/lib/refund-procurement-interlock";
 
 test("pre-purchase procurement can be placed on refund hold", () => {
@@ -15,15 +17,60 @@ test("pre-purchase procurement can be placed on refund hold", () => {
     { id: "c", status: "hold" },
   ]);
   assert.equal(result.ok, true);
-  if (result.ok) assert.deepEqual(result.holdIntentIds, ["a", "b"]);
+  if (result.ok) {
+    assert.deepEqual(result.holdIntentIds, ["a", "b"]);
+    assert.deepEqual(result.exceptionIntentIds, []);
+  }
 });
 
-test("refund is blocked after supplier purchase or shipment", () => {
+test("refund after supplier purchase requires explicit exception", () => {
   for (const status of ["supplier_ordered_manual", "shipped", "delivered"]) {
     const result = evaluateRefundProcurementInterlock([{ id: "p", status }]);
     assert.equal(result.ok, false);
-    if (!result.ok) assert.equal(result.reason, "REFUND_BLOCKED_AFTER_SUPPLIER_PURCHASE");
+    if (!result.ok) assert.equal(result.reason, "POST_PURCHASE_EXCEPTION_REQUIRED");
   }
+});
+
+test("post-purchase exception requires loss acknowledgement when customer keeps item", () => {
+  const result = validatePostPurchaseRefundException(
+    {
+      acknowledgeIrreversibleFulfillment: true,
+      recoveryPlan: "customer_keep_accept_loss",
+      note: "Owner approves refund after reviewing recovery economics.",
+    },
+    [{ id: "p", status: "shipped" }],
+  );
+  assert.equal(result.ok, false);
+  if (!result.ok) assert.equal(result.reason, "POST_PURCHASE_LOSS_ACK_REQUIRED");
+});
+
+test("audited recovery plan can authorize post-purchase refund exception", () => {
+  const result = evaluateRefundProcurementInterlock(
+    [{ id: "p", status: "shipped" }],
+    {
+      acknowledgeIrreversibleFulfillment: true,
+      recoveryPlan: "customer_return_required",
+      note: "Customer return is required and will be reconciled manually.",
+    },
+  );
+  assert.equal(result.ok, true);
+  if (result.ok) {
+    assert.deepEqual(result.holdIntentIds, []);
+    assert.deepEqual(result.exceptionIntentIds, ["p"]);
+  }
+});
+
+test("customer-keep loss exception requires explicit loss acceptance", () => {
+  const result = evaluateRefundProcurementInterlock(
+    [{ id: "p", status: "delivered" }],
+    {
+      acknowledgeIrreversibleFulfillment: true,
+      recoveryPlan: "customer_keep_accept_loss",
+      acceptUnrecoveredLoss: true,
+      note: "Owner accepts unrecovered supplier cost for this exception.",
+    },
+  );
+  assert.equal(result.ok, true);
 });
 
 test("unknown procurement states fail closed", () => {
@@ -43,17 +90,24 @@ test("refund interlock event keys are deterministic per intent and refund key", 
     refundInterlockEventKey("intent-1", "refund-key-1"),
     "refund-interlock:intent-1:refund-key-1",
   );
+  assert.equal(
+    postPurchaseRefundExceptionEventKey("intent-1", "refund-key-1"),
+    "refund-post-purchase-exception:intent-1:refund-key-1",
+  );
 });
 
-test("refund route freezes procurement before Stripe network call", () => {
+test("refund route freezes procurement or journals exception before Stripe network call", () => {
   const source = fs.readFileSync(path.join(process.cwd(), "src/app/api/admin/refunds/route.ts"), "utf8");
   const holdIndex = source.indexOf("REFUND_INTERLOCK_HOLD");
+  const exceptionIndex = source.indexOf("POST_PURCHASE_REFUND_EXCEPTION_APPROVED");
   const stripeIndex = source.indexOf("createStripeRefund({");
   assert.ok(holdIndex >= 0);
+  assert.ok(exceptionIndex >= 0);
   assert.ok(stripeIndex > holdIndex);
+  assert.ok(stripeIndex > exceptionIndex);
   assert.match(source, /procurementIntents: true/);
-  assert.match(source, /updateMany\(\{/);
-  assert.match(source, /status: \"hold\"/);
+  assert.match(source, /automaticRecoveryEnabled: false/);
+  assert.match(source, /acknowledgeIrreversibleFulfillment/);
 });
 
 test("procurement route checks active refund both before and inside transaction", () => {
