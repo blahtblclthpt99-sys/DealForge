@@ -114,9 +114,30 @@ function stripeSecretKey() {
   return key;
 }
 
-export function expectedStripeLivemode(secretKey = resolveStripeRuntimeValue("STRIPE_SECRET_KEY")) {
-  if (secretKey.startsWith("sk_live_")) return true;
-  if (secretKey.startsWith("sk_test_")) return false;
+/**
+ * Determine which Stripe environment an inbound webhook belongs to.
+ *
+ * A recognized Stripe API key is authoritative. If the API key is unavailable
+ * at the route boundary, exactly one explicitly named mode-specific webhook
+ * secret may establish the mode without weakening signature verification. If
+ * both mode-specific secrets are present, or neither is present, the mode is
+ * ambiguous and processing fails closed.
+ */
+export function expectedStripeLivemode(
+  secretKey = resolveStripeRuntimeValue("STRIPE_SECRET_KEY"),
+  testWebhookSecret = resolveStripeRuntimeValue("STRIPE_WEBHOOK_SECRET_TEST"),
+  liveWebhookSecret = resolveStripeRuntimeValue("STRIPE_WEBHOOK_SECRET_LIVE"),
+) {
+  const key = secretKey.trim();
+  if (key.startsWith("sk_live_") || key.startsWith("rk_live_")) return true;
+  if (key.startsWith("sk_test_") || key.startsWith("rk_test_")) return false;
+  if (key) throw new Error("STRIPE_SECRET_KEY_MODE_UNKNOWN");
+
+  const hasTestSecret = Boolean(testWebhookSecret.trim());
+  const hasLiveSecret = Boolean(liveWebhookSecret.trim());
+  if (hasTestSecret && !hasLiveSecret) return false;
+  if (hasLiveSecret && !hasTestSecret) return true;
+  if (hasTestSecret && hasLiveSecret) throw new Error("STRIPE_WEBHOOK_MODE_AMBIGUOUS");
   throw new Error("STRIPE_SECRET_KEY_MODE_UNKNOWN");
 }
 
