@@ -1,0 +1,131 @@
+name: Shipping Destination E2E Certification
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/shipping-e2e-certification.yml'
+      - 'wrangler.jsonc'
+      - 'prisma/schema.postgres.prisma'
+      - 'src/lib/checkout-shipping.ts'
+      - 'src/lib/order-destination.ts'
+      - 'src/app/api/checkout/route.ts'
+      - 'src/app/api/stripe/webhook/route.ts'
+      - 'scripts/complete-hosted-shipping-checkout.ts'
+      - 'scripts/verify-shipping-certification.ts'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  statuses: write
+
+concurrency:
+  group: shipping-destination-e2e-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  certify-shipping-destination:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+      CERT_EMAIL: shipping-e2e-${{ github.run_id }}-${{ github.run_attempt }}@example.com
+      CHECKOUT_KEY: shipping-e2e-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci --no-fund --no-audit
+
+      - name: Validate certification code
+        run: |
+          set -euo pipefail
+          npm run typecheck
+          npx tsx --test tests/checkout-shipping.test.ts tests/order-destination.test.ts tests/order-destination-provenance.test.ts tests/cloudflare-shipping-runtime-contract.test.ts
+
+      - name: Install Chromium for hosted Checkout
+        run: npx playwright install --with-deps chromium
+
+      - name: Wait for exact production revision
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 60); do
+            state=$(gh api "/repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/status" \
+              --jq '[.statuses[] | select(.context == "cloudflare-production-deploy")][0].state // "pending"')
+            echo "production deploy status attempt ${attempt}: ${state}"
+            if [[ "$state" == 'success' ]]; then
+              exit 0
+            fi
+            if [[ "$state" == 'failure' || "$state" == 'error' ]]; then
+              echo '::error::Exact production revision failed Cloudflare deployment.'
+              exit 1
+            fi
+            sleep 10
+          done
+          echo '::error::Timed out waiting for exact production revision.'
+          exit 1
+
+      - name: Provision guarded certification catalog
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
+          CERTIFICATION_CATALOG_ONLY: "true"
+          CERTIFICATION_FIXTURE_WRITE: "true"
+        run: |
+          set -euo pipefail
+          [[ -n "$DATABASE_URL" ]] || { echo '::error::Production DATABASE_URL unavailable'; exit 1; }
+          [[ "$STRIPE_SECRET_KEY" == sk_test_* ]] || { echo '::error::Shipping certification requires Stripe test mode'; exit 1; }
+          npx prisma generate --schema=prisma/schema.postgres.prisma
+          npx tsx scripts/install-certification-catalog.ts
+
+      - name: Create fresh Stripe-hosted Checkout
+        run: |
+          set -euo pipefail
+          code=$(curl --retry 3 --retry-all-errors --retry-delay 2 -sS -o checkout.json -w '%{http_code}' \
+            -X POST 'https://www.deal-forge.sale/api/checkout' \
+            -H 'content-type: application/json' \
+            --data "{\"checkoutKey\":\"${CHECKOUT_KEY}\",\"email\":\"${CERT_EMAIL}\",\"items\":[{\"productId\":\"cert_catalog_home_main_20260825\",\"quantity\":1}]}"
+          )
+          [[ "$code" == '201' ]] || { cat checkout.json; exit 1; }
+          node - <<'NODE'
+          const fs = require('fs');
+          const body = JSON.parse(fs.readFileSync('checkout.json', 'utf8'));
+          if (body.stripeMode !== 'test') throw new Error('Stripe mode is not test');
+          if (!body.checkoutUrl?.startsWith('https://checkout.stripe.com/')) throw new Error('Invalid Stripe Checkout URL');
+          if (!body.orderNumber) throw new Error('Missing order number');
+          console.log(`Created shipping certification order ${body.orderNumber}`);
+          NODE
+
+      - name: Complete hosted Checkout with certification address
+        run: npx tsx scripts/complete-hosted-shipping-checkout.ts
+
+      - name: Verify signed webhook destination and procurement sequencing
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          set -euo pipefail
+          [[ -n "$DATABASE_URL" ]] || { echo '::error::Production DATABASE_URL unavailable'; exit 1; }
+          npx prisma generate --schema=prisma/schema.postgres.prisma
+          npx tsx scripts/verify-shipping-certification.ts
+
+          gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
+            -f state=success \
+            -f context=shipping-address-e2e-certification \
+            -f description='Stripe test Checkout -> signed webhook -> immutable destination -> manual procurement verified'
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: shipping-e2e-certification-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            shipping-checkout-completion.json
+            shipping-certification-evidence.json
+            shipping-checkout-failure.png
+          if-no-files-found: ignore
