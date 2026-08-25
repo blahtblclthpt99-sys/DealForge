@@ -4,6 +4,8 @@ import { z } from "zod";
 import { readSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { evaluateCommerceGate } from "@/lib/commerce-gate";
+import { checkPersistedOfferBinding } from "@/lib/persisted-offer-binding";
+import { readLimitedJson } from "@/lib/request-json";
 import { createStripeCheckoutSession } from "@/lib/stripe-commerce";
 import { resolvePublicAppOrigin } from "@/lib/url-security";
 
@@ -11,6 +13,7 @@ export const runtime = "nodejs";
 
 const CERTIFICATION_PRODUCT_ID = "cert_test_75c_20260822_v2";
 const TERMINAL_CHECKOUT_STATUSES = new Set(["paid", "refunded", "partially_refunded", "canceled"]);
+const MAX_CHECKOUT_BODY_BYTES = 32 * 1024;
 
 const CheckoutSchema = z.object({
   checkoutKey: z.string().trim().min(8).max(128).regex(/^[A-Za-z0-9:_-]+$/),
@@ -27,6 +30,21 @@ const CheckoutSchema = z.object({
 });
 
 type RequestedItem = z.infer<typeof CheckoutSchema>["items"][number];
+
+type OrderEconomicItem = {
+  productId: string;
+  quantity: number;
+  unitPriceCents: number;
+  lineTotalCents: number;
+  landedCostCents: number | null;
+};
+
+type CurrentEconomicItem = {
+  product: { id: string; landedCostCents: number | null };
+  quantity: number;
+  unitPriceCents: number;
+  lineTotalCents: number;
+};
 
 function orderNumber() {
   const time = Date.now().toString(36).toUpperCase();
@@ -58,6 +76,21 @@ function sameOrderItems(
   );
 }
 
+function sameOrderEconomics(existing: OrderEconomicItem[], current: CurrentEconomicItem[]) {
+  if (existing.length !== current.length) return false;
+  const currentByProduct = new Map(current.map((item) => [item.product.id, item]));
+  return existing.every((item) => {
+    const live = currentByProduct.get(item.productId);
+    return Boolean(
+      live &&
+        item.quantity === live.quantity &&
+        item.unitPriceCents === live.unitPriceCents &&
+        item.lineTotalCents === live.lineTotalCents &&
+        item.landedCostCents === live.product.landedCostCents,
+    );
+  });
+}
+
 function commerceEnabled() {
   return process.env.COMMERCE_ENABLED === "true";
 }
@@ -80,7 +113,15 @@ export async function POST(request: Request) {
   let certificationAttempt = false;
 
   try {
-    const parsed = CheckoutSchema.safeParse(await request.json());
+    const body = await readLimitedJson(request, MAX_CHECKOUT_BODY_BYTES);
+    if (!body.ok) {
+      return NextResponse.json(
+        { error: body.error === "BODY_TOO_LARGE" ? "CHECKOUT_BODY_TOO_LARGE" : "INVALID_CHECKOUT_REQUEST" },
+        { status: body.error === "BODY_TOO_LARGE" ? 413 : 400 },
+      );
+    }
+
+    const parsed = CheckoutSchema.safeParse(body.value);
     if (!parsed.success) {
       return NextResponse.json(
         { error: "INVALID_CHECKOUT_REQUEST", details: parsed.error.flatten() },
@@ -104,7 +145,11 @@ export async function POST(request: Request) {
     });
 
     if (existing) {
-      if (existing.email !== email || !sameOrderItems(existing.items, requestedItems)) {
+      if (
+        existing.email !== email ||
+        !sameOrderItems(existing.items, requestedItems) ||
+        (existing.userId !== null && existing.userId !== sessionUser?.id)
+      ) {
         return NextResponse.json({ error: "CHECKOUT_KEY_CONFLICT" }, { status: 409 });
       }
       if (TERMINAL_CHECKOUT_STATUSES.has(existing.status)) {
@@ -165,6 +210,27 @@ export async function POST(request: Request) {
           contributionMarginBps: decision.contributionMarginBps,
         });
         return NextResponse.json({ error: "PRODUCT_COMMERCE_GATE_FAILED" }, { status: 409 });
+      }
+    }
+
+    stage = "persisted_offer_binding";
+    for (const product of products) {
+      if (certificationOnly && isInternalCertificationProduct(product.specifications) && stripeTestMode()) continue;
+      const binding = await checkPersistedOfferBinding({
+        productId: product.id,
+        currency: product.currency,
+        availability: product.availability,
+        landedCostCents: product.landedCostCents,
+        priceVerifiedAt: product.priceVerifiedAt,
+        specifications: product.specifications,
+      });
+      if (!binding.allowed) {
+        console.warn("checkout.persisted_offer_binding.blocked", {
+          productId: product.id,
+          persistedOfferId: binding.persistedOfferId,
+          reasons: binding.reasons,
+        });
+        return NextResponse.json({ error: "PRODUCT_SUPPLIER_BINDING_FAILED" }, { status: 409 });
       }
     }
 
@@ -241,8 +307,10 @@ export async function POST(request: Request) {
     stage = "order_integrity";
     if (
       order.currency !== currency ||
+      order.subtotalCents !== subtotalCents ||
       order.totalCents !== subtotalCents ||
-      !sameOrderItems(order.items, requestedItems)
+      !sameOrderItems(order.items, requestedItems) ||
+      !sameOrderEconomics(order.items, pricedItems)
     ) {
       return NextResponse.json({ error: "ORDER_PRICE_CHANGED_RESTART_CHECKOUT" }, { status: 409 });
     }
