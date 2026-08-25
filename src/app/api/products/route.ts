@@ -1,29 +1,19 @@
 import { NextResponse } from "next/server";
+import { parsePublicProductQuery } from "@/lib/product-query-input";
 import { queryProducts } from "@/lib/products";
 
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
-  const num = (k: string) => {
-    const v = searchParams.get(k);
-    return v ? Number(v) : undefined;
-  };
+  const parsed = parsePublicProductQuery(searchParams);
+  if (!parsed.ok) {
+    return NextResponse.json(
+      { error: "INVALID_PRODUCT_QUERY", details: parsed.issues },
+      { status: 400, headers: { "Cache-Control": "no-store" } },
+    );
+  }
 
-  const result = await queryProducts({
-    q: searchParams.get("q") || undefined,
-    category: searchParams.get("category") || undefined,
-    subcategory: searchParams.get("subcategory") || undefined,
-    brand: searchParams.get("brand") || undefined,
-    minPrice: num("minPrice"),
-    maxPrice: num("maxPrice"),
-    minRating: num("minRating"),
-    minDiscount: num("minDiscount"),
-    sort: searchParams.get("sort") || undefined,
-    page: num("page") || 1,
-    limit: num("limit") || 24,
-    featured: searchParams.get("featured") === "1",
-    flash: searchParams.get("flash") === "1",
-    trending: searchParams.get("trending") === "1",
+  const result = await queryProducts(parsed.query);
+  return NextResponse.json(result, {
+    headers: { "Cache-Control": "public, max-age=0, s-maxage=30, stale-while-revalidate=60" },
   });
-
-  return NextResponse.json(result);
 }
