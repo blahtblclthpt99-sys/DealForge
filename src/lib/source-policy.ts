@@ -14,6 +14,47 @@ export function isDirectResaleSourceClass(value: unknown): value is DirectResale
   return typeof value === "string" && DIRECT_RESALE_SOURCE_CLASS_SET.has(value);
 }
 
+/**
+ * Canonical DealForge source-authorization freshness boundary. This is shared
+ * by commercialization and operational inventory adapters so a source cannot
+ * remain machine-authorized after the verification window used for commerce
+ * has expired.
+ */
+export const DIRECT_RESALE_SOURCE_MAX_AGE_DAYS = 30;
+export const DIRECT_RESALE_SOURCE_MAX_AGE_MS = DIRECT_RESALE_SOURCE_MAX_AGE_DAYS * 24 * 60 * 60 * 1000;
+export const SOURCE_VERIFICATION_FUTURE_TOLERANCE_MS = 5 * 60 * 1000;
+
+export type DirectResaleSourceAuthorizationInput = {
+  active: boolean;
+  sourceClass: string;
+  resaleAllowed: boolean;
+  sourceVerifiedAt: Date | null;
+};
+
+export type DirectResaleSourceAuthorizationDecision = {
+  allowed: boolean;
+  reasons: string[];
+};
+
+export function evaluateDirectResaleSourceAuthorization(
+  input: DirectResaleSourceAuthorizationInput,
+  nowMs = Date.now(),
+): DirectResaleSourceAuthorizationDecision {
+  const reasons: string[] = [];
+  if (!input.active) reasons.push("source_inactive");
+  if (!isDirectResaleSourceClass(input.sourceClass)) reasons.push("source_class_not_direct_resale");
+  if (!input.resaleAllowed) reasons.push("resale_not_verified");
+
+  const verifiedAt = input.sourceVerifiedAt?.getTime() ?? Number.NaN;
+  if (!Number.isFinite(verifiedAt) || verifiedAt > nowMs + SOURCE_VERIFICATION_FUTURE_TOLERANCE_MS) {
+    reasons.push("source_verification_invalid");
+  } else if (nowMs - verifiedAt > DIRECT_RESALE_SOURCE_MAX_AGE_MS) {
+    reasons.push("source_verification_stale");
+  }
+
+  return { allowed: reasons.length === 0, reasons };
+}
+
 export const AUTHORIZED_AMAZON_PRICE_SOURCES = [
   "amazon_creators_api",
   "amazon_authorized_api",
