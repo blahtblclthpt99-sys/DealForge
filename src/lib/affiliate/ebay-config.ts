@@ -1,6 +1,24 @@
 /**
  * eBay Partner Network credentials for DealForge.
  * SID and tracking key come from your eBay affiliate / Partner Network account.
+ * Runtime link generation resolves environment values lazily so request-version
+ * Cloudflare bindings cannot be replaced by an empty build-time snapshot.
+ */
+type EbayAffiliateEnv = Record<string, string | undefined> & {
+  EBAY_AFFILIATE_SID?: string;
+  EBAY_AFFILIATE_TRACKING_ID?: string;
+};
+
+export function getEbayAffiliateConfig(env: EbayAffiliateEnv = process.env) {
+  return {
+    sid: (env.EBAY_AFFILIATE_SID || "").trim(),
+    trackingId: (env.EBAY_AFFILIATE_TRACKING_ID || "").trim(),
+  };
+}
+
+/**
+ * Legacy snapshots retained for existing CLI/seed imports. Request-time link
+ * generation and configuration checks deliberately do not use these values.
  */
 export const EBAY_AFFILIATE_SID =
   process.env.EBAY_AFFILIATE_SID || "";
@@ -13,7 +31,7 @@ export const EBAY_AFFILIATE_TRACKING_ID =
 export const EBAY_MKRID = "711-53200-19255-0";
 
 export function isEbayAffiliateConfigured() {
-  return Boolean(EBAY_AFFILIATE_SID);
+  return Boolean(getEbayAffiliateConfig().sid);
 }
 
 /**
@@ -24,6 +42,7 @@ export function buildEbayAffiliateUrl(input: {
   itemId?: string | null;
   url?: string | null;
 }) {
+  const { sid, trackingId } = getEbayAffiliateConfig();
   const raw =
     input.url ||
     (input.itemId
@@ -49,17 +68,17 @@ export function buildEbayAffiliateUrl(input: {
   target.searchParams.set("siteid", "0");
   target.searchParams.set("toolid", "10001");
 
-  if (EBAY_AFFILIATE_SID) {
-    target.searchParams.set("sid", EBAY_AFFILIATE_SID);
-    target.searchParams.set("customid", EBAY_AFFILIATE_SID);
+  if (sid) {
+    target.searchParams.set("sid", sid);
+    target.searchParams.set("customid", sid);
   }
 
-  if (EBAY_AFFILIATE_TRACKING_ID) {
-    target.searchParams.set("campid", EBAY_AFFILIATE_TRACKING_ID);
+  if (trackingId) {
+    target.searchParams.set("campid", trackingId);
   }
 
   // Rover wrap improves attribution reliability for Partner Network accounts
-  if (!EBAY_AFFILIATE_SID) {
+  if (!sid) {
     return target.toString();
   }
 
@@ -68,9 +87,9 @@ export function buildEbayAffiliateUrl(input: {
   rover.searchParams.set("ipn", "icep");
   rover.searchParams.set("toolid", "20004");
   rover.searchParams.set("mpre", target.toString());
-  rover.searchParams.set("customid", EBAY_AFFILIATE_SID);
-  if (EBAY_AFFILIATE_TRACKING_ID) {
-    rover.searchParams.set("campid", EBAY_AFFILIATE_TRACKING_ID);
+  rover.searchParams.set("customid", sid);
+  if (trackingId) {
+    rover.searchParams.set("campid", trackingId);
   }
   return rover.toString();
 }

@@ -4,7 +4,12 @@ import {
   type AffiliateProductInput,
   type NormalizedProduct,
 } from "../types";
-import { AMAZON_ASSOCIATE_TAG, buildAmazonProductUrl, withAmazonTag } from "../amazon-config";
+import {
+  AMAZON_ASSOCIATE_TAG,
+  buildAmazonProductUrl,
+  getAmazonAssociateTag,
+  withAmazonTag,
+} from "../amazon-config";
 
 /**
  * Amazon Associates connector for store ID: titanfieldos-20
@@ -17,7 +22,7 @@ export const amazonConnector: AffiliateConnector = {
   generateLink({ asin, url }) {
     if (asin) return buildAmazonProductUrl(asin);
     if (url) return withAmazonTag(url);
-    return `https://www.amazon.com/?tag=${AMAZON_ASSOCIATE_TAG}`;
+    return `https://www.amazon.com/?tag=${encodeURIComponent(getAmazonAssociateTag())}`;
   },
 
   async fetchProducts(query) {
