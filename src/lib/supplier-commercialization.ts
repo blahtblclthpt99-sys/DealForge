@@ -8,6 +8,7 @@ import {
   type PreparedCommercialization,
 } from "./commercialization";
 import { prisma } from "./db";
+import { resolveOperationalCartPricingPolicy } from "./loss-reserve-policy";
 import { isDirectResaleSourceClass } from "./source-policy";
 import { selectPersistedSupplierOffer } from "./supplier-store";
 import type { SupplierSelectionResult } from "./supplier-offers";
@@ -170,6 +171,7 @@ export async function persistSelectAndPrepareCommercialization(
 
   const currency = input.productCurrency.trim().toLowerCase();
   if (!/^[a-z]{3}$/.test(currency)) throw new Error("PRODUCT_CURRENCY_INVALID");
+  const pricingPolicy = (await resolveOperationalCartPricingPolicy(currency, nowMs)).policy;
 
   // Reuse the existing commercial gate parser as the validation boundary before
   // any supplier persistence occurs. Its output also gives us the canonical URL
@@ -194,6 +196,7 @@ export async function persistSelectAndPrepareCommercialization(
       availability: input.availability,
     },
     nowMs,
+    pricingPolicy,
   );
   const snapshot = canonicalSnapshot(submittedPreflight.specifications);
   const sourceVerifiedAt = new Date(snapshot.sourceVerifiedAt);
@@ -366,6 +369,7 @@ export async function persistSelectAndPrepareCommercialization(
       availability: "in_stock",
     },
     nowMs,
+    pricingPolicy,
   );
 
   return {

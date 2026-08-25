@@ -9,6 +9,7 @@ import {
 import { checkCheckoutExposure } from "@/lib/checkout-exposure";
 import { prisma } from "@/lib/db";
 import { evaluateCommerceGate } from "@/lib/commerce-gate";
+import { resolveOperationalCartPricingPolicy } from "@/lib/loss-reserve-policy";
 import {
   buildOrderSupplierSnapshot,
   serializeOrderSupplierSnapshot,
@@ -200,6 +201,15 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "PRODUCT_NOT_FOUND" }, { status: 409 });
     }
 
+    const currencies = new Set(products.map((product) => product.currency.toLowerCase()));
+    if (currencies.size !== 1) {
+      return NextResponse.json({ error: "MIXED_CURRENCY_CART" }, { status: 409 });
+    }
+    const currency = [...currencies][0];
+    if (!/^[a-z]{3}$/.test(currency)) {
+      return NextResponse.json({ error: "PRODUCT_CURRENCY_INVALID" }, { status: 409 });
+    }
+
     stage = "commerce_gate";
     const certificationOnly =
       certificationAttempt &&
@@ -209,6 +219,9 @@ export async function POST(request: Request) {
     if (!commerceEnabled() && !certificationBypass) {
       return NextResponse.json({ error: "COMMERCE_DISABLED" }, { status: 503 });
     }
+    const pricingPolicy = certificationBypass
+      ? null
+      : (await resolveOperationalCartPricingPolicy(currency)).policy;
 
     stage = "commercial_gate";
     for (const product of products) {
@@ -295,6 +308,7 @@ export async function POST(request: Request) {
           landedCostCents: product.landedCostCents,
           attributableCostCents: attributableCostFromSpecifications(product.specifications),
           publishedPriceCents: product.sellingPriceCents,
+          policy: pricingPolicy ?? undefined,
         });
         if (!pricing.eligible) {
           throw new Error("PRODUCT_PRICE_NO_LONGER_SAFE");
@@ -318,15 +332,6 @@ export async function POST(request: Request) {
         supplierSnapshot,
       };
     });
-
-    const currencies = new Set(pricedItems.map(({ product }) => product.currency.toLowerCase()));
-    if (currencies.size !== 1) {
-      return NextResponse.json({ error: "MIXED_CURRENCY_CART" }, { status: 409 });
-    }
-    const currency = [...currencies][0];
-    if (!/^[a-z]{3}$/.test(currency)) {
-      return NextResponse.json({ error: "PRODUCT_CURRENCY_INVALID" }, { status: 409 });
-    }
 
     const subtotalCents = pricedItems.reduce((sum, item) => sum + item.lineTotalCents, 0);
     if (!Number.isSafeInteger(subtotalCents) || subtotalCents <= 0) {

@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireAdmin } from "@/lib/auth";
-import { prisma } from "@/lib/db";
 import { recommendCommercialPrice } from "@/lib/commercialization";
+import { prisma } from "@/lib/db";
+import { resolveOperationalCartPricingPolicy } from "@/lib/loss-reserve-policy";
 
 const schema = z.object({
   itemCostCents: z.number().int().positive(),
@@ -13,6 +14,7 @@ const schema = z.object({
   acquisitionReserveCents: z.number().int().nonnegative().default(0),
   marketReferenceCents: z.number().int().positive().nullable().optional(),
   maxMarketPremiumBps: z.number().int().min(0).max(10_000).default(1000),
+  currency: z.string().trim().toLowerCase().regex(/^[a-z]{3}$/).default("usd"),
 }).strict();
 
 async function requireOwner() {
@@ -48,10 +50,17 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Invalid request", issues: parsed.error.flatten() }, { status: 400 });
     }
 
-    const recommendation = recommendCommercialPrice(parsed.data);
+    const resolvedPolicy = await resolveOperationalCartPricingPolicy(parsed.data.currency);
+    const recommendation = recommendCommercialPrice(parsed.data, resolvedPolicy.policy);
     return NextResponse.json({
       ok: true,
       recommendation,
+      operationalPricingPolicy: {
+        currency: parsed.data.currency,
+        lossReserveBps: resolvedPolicy.policy.lossReserveBps,
+        reserveSource: resolvedPolicy.reserveSource,
+        snapshot: resolvedPolicy.snapshot,
+      },
       mode: "recommendation_only",
       note: "No product, price, or commerce state was changed.",
     });

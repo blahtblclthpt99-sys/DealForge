@@ -6,6 +6,7 @@ import {
 } from "@/lib/cart-pricing";
 import { evaluateCommerceGate } from "@/lib/commerce-gate";
 import { prisma } from "@/lib/db";
+import { resolveOperationalCartPricingPolicy } from "@/lib/loss-reserve-policy";
 import { checkPersistedOfferBinding } from "@/lib/persisted-offer-binding";
 import { readLimitedJson } from "@/lib/request-json";
 
@@ -74,6 +75,10 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "MIXED_CURRENCY_CART" }, { status: 409 });
     }
     const currency = [...currencies][0];
+    if (!/^[a-z]{3}$/.test(currency)) {
+      return NextResponse.json({ error: "PRODUCT_CURRENCY_INVALID" }, { status: 409 });
+    }
+    const pricingPolicy = (await resolveOperationalCartPricingPolicy(currency)).policy;
 
     const currentSafePrices: number[] = [];
     for (const product of cartProducts) {
@@ -85,6 +90,7 @@ export async function POST(request: Request) {
         landedCostCents: product.landedCostCents,
         attributableCostCents: attributableCostFromSpecifications(product.specifications),
         publishedPriceCents: product.sellingPriceCents,
+        policy: pricingPolicy,
       });
       if (pricing.eligible) currentSafePrices.push(pricing.customerPriceCents);
     }
@@ -175,6 +181,7 @@ export async function POST(request: Request) {
         landedCostCents: product.landedCostCents,
         attributableCostCents: attributableCostFromSpecifications(product.specifications),
         publishedPriceCents: product.sellingPriceCents,
+        policy: pricingPolicy,
       });
       if (!pricing.eligible || pricing.customerPriceCents > addonPriceCapCents) continue;
 
