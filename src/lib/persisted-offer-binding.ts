@@ -236,6 +236,14 @@ export function evaluatePersistedOfferBinding(
   if (observation && observation.inventoryConfidenceBps !== liveOffer.inventoryConfidenceBps) {
     reasons.push("live_offer_inventory_observation_confidence_drift");
   }
+  if (
+    observation &&
+    observation.observedPriceCents !== null &&
+    observation.observedPriceCents !== undefined &&
+    observation.observedPriceCents !== liveOffer.itemCostCents
+  ) {
+    reasons.push("live_offer_inventory_observation_price_drift");
+  }
 
   const liveLandedCostCents = computeSupplierLandedCostCents(candidate);
   if (
@@ -258,7 +266,7 @@ export function evaluatePersistedOfferBinding(
  * Read-only checkout safety gate. The Product snapshot remains useful for audit,
  * but customer money cannot rely on it alone: the exact normalized supplier
  * offer referenced by the snapshot must still exist, retain a current inventory
- * observation, and remain eligible now.
+ * observation with non-conflicting observed price evidence, and remain eligible now.
  */
 export async function checkPersistedOfferBinding(
   input: PersistedOfferBindingInput,
