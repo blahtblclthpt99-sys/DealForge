@@ -24,6 +24,14 @@ function demotedAvailability(observation: {
   return "unknown";
 }
 
+function observedPriceDrift(
+  observation: { observedPriceCents?: number | null } | null,
+  persistedItemCostCents: number,
+) {
+  const observed = observation?.observedPriceCents;
+  return observed !== null && observed !== undefined && observed !== persistedItemCostCents;
+}
+
 async function enginePaused() {
   const config = await prisma.productEngineConfig.upsert({
     where: { id: "default" },
@@ -72,8 +80,9 @@ async function demoteProductForInventory(
 
 /**
  * Accept trusted normalized evidence for one exact persisted supplier offer.
- * Positive evidence never enables commerce. Negative/missing/stale evidence may
- * only reduce eligibility, keeping inventory automation monotonic-safe.
+ * Positive evidence never enables commerce. Negative/missing/stale evidence or
+ * a newly observed item-price change may only reduce eligibility, keeping
+ * inventory automation monotonic-safe.
  */
 export async function applyInventoryObservation(
   input: InventoryObservationOperationInput,
@@ -89,6 +98,7 @@ export async function applyInventoryObservation(
       active: true,
       availability: true,
       inventoryConfidenceBps: true,
+      itemCostCents: true,
       supplier: {
         select: {
           id: true,
@@ -128,10 +138,14 @@ export async function applyInventoryObservation(
     { minInventoryConfidenceBps: MIN_INVENTORY_CONFIDENCE_BPS, requireCurrent: true },
     nowMs,
   );
+  const priceDrift = observedPriceDrift(latest, offer.itemCostCents);
+  const safetyReasons = priceDrift
+    ? [...freshness.reasons, "observed_supplier_price_drift"]
+    : freshness.reasons;
 
-  // Keep normalized offer state synchronized with the latest evidence. If these
-  // values drift from the commercialized Product snapshot, checkout fails closed
-  // until the normal commercialization gate deliberately refreshes that snapshot.
+  // Keep normalized inventory state synchronized with the latest evidence. Item
+  // cost is intentionally NOT rewritten here: a changed observed price requires
+  // the full commercialization/landed-cost/profit gate to re-verify economics.
   await prisma.supplierOffer.update({
     where: { id: offer.id },
     data: {
@@ -141,7 +155,7 @@ export async function applyInventoryObservation(
   });
 
   let demoted = 0;
-  if (!freshness.promotable) {
+  if (!freshness.promotable || priceDrift) {
     demoted = await demoteProductForInventory(
       offer.productId,
       demotedAvailability(latest),
@@ -149,7 +163,9 @@ export async function applyInventoryObservation(
       {
         supplierOfferId: offer.id,
         freshnessState: freshness.state,
-        reasons: freshness.reasons,
+        reasons: safetyReasons,
+        observedPriceCents: latest.observedPriceCents ?? null,
+        persistedItemCostCents: offer.itemCostCents,
       },
     );
   }
@@ -159,8 +175,11 @@ export async function applyInventoryObservation(
     productId: offer.productId,
     idempotencyKey: recorded.idempotencyKey,
     freshnessState: freshness.state,
-    promotable: freshness.promotable,
-    reasons: freshness.reasons,
+    promotable: freshness.promotable && !priceDrift,
+    reasons: safetyReasons,
+    priceDrift,
+    observedPriceCents: latest.observedPriceCents ?? null,
+    persistedItemCostCents: offer.itemCostCents,
     demoted: demoted > 0,
   });
 
@@ -170,7 +189,12 @@ export async function applyInventoryObservation(
     idempotencyKey: recorded.idempotencyKey,
     supplierOfferId: offer.id,
     productId: offer.productId,
-    freshness,
+    freshness: {
+      ...freshness,
+      promotable: freshness.promotable && !priceDrift,
+      reasons: safetyReasons,
+    },
+    priceDrift,
     demoted: demoted > 0,
     commercePromoted: false as const,
   };
@@ -178,8 +202,9 @@ export async function applyInventoryObservation(
 
 /**
  * Bounded fail-closed sweep. It checks active persisted offers and disables any
- * directly associated Product whose newest inventory evidence is absent or no
- * longer current. It never enables commerce or purchases inventory.
+ * directly associated Product whose newest inventory evidence is absent, stale,
+ * economically inconsistent, or otherwise no longer current. It never enables
+ * commerce or purchases inventory.
  */
 export async function sweepInventoryFreshness(
   actor: string,
@@ -196,6 +221,7 @@ export async function sweepInventoryFreshness(
     select: {
       id: true,
       productId: true,
+      itemCostCents: true,
       supplier: { select: { active: true, resaleAllowed: true } },
     },
   });
@@ -203,6 +229,7 @@ export async function sweepInventoryFreshness(
   let demoted = 0;
   let current = 0;
   let nonCurrent = 0;
+  let priceDrifted = 0;
   for (const offer of offers) {
     const observation = await readLatestInventoryObservation(offer.id);
     const freshness = evaluateInventoryFreshness(
@@ -211,11 +238,19 @@ export async function sweepInventoryFreshness(
       nowMs,
     );
     const supplierBlocked = !offer.supplier.active || !offer.supplier.resaleAllowed;
-    if (freshness.promotable && !supplierBlocked) {
+    const priceDrift = observedPriceDrift(observation, offer.itemCostCents);
+    if (freshness.promotable && !supplierBlocked && !priceDrift) {
       current += 1;
       continue;
     }
+
     nonCurrent += 1;
+    if (priceDrift) priceDrifted += 1;
+    const reasons = [
+      ...freshness.reasons,
+      ...(supplierBlocked ? ["supplier_not_eligible"] : []),
+      ...(priceDrift ? ["observed_supplier_price_drift"] : []),
+    ];
     demoted += await demoteProductForInventory(
       offer.productId,
       demotedAvailability(observation),
@@ -223,7 +258,9 @@ export async function sweepInventoryFreshness(
       {
         supplierOfferId: offer.id,
         freshnessState: freshness.state,
-        reasons: supplierBlocked ? [...freshness.reasons, "supplier_not_eligible"] : freshness.reasons,
+        reasons,
+        observedPriceCents: observation?.observedPriceCents ?? null,
+        persistedItemCostCents: offer.itemCostCents,
       },
     );
   }
@@ -232,6 +269,7 @@ export async function sweepInventoryFreshness(
     checked: offers.length,
     current,
     nonCurrent,
+    priceDrifted,
     demoted,
     limit,
   });
@@ -241,6 +279,7 @@ export async function sweepInventoryFreshness(
     checked: offers.length,
     current,
     nonCurrent,
+    priceDrifted,
     demoted,
     limit,
   };
