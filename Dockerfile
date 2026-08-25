@@ -1,12 +1,15 @@
 FROM node:24-alpine AS deps
 WORKDIR /app
+ENV PRISMA_DATABASE_PROVIDER=postgresql
 COPY package.json package-lock.json ./
 COPY scripts/prisma-generate.mjs ./scripts/prisma-generate.mjs
+COPY prisma/schema.prisma prisma/schema.postgres.prisma ./prisma/
 RUN npm ci
 
 FROM node:24-alpine AS builder
 WORKDIR /app
 ENV NEXT_TELEMETRY_DISABLED=1
+ENV PRISMA_DATABASE_PROVIDER=postgresql
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN npm run build
