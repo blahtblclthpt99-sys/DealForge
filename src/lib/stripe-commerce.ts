@@ -1,5 +1,6 @@
 import { createHmac, createHash, timingSafeEqual } from "node:crypto";
 import { getCloudflareContext } from "@opennextjs/cloudflare";
+import { parseCheckoutShippingCountries } from "@/lib/checkout-shipping";
 
 const STRIPE_API = "https://api.stripe.com/v1";
 const DEFAULT_WEBHOOK_TOLERANCE_SECONDS = 300;
@@ -274,6 +275,18 @@ export async function createStripeCheckoutSession(input: {
   body.set("metadata[order_number]", input.orderNumber);
   body.set("payment_intent_data[metadata][order_id]", input.orderId);
   body.set("payment_intent_data[metadata][order_number]", input.orderNumber);
+
+  // The Checkout Session is the shipping-address authority. Browser checkout
+  // payloads do not contain an address, and an empty country scope fails closed.
+  const allowedShippingCountries = parseCheckoutShippingCountries(
+    resolveStripeRuntimeValue("CHECKOUT_ALLOWED_SHIPPING_COUNTRIES"),
+  );
+  if (allowedShippingCountries.length === 0) {
+    throw new Error("CHECKOUT_SHIPPING_COUNTRIES_NOT_CONFIGURED");
+  }
+  for (const country of allowedShippingCountries) {
+    body.append("shipping_address_collection[allowed_countries][]", country);
+  }
 
   input.lines.forEach((line, index) => {
     assertPositiveCents(line.unitAmountCents, "unit_amount");
