@@ -99,7 +99,7 @@ test("estimated prices are never labeled verified retailer prices", async () => 
 test("catalog caches are versioned and certification scope-aware", async () => {
   const source = await readFile("src/lib/products.ts", "utf8");
   assert.match(source, /certificationCatalogScopeKey\(\)/);
-  assert.match(source, /products:v13:\$\{scope\}:/);
+  assert.match(source, /products:v14:\$\{scope\}:/);
   assert.match(source, /products:count:v7:\$\{scope\}:/);
   assert.match(source, /categories:public:v3:\$\{scope\}/);
   assert.match(source, /brands:public:v3:\$\{scope\}:/);
