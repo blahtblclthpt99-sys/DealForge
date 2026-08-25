@@ -79,3 +79,31 @@ test("known packaged auth placeholder is rejected in production", async () => {
   const source = await readFile("src/lib/auth-secret.ts", "utf8");
   assert.match(source, /CHANGE-ME-generate-a-long-random-string/);
 });
+
+test("seed implementation contains no packaged production or demo credentials", async () => {
+  const source = await readFile("prisma/seed.ts", "utf8");
+  assert.doesNotMatch(source, /AdminDealForge2026!/);
+  assert.doesNotMatch(source, /DemoUser123!/);
+  assert.doesNotMatch(source, /demo@dealforge\.com/);
+  assert.match(source, /SEED_DEMO_USER/);
+  assert.match(source, /credentials\.seedDemoUser/);
+  assert.match(source, /Protected DealForge seed requires explicit ADMIN_EMAIL/);
+
+  const credentialsIndex = source.indexOf("const credentials = seedCredentials()");
+  const destructiveDeleteIndex = source.indexOf("prisma.clickEvent.deleteMany");
+  assert.ok(credentialsIndex >= 0);
+  assert.ok(destructiveDeleteIndex >= 0);
+  assert.ok(credentialsIndex < destructiveDeleteIndex, "credentials must validate before destructive deletes");
+});
+
+test("environment examples do not package admin or demo credentials", async () => {
+  for (const path of [".env.example", ".env.production.example"]) {
+    const source = await readFile(path, "utf8");
+    assert.match(source, /ADMIN_EMAIL=""/);
+    assert.match(source, /ADMIN_PASSWORD=""/);
+    assert.match(source, /SEED_DEMO_USER="false"/);
+    assert.match(source, /DEMO_USER_EMAIL=""/);
+    assert.match(source, /DEMO_USER_PASSWORD=""/);
+    assert.doesNotMatch(source, /ADMIN_EMAIL="admin@dealforge\.com"/);
+  }
+});

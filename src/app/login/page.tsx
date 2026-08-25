@@ -4,11 +4,22 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { FormEvent, Suspense, useState } from "react";
 
+function safeLoginRedirect(value: string | null, origin: string) {
+  if (!value || !value.startsWith("/") || value.startsWith("//")) return null;
+  try {
+    const target = new URL(value, origin);
+    if (target.origin !== origin) return null;
+    return `${target.pathname}${target.search}${target.hash}`;
+  } catch {
+    return null;
+  }
+}
+
 function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const [email, setEmail] = useState("demo@dealforge.com");
-  const [password, setPassword] = useState("DemoUser123!");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -16,20 +27,28 @@ function LoginForm() {
     e.preventDefault();
     setLoading(true);
     setError("");
-    const res = await fetch("/api/auth", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "login", email, password }),
-    });
-    const data = await res.json();
-    setLoading(false);
-    if (!res.ok) {
-      setError(data.error || "Login failed");
-      return;
+
+    try {
+      const res = await fetch("/api/auth", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "login", email, password }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error || "Login failed");
+        return;
+      }
+
+      const fallback = data.user?.role === "admin" ? "/admin" : "/dashboard";
+      const next = safeLoginRedirect(searchParams.get("next"), window.location.origin) ?? fallback;
+      router.push(next);
+      router.refresh();
+    } catch {
+      setError("Login failed. Please try again.");
+    } finally {
+      setLoading(false);
     }
-    const next = searchParams.get("next") || (data.user?.role === "admin" ? "/admin" : "/dashboard");
-    router.push(next);
-    router.refresh();
   }
 
   return (
@@ -39,6 +58,7 @@ function LoginForm() {
         <input
           type="email"
           required
+          autoComplete="email"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
           className="w-full rounded-xl border border-card-border bg-background px-3 py-2"
@@ -49,6 +69,7 @@ function LoginForm() {
         <input
           type="password"
           required
+          autoComplete="current-password"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
           className="w-full rounded-xl border border-card-border bg-background px-3 py-2"
@@ -67,9 +88,6 @@ function LoginForm() {
         <Link href="/register" className="font-medium text-forest hover:underline">
           Create one
         </Link>
-      </p>
-      <p className="text-center text-xs text-forest-muted">
-        Demo: demo@dealforge.com / DemoUser123! · Admin: admin@dealforge.com
       </p>
     </form>
   );

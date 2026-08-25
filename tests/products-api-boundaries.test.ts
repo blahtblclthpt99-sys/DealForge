@@ -18,6 +18,13 @@ test("public product query parser applies safe defaults and accepted filters", (
   assert.equal(parsed.query.featured, true);
 });
 
+test("public product query parser accepts the UI best-match sort mode", () => {
+  const parsed = parsePublicProductQuery(new URLSearchParams("sort=rank"));
+  assert.equal(parsed.ok, true);
+  if (!parsed.ok) return;
+  assert.equal(parsed.query.sort, "rank");
+});
+
 test("public product query parser rejects NaN, infinities, invalid ranges, flags, and oversized pages", () => {
   for (const query of [
     "minPrice=NaN",
@@ -46,4 +53,11 @@ test("products API uses the validated parser instead of direct Number conversion
   assert.match(source, /INVALID_PRODUCT_QUERY/);
   assert.doesNotMatch(source, /Number\(/);
   assert.match(source, /Cache-Control/);
+});
+
+test("server-rendered search reuses the same validated parser", async () => {
+  const source = await readFile("src/app/search/page.tsx", "utf8");
+  assert.match(source, /parsePublicProductQuery/);
+  assert.doesNotMatch(source, /Number\(/);
+  assert.match(source, /Search filters need attention/);
 });

@@ -10,6 +10,7 @@ import { formatQuantityLabel } from "@/lib/quantity";
 
 export function ProductCard({ product, wishlisted = false, onToggleWishlist }: { product: ProductDTO; wishlisted?: boolean; onToggleWishlist?: (id: string) => void }) {
   const [liked, setLiked] = useState(wishlisted);
+  const [savingWishlist, setSavingWishlist] = useState(false);
   const image = product.images[0];
   const save = product.priceEstimated ? null : discountLabel(product.discountPercent);
   const qnty = formatQuantityLabel(product.quantity);
@@ -17,17 +18,25 @@ export function ProductCard({ product, wishlisted = false, onToggleWishlist }: {
   async function toggleWish(e: React.MouseEvent) {
     e.preventDefault();
     e.stopPropagation();
-    const next = !liked;
+    if (savingWishlist) return;
+
+    const previous = liked;
+    const next = !previous;
     setLiked(next);
-    onToggleWishlist?.(product.id);
+    setSavingWishlist(true);
+
     try {
-      await fetch("/api/wishlist", {
+      const response = await fetch("/api/wishlist", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ productId: product.id, action: next ? "add" : "remove" }),
       });
+      if (!response.ok) throw new Error(`Wishlist update failed (${response.status})`);
+      onToggleWishlist?.(product.id);
     } catch {
-      setLiked(!next);
+      setLiked(previous);
+    } finally {
+      setSavingWishlist(false);
     }
   }
 
@@ -36,7 +45,14 @@ export function ProductCard({ product, wishlisted = false, onToggleWishlist }: {
       <div className="relative aspect-square overflow-hidden bg-forest-bg">
         <ProductImage src={image} alt={product.title} asin={product.asin} className="h-full w-full object-contain p-3 transition duration-500 group-hover:scale-105" />
         {save && <span className="absolute left-3 top-3 rounded-full bg-forest px-2.5 py-1 text-xs font-semibold text-white">{save}</span>}
-        <button type="button" onClick={toggleWish} aria-label="Toggle wishlist" className={cn("absolute right-3 top-3 rounded-full bg-card/90 p-2 shadow-sm backdrop-blur transition", liked ? "text-red-500" : "text-forest-muted hover:text-forest")}>
+        <button
+          type="button"
+          onClick={toggleWish}
+          aria-label="Toggle wishlist"
+          aria-pressed={liked}
+          disabled={savingWishlist}
+          className={cn("absolute right-3 top-3 rounded-full bg-card/90 p-2 shadow-sm backdrop-blur transition disabled:cursor-wait disabled:opacity-60", liked ? "text-red-500" : "text-forest-muted hover:text-forest")}
+        >
           <Heart className={cn("h-4 w-4", liked && "fill-current")} />
         </button>
       </div>
