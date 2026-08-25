@@ -70,6 +70,8 @@ export function validateStripeFeeEvidence(input: {
   const netCents = safeInteger(input.balanceTransaction.net);
   const balanceCurrency = currency(input.balanceTransaction.currency);
   const balanceSource = objectId(input.balanceTransaction.source);
+  const balanceType =
+    typeof input.balanceTransaction.type === "string" ? input.balanceTransaction.type : null;
 
   if (!/^pi_[A-Za-z0-9_]+$/.test(paymentIntentId)) {
     return { ok: false as const, reason: "STRIPE_FEE_PAYMENT_INTENT_INVALID" as const };
@@ -101,13 +103,17 @@ export function validateStripeFeeEvidence(input: {
   ) {
     return { ok: false as const, reason: "STRIPE_FEE_EVIDENCE_INVALID" as const };
   }
-  if (balanceSource && balanceSource !== chargeId) {
+  if (balanceSource !== chargeId) {
     return { ok: false as const, reason: "STRIPE_FEE_BALANCE_SOURCE_MISMATCH" as const };
   }
-  if (chargeCurrency === balanceCurrency) {
-    if (balanceAmount !== chargeAmount || netCents !== balanceAmount - feeCents) {
-      return { ok: false as const, reason: "STRIPE_FEE_BALANCE_MATH_MISMATCH" as const };
-    }
+  if (balanceType && balanceType !== "charge") {
+    return { ok: false as const, reason: "STRIPE_FEE_BALANCE_TYPE_MISMATCH" as const };
+  }
+  if (netCents !== balanceAmount - feeCents) {
+    return { ok: false as const, reason: "STRIPE_FEE_BALANCE_MATH_MISMATCH" as const };
+  }
+  if (chargeCurrency === balanceCurrency && balanceAmount !== chargeAmount) {
+    return { ok: false as const, reason: "STRIPE_FEE_BALANCE_AMOUNT_MISMATCH" as const };
   }
 
   return {
@@ -145,18 +151,29 @@ export function mergeStripeFeeMeta(input: {
   eventId?: string | null;
 }) {
   const meta = parseMeta(input.currentMeta);
-  const existingBalanceTransactionId = meta.processingFeeBalanceTransactionId;
-  const existingChargeId = meta.processingFeeChargeId;
-  const existingFeeCents = meta.processingFeeCents;
-  const existingCurrency = meta.processingFeeCurrency;
+  const feeKeys = [
+    "processingFeeCents",
+    "processingFeeCurrency",
+    "processingFeeSource",
+    "processingFeeChargeId",
+    "processingFeeBalanceTransactionId",
+    "processingFeeGrossCents",
+    "processingFeeNetCents",
+  ];
+  const hasAnyExistingFeeEvidence = feeKeys.some((key) => meta[key] !== undefined);
+  const existingMatches =
+    meta.processingFeeCents === input.evidence.feeCents &&
+    meta.processingFeeCurrency === input.evidence.currency &&
+    typeof meta.processingFeeSource === "string" &&
+    [STRIPE_FEE_SOURCE, STRIPE_FEE_WEBHOOK_SOURCE].includes(
+      meta.processingFeeSource as typeof STRIPE_FEE_SOURCE | typeof STRIPE_FEE_WEBHOOK_SOURCE,
+    ) &&
+    meta.processingFeeChargeId === input.evidence.chargeId &&
+    meta.processingFeeBalanceTransactionId === input.evidence.balanceTransactionId &&
+    meta.processingFeeGrossCents === input.evidence.grossCents &&
+    meta.processingFeeNetCents === input.evidence.netCents;
 
-  if (
-    existingBalanceTransactionId !== undefined &&
-    (existingBalanceTransactionId !== input.evidence.balanceTransactionId ||
-      existingChargeId !== input.evidence.chargeId ||
-      existingFeeCents !== input.evidence.feeCents ||
-      existingCurrency !== input.evidence.currency)
-  ) {
+  if (hasAnyExistingFeeEvidence && !existingMatches) {
     return { ok: false as const, reason: "STRIPE_FEE_IMMUTABLE_MISMATCH" as const };
   }
 
