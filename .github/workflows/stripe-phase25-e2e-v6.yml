@@ -133,6 +133,24 @@ jobs:
             -f context=stripe-phase25-runtime-gate \
             -f description='Production health, database, certification route, and webhook verification passed'
 
+      - name: Provision guarded production certification fixtures
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
+          CERTIFICATION_CATALOG_ONLY: "true"
+          CERTIFICATION_FIXTURE_WRITE: "true"
+        run: |
+          set -euo pipefail
+          [[ -n "$DATABASE_URL" ]] || { echo '::error::Production DATABASE_URL is unavailable.'; exit 1; }
+          [[ "$STRIPE_SECRET_KEY" == sk_test_* ]] || { echo '::error::Certification fixture install requires the certified Stripe test key.'; exit 1; }
+          npx prisma generate --schema=prisma/schema.postgres.prisma
+          npx tsx scripts/install-certification-catalog.ts
+
+          gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
+            -f state=success \
+            -f context=stripe-phase25-cert-fixtures \
+            -f description='Guarded production certification fixtures installed or refreshed'
+
       - name: Create live test-mode Checkout Session
         run: |
           set -euo pipefail
