@@ -1,7 +1,11 @@
 import { createHmac, createHash, timingSafeEqual } from "node:crypto";
+import { getCloudflareContext } from "@opennextjs/cloudflare";
 
 const STRIPE_API = "https://api.stripe.com/v1";
 const DEFAULT_WEBHOOK_TOLERANCE_SECONDS = 300;
+
+type ProcessEnvLike = Record<string, string | undefined>;
+type CloudflareEnvLike = Record<string, unknown>;
 
 export type StripeCheckoutLine = {
   name: string;
@@ -75,13 +79,42 @@ export type StripeEvent = {
   data: { object: Record<string, unknown> };
 };
 
+/**
+ * Resolve a Stripe runtime value with the deployed Cloudflare binding as the
+ * authoritative source when one exists. OpenNext exposes Worker bindings to
+ * Next.js routes through getCloudflareContext().env; process.env remains the
+ * portable fallback for local Node, CI, Netlify previews, and other runtimes.
+ *
+ * The explicit sources are exported for deterministic regression testing.
+ */
+export function resolveStripeRuntimeValue(
+  name: string,
+  processEnv: ProcessEnvLike = process.env,
+  cloudflareEnv?: CloudflareEnvLike | null,
+) {
+  let bindings = cloudflareEnv;
+  if (bindings === undefined) {
+    try {
+      bindings = getCloudflareContext().env as CloudflareEnvLike;
+    } catch {
+      bindings = null;
+    }
+  }
+
+  const boundValue = bindings?.[name];
+  if (typeof boundValue === "string" && boundValue.trim()) {
+    return boundValue.trim();
+  }
+  return (processEnv[name] || "").trim();
+}
+
 function stripeSecretKey() {
-  const key = (process.env.STRIPE_SECRET_KEY || "").trim();
+  const key = resolveStripeRuntimeValue("STRIPE_SECRET_KEY");
   if (!key) throw new Error("STRIPE_SECRET_KEY_MISSING");
   return key;
 }
 
-export function expectedStripeLivemode(secretKey = (process.env.STRIPE_SECRET_KEY || "").trim()) {
+export function expectedStripeLivemode(secretKey = resolveStripeRuntimeValue("STRIPE_SECRET_KEY")) {
   if (secretKey.startsWith("sk_live_")) return true;
   if (secretKey.startsWith("sk_test_")) return false;
   throw new Error("STRIPE_SECRET_KEY_MODE_UNKNOWN");
@@ -89,12 +122,10 @@ export function expectedStripeLivemode(secretKey = (process.env.STRIPE_SECRET_KE
 
 export function stripeWebhookSecret() {
   const livemode = expectedStripeLivemode();
-  const modeSpecific = (
-    livemode
-      ? process.env.STRIPE_WEBHOOK_SECRET_LIVE
-      : process.env.STRIPE_WEBHOOK_SECRET_TEST
-  )?.trim();
-  const legacy = (process.env.STRIPE_WEBHOOK_SECRET || "").trim();
+  const modeSpecific = resolveStripeRuntimeValue(
+    livemode ? "STRIPE_WEBHOOK_SECRET_LIVE" : "STRIPE_WEBHOOK_SECRET_TEST",
+  );
+  const legacy = resolveStripeRuntimeValue("STRIPE_WEBHOOK_SECRET");
   const secret = modeSpecific || legacy;
   if (!secret) {
     throw new Error(
