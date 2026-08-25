@@ -1,0 +1,53 @@
+name: Final Inventory Adapter Certification Dispatch Once
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/inventory-adapter-certification-dispatch-once.yml'
+
+permissions:
+  actions: write
+  contents: read
+  statuses: read
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - name: Wait for exact revision to be live on Cloudflare
+        shell: bash
+        run: |
+          set -euo pipefail
+          ready=0
+          for attempt in $(seq 1 120); do
+            deploy=$(gh api "/repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/status" \
+              --jq '[.statuses[] | select(.context=="cloudflare-production-deploy")][0].state // "missing"')
+            echo "production deploy attempt ${attempt}: ${deploy}"
+
+            if [[ "$deploy" == 'failure' || "$deploy" == 'error' ]]; then
+              echo '::error::Exact revision failed Cloudflare deployment; refusing final adapter certification.'
+              exit 1
+            fi
+            if [[ "$deploy" == 'success' ]]; then
+              ready=1
+              break
+            fi
+            sleep 5
+          done
+
+          if [[ "$ready" != '1' ]]; then
+            echo '::error::Exact revision did not reach successful Cloudflare deployment.'
+            exit 1
+          fi
+
+      - name: Dispatch permanent manual adapter certification workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh workflow run inventory-adapter-certification.yml --ref "$GITHUB_SHA"
+          echo "Dispatched final inventory adapter certification for ${GITHUB_SHA}."
