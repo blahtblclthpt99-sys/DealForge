@@ -4,13 +4,14 @@ import { readFile, writeFile } from "node:fs/promises";
 const prisma = new PrismaClient();
 const checkout = JSON.parse(await readFile(process.env.CHECKOUT_ARTIFACT ?? "checkout.json", "utf8")) as {
   orderNumber?: string;
-  stripeMode?: string;
 };
 const completion = JSON.parse(await readFile(process.env.COMPLETION_ARTIFACT ?? "shipping-checkout-completion.json", "utf8")) as {
+  certificationMode?: string;
   expectedDestination?: { name?: string; line1?: string; city?: string; state?: string; postalCode?: string; country?: string };
 };
 
-if (checkout.stripeMode !== "test") throw new Error("SHIPPING_CERT_REQUIRES_TEST_MODE");
+if (process.env.SHIPPING_CERT_STRIPE_MODE !== "test") throw new Error("SHIPPING_CERT_REQUIRES_VERIFIED_STRIPE_TEST_MODE");
+if (completion.certificationMode !== "stripe_test") throw new Error("SHIPPING_CERT_COMPLETION_MODE_INVALID");
 if (!checkout.orderNumber) throw new Error("SHIPPING_CERT_ORDER_NUMBER_MISSING");
 const expected = completion.expectedDestination;
 if (!expected) throw new Error("SHIPPING_CERT_EXPECTED_DESTINATION_MISSING");
@@ -77,6 +78,7 @@ try {
     if (complete && destination && event) {
       const evidence = {
         orderNumber: order.orderNumber,
+        certificationMode: completion.certificationMode,
         orderStatus: order.status,
         stripeCheckoutSessionId: order.stripeCheckoutSessionId,
         paymentEventId: event.providerEventId,
