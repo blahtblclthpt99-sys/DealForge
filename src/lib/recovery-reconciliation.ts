@@ -58,6 +58,12 @@ function safeMoney(value: unknown) {
     : null;
 }
 
+function safeQuantity(value: unknown) {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0
+    ? value
+    : null;
+}
+
 export function recoveryEventKey(
   intentId: string,
   refundIdempotencyKey: string,
@@ -103,6 +109,7 @@ export function projectRecoveryReconciliation(input: {
   refund: RecoveryRefundView | null;
   refundIdempotencyKey: string;
   actualTotalCostCents: number | null;
+  intentQuantity: number;
 }) {
   const exception = findPostPurchaseException(
     input.events,
@@ -123,11 +130,15 @@ export function projectRecoveryReconciliation(input: {
     input.actualTotalCostCents > 0
       ? input.actualTotalCostCents
       : null;
+  const targetQuantity =
+    Number.isSafeInteger(input.intentQuantity) && input.intentQuantity > 0
+      ? input.intentQuantity
+      : null;
 
   let supplierRecoveredCents = 0;
   let acceptedLossCents = 0;
-  let customerReturnReceived = false;
-  let supplierReturnSent = false;
+  let customerReturnedQuantity = 0;
+  let supplierReturnSentQuantity = 0;
   let closed = false;
 
   for (const event of input.events) {
@@ -135,9 +146,11 @@ export function projectRecoveryReconciliation(input: {
     if (detailRefundKey(detail) !== input.refundIdempotencyKey) continue;
 
     if (event.type === "CUSTOMER_RETURN_RECEIVED") {
-      customerReturnReceived = true;
+      const quantity = safeQuantity(detail?.quantity);
+      if (quantity !== null) customerReturnedQuantity += quantity;
     } else if (event.type === "SUPPLIER_RETURN_SENT") {
-      supplierReturnSent = true;
+      const quantity = safeQuantity(detail?.quantity);
+      if (quantity !== null) supplierReturnSentQuantity += quantity;
     } else if (event.type === "SUPPLIER_RECOVERY_RECORDED") {
       const amount = safeMoney(detail?.amountCents);
       if (amount !== null) supplierRecoveredCents += amount;
@@ -160,9 +173,9 @@ export function projectRecoveryReconciliation(input: {
 
   const requiredEvidenceSatisfied =
     exception.recoveryPlan === "customer_return_required"
-      ? customerReturnReceived
+      ? targetQuantity !== null && customerReturnedQuantity >= targetQuantity
       : exception.recoveryPlan === "supplier_return_required"
-        ? supplierReturnSent
+        ? targetQuantity !== null && supplierReturnSentQuantity >= targetQuantity
         : true;
 
   const refundSucceeded = input.refund?.status === "succeeded";
@@ -180,12 +193,13 @@ export function projectRecoveryReconciliation(input: {
     customerRefundAmountCents: exception.customerRefundAmountCents,
     recoveryPlan: exception.recoveryPlan,
     targetSupplierExposureCents,
+    targetQuantity,
     supplierRecoveredCents,
     acceptedLossCents,
     accountedSupplierExposureCents,
     remainingSupplierExposureCents,
-    customerReturnReceived,
-    supplierReturnSent,
+    customerReturnedQuantity,
+    supplierReturnSentQuantity,
     requiredEvidenceSatisfied,
     overAccounted,
     canClose,
@@ -197,6 +211,7 @@ export function listRecoveryCases(input: {
   events: RecoveryLedgerEvent[];
   refunds: RecoveryRefundView[];
   actualTotalCostCents: number | null;
+  intentQuantity: number;
 }) {
   const keys = new Set<string>();
   for (const event of input.events) {
@@ -215,6 +230,7 @@ export function listRecoveryCases(input: {
         ) || null,
       refundIdempotencyKey,
       actualTotalCostCents: input.actualTotalCostCents,
+      intentQuantity: input.intentQuantity,
     }),
   );
 }
