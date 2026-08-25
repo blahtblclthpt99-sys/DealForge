@@ -15,26 +15,30 @@ test("Cloudflare webhook sync preserves Stripe secret modes and the legacy fallb
   assert.doesNotMatch(source, /write_secret STRIPE_WEBHOOK_SECRET_TEST "\$\{STRIPE_WEBHOOK_SECRET_LEGACY:-\}"/);
 });
 
-test("production deploy updates the owned webhook secret without replacing Cloudflare-owned runtime secrets", async () => {
+test("production deploy supplies the complete required Cloudflare runtime secret contract atomically", async () => {
   const source = await readFile(".github/workflows/cloudflare-production-deploy.yml", "utf8");
 
   const validateIndex = source.indexOf("Validate deployment-owned secret sources");
-  const deployIndex = source.indexOf("Deploy exact main revision while preserving Cloudflare runtime secrets");
+  const deployIndex = source.indexOf("Deploy exact main revision with complete required runtime secret contract");
   assert.ok(validateIndex >= 0, "missing deployment-secret validation step");
   assert.ok(deployIndex >= 0, "missing atomic production deploy step");
-  assert.ok(validateIndex < deployIndex, "deployment-owned secrets must be validated before publish");
+  assert.ok(validateIndex < deployIndex, "required runtime secrets must be validated before publish");
 
-  assert.match(source, /STRIPE_WEBHOOK_SECRET_TEST: \$\{\{ secrets\.STRIPE_WEBHOOK_SECRET_TEST \}\}/);
-  assert.doesNotMatch(source, /DATABASE_URL: \$\{\{ secrets\.DATABASE_URL \}\}/);
-  assert.doesNotMatch(source, /AUTH_SECRET: \$\{\{ secrets\.AUTH_SECRET \}\}/);
-  assert.doesNotMatch(source, /STRIPE_SECRET_KEY: \$\{\{ secrets\.STRIPE_SECRET_KEY \}\}/);
+  for (const name of ["DATABASE_URL", "AUTH_SECRET", "STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET_TEST"]) {
+    assert.match(
+      source,
+      new RegExp(`${name}: \\$\\{\\{ secrets\\.${name} \\}\\}`),
+      `${name} must come from GitHub Actions secrets`,
+    );
+    assert.match(source, new RegExp(`'${name}'`), `${name} must be written to the restricted Wrangler secrets file`);
+  }
 
-  assert.match(source, /JSON\.stringify\(\{ STRIPE_WEBHOOK_SECRET_TEST: webhook \}\)/);
   assert.match(source, /--secrets-file "\$secrets_file"/);
   assert.match(source, /chmod 600 "\$secrets_file"/);
-  assert.match(source, /Cloudflare owns DATABASE_URL, AUTH_SECRET, and STRIPE_SECRET_KEY/);
+  assert.match(source, /STRIPE_SECRET_KEY missing or invalid/);
   assert.match(source, /STRIPE_WEBHOOK_SECRET_TEST missing or invalid/);
   assert.doesNotMatch(source, /wrangler versions secret put/);
+  assert.doesNotMatch(source, /Cloudflare owns DATABASE_URL, AUTH_SECRET, and STRIPE_SECRET_KEY/);
 });
 
 test("live smoke requires the webhook route to reach signature verification", async () => {
