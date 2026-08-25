@@ -38,11 +38,11 @@ CREATE INDEX "SavingsFundEntry_dryRun_createdAt_idx"
 -- Make the journal append-only at the database layer. Corrections must be new
 -- reversal/adjustment entries; historical rows cannot be edited or deleted.
 CREATE OR REPLACE FUNCTION "prevent_savings_fund_entry_mutation"()
-RETURNS trigger AS $$
-BEGIN
-  RAISE EXCEPTION 'SavingsFundEntry is append-only';
-END;
-$$ LANGUAGE plpgsql;
+RETURNS trigger
+LANGUAGE plpgsql
+AS 'BEGIN
+  RAISE EXCEPTION ''SavingsFundEntry is append-only'';
+END;';
 
 CREATE TRIGGER "SavingsFundEntry_prevent_update"
 BEFORE UPDATE ON "SavingsFundEntry"
