@@ -49,5 +49,18 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          gh workflow run inventory-adapter-certification.yml --repo "$GITHUB_REPOSITORY" --ref "$GITHUB_SHA"
-          echo "Dispatched final inventory adapter certification for ${GITHUB_SHA}."
+          main_sha=$(gh api "/repos/${GITHUB_REPOSITORY}/branches/main" --jq '.commit.sha')
+          if [[ "$main_sha" != "$GITHUB_SHA" ]]; then
+            echo "::error::main moved from ${GITHUB_SHA} to ${main_sha}; refusing to dispatch against a different revision."
+            exit 1
+          fi
+
+          gh workflow run inventory-adapter-certification.yml --repo "$GITHUB_REPOSITORY" --ref main
+
+          post_sha=$(gh api "/repos/${GITHUB_REPOSITORY}/branches/main" --jq '.commit.sha')
+          if [[ "$post_sha" != "$GITHUB_SHA" ]]; then
+            echo "::error::main moved during dispatch from ${GITHUB_SHA} to ${post_sha}; certification workflow will independently require its own exact deploy proof."
+            exit 1
+          fi
+
+          echo "Dispatched final inventory adapter certification for deployed main revision ${GITHUB_SHA}."
