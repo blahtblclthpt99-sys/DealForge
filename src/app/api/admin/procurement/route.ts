@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/auth";
 import { prisma } from "@/lib/db";
+import { projectPublicShipment } from "@/lib/shipment-tracking";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -33,7 +34,15 @@ export async function GET() {
   const intents = await prisma.procurementIntent.findMany({
     where: {
       status: {
-        in: ["awaiting_review", "approved_manual", "hold", "blocked_source_integrity"],
+        in: [
+          "awaiting_review",
+          "approved_manual",
+          "hold",
+          "blocked_source_integrity",
+          "supplier_ordered_manual",
+          "shipped",
+          "delivered",
+        ],
       },
     },
     orderBy: { createdAt: "asc" },
@@ -76,7 +85,7 @@ export async function GET() {
       },
       events: {
         orderBy: { createdAt: "desc" },
-        take: 10,
+        take: 20,
         select: {
           id: true,
           type: true,
@@ -88,11 +97,38 @@ export async function GET() {
     },
   });
 
+  const reconciled = intents.map((intent) => {
+    const expected = intent.expectedTotalCostCents;
+    const actual = intent.actualTotalCostCents;
+    const revenue = intent.orderItem.lineTotalCents;
+    const varianceCents = expected !== null && actual !== null ? actual - expected : null;
+    const grossMarginCents = actual !== null ? revenue - actual : null;
+    const grossMarginBps =
+      grossMarginCents !== null && revenue > 0 ? Math.round((grossMarginCents / revenue) * 10_000) : null;
+    const shipmentEvents = intent.events.filter(
+      (event) => event.type === "RECORD_SHIPMENT" || event.type === "MARK_DELIVERED",
+    );
+
+    return {
+      ...intent,
+      shipment: projectPublicShipment(shipmentEvents),
+      economics: {
+        reconciled: actual !== null,
+        lineRevenueCents: revenue,
+        expectedTotalCostCents: expected,
+        actualTotalCostCents: actual,
+        varianceCents,
+        grossMarginCents,
+        grossMarginBps,
+      },
+    };
+  });
+
   return noStore(
     NextResponse.json({
       automaticSupplierPurchasingEnabled: false,
       executionMode: "manual_only",
-      intents,
+      intents: reconciled,
     }),
   );
 }
