@@ -102,6 +102,44 @@ test("selector chooses lowest landed cost then deterministic reliability tie-bre
   assert.equal(result.selected?.landedCostCents, 2625);
 });
 
+test("direct selection can require a current inventory observation and rejects missing or expired evidence", () => {
+  const strictPolicy = { ...policy, requireCurrentInventoryObservation: true };
+  const missing = evaluateSupplierOffer(offer(), strictPolicy, NOW);
+  assert.equal(missing.eligible, false);
+  assert.ok(missing.reasons.includes("inventory_observation_missing"));
+
+  const current = evaluateSupplierOffer(offer({
+    latestInventoryObservation: {
+      supplierOfferId: "offer-a",
+      availability: "in_stock",
+      quantity: 2,
+      inventoryConfidenceBps: 9300,
+      observedAt: new Date("2026-08-24T22:20:00Z"),
+      expiresAt: new Date("2026-08-24T23:20:00Z"),
+      verificationMethod: "owner_manual",
+      provenance: "supplier portal",
+      sourceHealth: "healthy",
+    },
+  }), strictPolicy, NOW);
+  assert.equal(current.eligible, true);
+
+  const expired = evaluateSupplierOffer(offer({
+    latestInventoryObservation: {
+      supplierOfferId: "offer-a",
+      availability: "in_stock",
+      quantity: 2,
+      inventoryConfidenceBps: 9300,
+      observedAt: new Date("2026-08-24T21:00:00Z"),
+      expiresAt: new Date("2026-08-24T22:00:00Z"),
+      verificationMethod: "owner_manual",
+      provenance: "supplier portal",
+      sourceHealth: "healthy",
+    },
+  }), strictPolicy, NOW);
+  assert.equal(expired.eligible, false);
+  assert.ok(expired.reasons.includes("inventory_observation_stale"));
+});
+
 test("supplier selection is decision-only and does not grant commerce authority", async () => {
   const source = await import("node:fs/promises").then(({ readFile }) => readFile("src/lib/supplier-offers.ts", "utf8"));
   assert.doesNotMatch(source, /prisma\.|fetch\(|stripe|commerceEnabled\s*[:=]\s*true/i);
