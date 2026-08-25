@@ -9,6 +9,7 @@ import {
   transitionProcurement,
   validateManualPurchaseEconomics,
 } from "@/lib/procurement-state-machine";
+import { hasActiveRefund } from "@/lib/refund-procurement-interlock";
 import { readLimitedJson } from "@/lib/request-json";
 
 export const runtime = "nodejs";
@@ -76,7 +77,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   const intent = await prisma.procurementIntent.findUnique({
     where: { id },
     include: {
-      order: { select: { id: true, status: true, paidAt: true, currency: true } },
+      order: { select: { id: true, status: true, paidAt: true, currency: true, refunds: { select: { status: true } } } },
       orderItem: { select: { id: true, lineTotalCents: true } },
     },
   });
@@ -86,6 +87,9 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   }
   if (intent.order.status !== "paid" || !intent.order.paidAt) {
     return noStore(NextResponse.json({ error: "PROCUREMENT_ORDER_NOT_PAID" }, { status: 409 }));
+  }
+  if (hasActiveRefund(intent.order.refunds) && parsed.data.action !== "CANCEL") {
+    return noStore(NextResponse.json({ error: "PROCUREMENT_BLOCKED_BY_REFUND" }, { status: 409 }));
   }
   if (intent.blockedReason || intent.status === "blocked_source_integrity") {
     return noStore(NextResponse.json({ error: "PROCUREMENT_SOURCE_INTEGRITY_BLOCKED" }, { status: 409 }));
@@ -126,13 +130,16 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       const current = await tx.procurementIntent.findUnique({
         where: { id: intent.id },
         include: {
-          order: { select: { status: true, paidAt: true } },
+          order: { select: { status: true, paidAt: true, refunds: { select: { status: true } } } },
           orderItem: { select: { lineTotalCents: true } },
         },
       });
       if (!current) throw new Error("PROCUREMENT_INTENT_CHANGED");
       if (current.executionMode !== "manual_only" || current.blockedReason) throw new Error("PROCUREMENT_INTENT_CHANGED");
       if (current.order.status !== "paid" || !current.order.paidAt) throw new Error("PROCUREMENT_FINANCIAL_STATE_CHANGED");
+      if (hasActiveRefund(current.order.refunds) && parsed.data.action !== "CANCEL") {
+        throw new Error("PROCUREMENT_REFUND_INTERLOCK");
+      }
       if (current.status !== parsed.data.expectedState || !isProcurementStatus(current.status)) {
         throw new Error("PROCUREMENT_STATE_CHANGED");
       }
@@ -209,7 +216,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   } catch (error) {
     const message = error instanceof Error ? error.message : "UNKNOWN";
     if (message.startsWith("PROCUREMENT_")) {
-      return noStore(NextResponse.json({ error: "PROCUREMENT_STATE_CONFLICT" }, { status: 409 }));
+      return noStore(NextResponse.json({ error: message === "PROCUREMENT_REFUND_INTERLOCK" ? "PROCUREMENT_BLOCKED_BY_REFUND" : "PROCUREMENT_STATE_CONFLICT" }, { status: 409 }));
     }
     console.error("procurement.owner_action_failed", {
       procurementIntentId: intent.id,
