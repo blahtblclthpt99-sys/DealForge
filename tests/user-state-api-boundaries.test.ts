@@ -43,6 +43,15 @@ test("account updates are strict, bounded, and cannot inject arbitrary settings"
   assert.doesNotMatch(source, /await req\.json\(\)/);
 });
 
+test("settings client submits only the server-owned settings fields and handles failures", async () => {
+  const source = await readFile("src/components/settings-form.tsx", "utf8");
+  assert.match(source, /settings: \{ emailAlerts \}/);
+  assert.doesNotMatch(source, /settings: \{ \.\.\.settings, emailAlerts \}/);
+  assert.match(source, /if \(!res\.ok\)/);
+  assert.match(source, /catch \{/);
+  assert.match(source, /disabled=\{saving\}/);
+});
+
 test("saved searches bound query, filter count, key/value size, and retained rows", async () => {
   const source = await readFile("src/app/api/saved-searches/route.ts", "utf8");
   assert.match(source, /MAX_SAVED_SEARCHES = 30/);
@@ -54,6 +63,15 @@ test("saved searches bound query, filter count, key/value size, and retained row
   assert.doesNotMatch(source, /await req\.json\(\)/);
 });
 
+test("saved-search delete client only refreshes after a successful mutation", async () => {
+  const source = await readFile("src/components/delete-search-button.tsx", "utf8");
+  assert.match(source, /const res = await fetch/);
+  assert.match(source, /if \(!res\.ok\)/);
+  assert.match(source, /Could not remove saved search/);
+  assert.match(source, /disabled=\{busy\}/);
+  assert.ok(source.indexOf("if (!res.ok)") < source.indexOf("router.refresh()"));
+});
+
 test("price alerts require a real product and a finite positive bounded target", async () => {
   const source = await readFile("src/app/api/price-alerts/route.ts", "utf8");
   assert.match(source, /MAX_ALERTS = 50/);
@@ -62,6 +80,17 @@ test("price alerts require a real product and a finite positive bounded target",
   assert.match(source, /Math\.round\(parsed\.data\.targetPrice \* 100\)/);
   assert.match(source, /PRODUCT_NOT_FOUND/);
   assert.doesNotMatch(source, /await req\.json\(\)/);
+});
+
+test("price-alert clients validate targets and honor mutation failures", async () => {
+  const source = await readFile("src/components/price-alert-form.tsx", "utf8");
+  assert.match(source, /Number\.isFinite\(parsedTargetPrice\)/);
+  assert.match(source, /parsedTargetPrice > 1_000_000/);
+  assert.match(source, /if \(!res\.ok\)/);
+  assert.match(source, /Could not create alert/);
+  assert.match(source, /Could not remove alert/);
+  assert.match(source, /disabled=\{saving\}/);
+  assert.match(source, /disabled=\{busy\}/);
 });
 
 test("wishlist is capped and cannot store arbitrary nonexistent product IDs", async () => {
