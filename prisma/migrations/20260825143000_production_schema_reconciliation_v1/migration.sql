@@ -236,19 +236,12 @@ CREATE INDEX IF NOT EXISTS "SavingsFundEntry_orderId_createdAt_idx" ON "SavingsF
 CREATE INDEX IF NOT EXISTS "SavingsFundEntry_refundId_createdAt_idx" ON "SavingsFundEntry"("refundId", "createdAt");
 CREATE INDEX IF NOT EXISTS "SavingsFundEntry_dryRun_createdAt_idx" ON "SavingsFundEntry"("dryRun", "createdAt");
 
-CREATE OR REPLACE FUNCTION "prevent_savings_fund_entry_mutation"()
-RETURNS trigger AS $$
-BEGIN
-  RAISE EXCEPTION 'SavingsFundEntry is append-only';
-END;
-$$ LANGUAGE plpgsql;
+-- Keep the Phase A journal append-only without a procedural function body. This
+-- form is intentionally friendly to migration runners that split SQL statements.
+CREATE OR REPLACE RULE "SavingsFundEntry_prevent_update_rule"
+AS ON UPDATE TO "SavingsFundEntry"
+DO INSTEAD NOTHING;
 
-DROP TRIGGER IF EXISTS "SavingsFundEntry_prevent_update" ON "SavingsFundEntry";
-CREATE TRIGGER "SavingsFundEntry_prevent_update"
-BEFORE UPDATE ON "SavingsFundEntry"
-FOR EACH ROW EXECUTE FUNCTION "prevent_savings_fund_entry_mutation"();
-
-DROP TRIGGER IF EXISTS "SavingsFundEntry_prevent_delete" ON "SavingsFundEntry";
-CREATE TRIGGER "SavingsFundEntry_prevent_delete"
-BEFORE DELETE ON "SavingsFundEntry"
-FOR EACH ROW EXECUTE FUNCTION "prevent_savings_fund_entry_mutation"();
+CREATE OR REPLACE RULE "SavingsFundEntry_prevent_delete_rule"
+AS ON DELETE TO "SavingsFundEntry"
+DO INSTEAD NOTHING;
