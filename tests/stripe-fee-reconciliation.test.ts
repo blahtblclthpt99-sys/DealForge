@@ -44,7 +44,7 @@ test("valid Stripe charge and balance transaction produce exact fee evidence", (
   assert.equal(result.evidence.chargeAmountCents, 10_000);
 });
 
-test("fee evidence rejects payment, balance-source, and arithmetic mismatches", () => {
+test("fee evidence rejects payment, balance-source, type, and arithmetic mismatches", () => {
   const wrongPayment = validateStripeFeeEvidence({
     paymentIntentId: "pi_other_123",
     charge,
@@ -58,6 +58,13 @@ test("fee evidence rejects payment, balance-source, and arithmetic mismatches", 
     balanceTransaction: { ...balanceTransaction, source: "ch_other_123" },
   });
   assert.deepEqual(wrongSource, { ok: false, reason: "STRIPE_FEE_BALANCE_SOURCE_MISMATCH" });
+
+  const wrongType = validateStripeFeeEvidence({
+    paymentIntentId: "pi_fee_123",
+    charge,
+    balanceTransaction: { ...balanceTransaction, type: "refund" },
+  });
+  assert.deepEqual(wrongType, { ok: false, reason: "STRIPE_FEE_BALANCE_TYPE_MISMATCH" });
 
   const wrongMath = validateStripeFeeEvidence({
     paymentIntentId: "pi_fee_123",
@@ -85,7 +92,7 @@ test("cross-currency settlement evidence is retained without pretending it is or
   assert.equal(result.evidence.currency, "eur");
 });
 
-test("fee metadata preserves unrelated payment metadata and rejects immutable conflicts", () => {
+test("fee metadata preserves unrelated metadata and rejects partial or conflicting fee evidence", () => {
   const validated = validateStripeFeeEvidence({
     paymentIntentId: "pi_fee_123",
     charge,
@@ -93,6 +100,14 @@ test("fee metadata preserves unrelated payment metadata and rejects immutable co
   });
   assert.equal(validated.ok, true);
   if (!validated.ok) return;
+
+  const partialConflict = mergeStripeFeeMeta({
+    currentMeta: JSON.stringify({ source: "stripe_webhook", processingFeeCents: 320 }),
+    evidence: validated.evidence,
+    source: STRIPE_FEE_WEBHOOK_SOURCE,
+    reconciledAt: "2026-08-25T04:39:00.000Z",
+  });
+  assert.deepEqual(partialConflict, { ok: false, reason: "STRIPE_FEE_IMMUTABLE_MISMATCH" });
 
   const merged = mergeStripeFeeMeta({
     currentMeta: JSON.stringify({ source: "stripe_webhook", keep: "yes" }),
@@ -118,7 +133,7 @@ test("fee metadata preserves unrelated payment metadata and rejects immutable co
   assert.deepEqual(conflict, { ok: false, reason: "STRIPE_FEE_IMMUTABLE_MISMATCH" });
 });
 
-test("profit analytics accepts only the authoritative stored Stripe fee provenance", () => {
+test("profit analytics accepts only complete authoritative Stripe fee provenance", () => {
   const payment = {
     status: "succeeded",
     amountCents: 10_000,
@@ -127,6 +142,10 @@ test("profit analytics accepts only the authoritative stored Stripe fee provenan
       processingFeeCents: 320,
       processingFeeCurrency: "usd",
       processingFeeSource: STRIPE_FEE_WEBHOOK_SOURCE,
+      processingFeeChargeId: "ch_fee_123",
+      processingFeeBalanceTransactionId: "txn_fee_123",
+      processingFeeGrossCents: 10_000,
+      processingFeeNetCents: 9_680,
     }),
   };
   assert.equal(authoritativePaymentFee(payment)?.feeCents, 320);
@@ -137,6 +156,10 @@ test("profit analytics accepts only the authoritative stored Stripe fee provenan
         processingFeeCents: 320,
         processingFeeCurrency: "usd",
         processingFeeSource: "estimated_percentage",
+        processingFeeChargeId: "ch_fee_123",
+        processingFeeBalanceTransactionId: "txn_fee_123",
+        processingFeeGrossCents: 10_000,
+        processingFeeNetCents: 9_680,
       }),
     }),
     null,
