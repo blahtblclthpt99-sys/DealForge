@@ -191,4 +191,4 @@ jobs:
           gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
             -f state=failure \
             -f context=inventory-adapter-certification \
-            -f description='Inventory adapter certification failed; adapters remain fail-closed'
+            -f description='Adapter certification failed; inspect cleanup and postflight evidence'
