@@ -51,13 +51,20 @@ test("production schema checker is read-only and verifies every replay-protectio
   assert.doesNotMatch(checker, /\b(CREATE|ALTER|DROP|TRUNCATE|INSERT|UPDATE|DELETE)\b/);
 });
 
-test("Cloudflare certification is manual, serialized, ephemeral, and fail-closed", async () => {
+test("Cloudflare certification is manual, serialized, exact-revision, ephemeral, and fail-closed", async () => {
   const workflow = await readFile(".github/workflows/inventory-adapter-certification.yml", "utf8");
+  const exactDeployCheck = workflow.indexOf("Require exact certification revision to be deployed");
+  const provision = workflow.indexOf("Generate and provision one-time adapter credential");
 
   assert.match(workflow, /workflow_dispatch:/);
   assert.doesNotMatch(workflow, /\n  push:/);
   assert.match(workflow, /group: dealforge-cloudflare-production/);
   assert.match(workflow, /DATABASE_URL: \$\{\{ secrets\.DATABASE_URL \}\}/);
+  assert.match(workflow, /cloudflare-production-deploy/);
+  assert.match(workflow, /GITHUB_SHA/);
+  assert.ok(exactDeployCheck >= 0);
+  assert.ok(provision >= 0);
+  assert.ok(exactDeployCheck < provision, "exact deployed revision must be proven before any temporary credential is provisioned");
   assert.match(workflow, /check-inventory-adapter-schema\.ts/);
   assert.match(workflow, /ADAPTER_AUTH_NOT_CONFIGURED/);
   assert.match(workflow, /wrangler secret list --name dealforge --format json/);
@@ -71,6 +78,18 @@ test("Cloudflare certification is manual, serialized, ephemeral, and fail-closed
   assert.doesNotMatch(workflow, /workers\/scripts\/dealforge\/secrets\/INVENTORY_ADAPTER_SECRETS_JSON/);
   assert.doesNotMatch(workflow, /wrangler versions secret/);
   assert.doesNotMatch(workflow, /INVENTORY_ADAPTER_SECRETS_JSON:\s*\$\{\{\s*secrets\./);
+});
+
+test("one-time dispatcher uses main only while it is still the exact deployed revision", async () => {
+  const workflow = await readFile(".github/workflows/inventory-adapter-certification-dispatch-once.yml", "utf8");
+
+  assert.match(workflow, /cloudflare-production-deploy/);
+  assert.match(workflow, /branches\/main/);
+  assert.match(workflow, /main_sha/);
+  assert.match(workflow, /post_sha/);
+  assert.match(workflow, /--ref main/);
+  assert.match(workflow, /inventory-adapter-certification\.yml/);
+  assert.doesNotMatch(workflow, /--ref "\$GITHUB_SHA"/);
 });
 
 test("one-time recovery waits for Cloudflare mutators then proves the adapter secret is absent", async () => {

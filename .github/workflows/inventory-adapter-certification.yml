@@ -43,6 +43,18 @@ jobs:
             echo "::add-mask::$value"
           done
 
+      - name: Require exact certification revision to be deployed
+        shell: bash
+        run: |
+          set -euo pipefail
+          deploy=$(gh api "/repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/status" \
+            --jq '[.statuses[] | select(.context=="cloudflare-production-deploy")][0].state // "missing"')
+          echo "exact certification revision deployment state: ${deploy}"
+          if [[ "$deploy" != 'success' ]]; then
+            echo '::error::Refusing adapter certification because this exact revision is not proven live on Cloudflare.'
+            exit 1
+          fi
+
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
