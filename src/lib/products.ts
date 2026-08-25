@@ -10,6 +10,7 @@ import { normalizeProductImage } from "./product-image";
 import { parseQuantityFromTitle } from "./quantity";
 import { evaluateCertificationCommerceGate, evaluateCommerceGate } from "./commerce-gate";
 import { recommendCommercialPrice } from "./commercialization";
+import { readStorefrontInventoryDecisions, type StorefrontInventoryDecision } from "./storefront-inventory";
 import {
   CERTIFICATION_CATALOG_PRODUCT_IDS,
   certificationCatalogScopeKey,
@@ -49,6 +50,8 @@ export type ProductDTO = {
   retailer: string;
   availability: string;
   availabilityVerified: boolean;
+  inventoryVerifiedAt: string | null;
+  inventoryExpiresAt: string | null;
   priceVerified: boolean;
   metadataVerified: boolean;
   priceSource: string | null;
@@ -205,6 +208,28 @@ function directCommerceDecision(p: ProductWithCategory) {
     : evaluateCommerceGate(input);
 }
 
+function storefrontBindingInput(p: ProductWithCategory) {
+  return {
+    productId: p.id,
+    currency: p.currency,
+    availability: p.availability,
+    landedCostCents: p.landedCostCents,
+    priceVerifiedAt: p.priceVerifiedAt,
+    specifications: p.specifications,
+  };
+}
+
+async function toPublicProductDTOs(rows: ProductWithCategory[]) {
+  let decisions = new Map<string, StorefrontInventoryDecision>();
+  try {
+    decisions = await readStorefrontInventoryDecisions(rows.map(storefrontBindingInput));
+  } catch {
+    // Inventory/source evidence is a promotion prerequisite. Read failures must
+    // under-claim availability and direct-commerce readiness, never over-claim.
+  }
+  return rows.map((row) => toProductDTO(row, decisions.get(row.id) ?? null));
+}
+
 function dealForgeEstimatedPrice(referencePrice: number) {
   const referenceCents = Math.round(referencePrice * 100);
   if (!Number.isSafeInteger(referenceCents) || referenceCents <= 0) return 0;
@@ -222,7 +247,10 @@ function dealForgeEstimatedPrice(referencePrice: number) {
   }
 }
 
-export function toProductDTO(p: ProductWithCategory): ProductDTO {
+export function toProductDTO(
+  p: ProductWithCategory,
+  inventoryDecision: StorefrontInventoryDecision | null = null,
+): ProductDTO {
   const images = cleanImages(p.images);
   const specs = publicSpecifications(p.specifications);
   const integrity = productClaimIntegrity({
@@ -233,7 +261,11 @@ export function toProductDTO(p: ProductWithCategory): ProductDTO {
     metadataVerifiedAt: p.metadataVerifiedAt,
   });
   const commerce = directCommerceDecision(p);
-  const direct = commerce.allowed && Number.isSafeInteger(p.sellingPriceCents) && (p.sellingPriceCents ?? 0) > 0;
+  const direct = commerce.allowed
+    && inventoryDecision?.bindingAllowed === true
+    && inventoryDecision.availabilityVerified
+    && Number.isSafeInteger(p.sellingPriceCents)
+    && (p.sellingPriceCents ?? 0) > 0;
   const rawPricing = sanitizePricing(p.price, p.originalPrice, p.discountPercent);
   const configuredPrice = Number.isSafeInteger(p.sellingPriceCents) && (p.sellingPriceCents ?? 0) > 0
     ? (p.sellingPriceCents as number) / 100
@@ -247,8 +279,22 @@ export function toProductDTO(p: ProductWithCategory): ProductDTO {
   const priceEstimated = !direct && estimatedPrice > 0;
   const rating = integrity.metadataVerified ? p.rating : 0;
   const reviewCount = integrity.metadataVerified ? p.reviewCount : 0;
-  const availability = direct ? p.availability : integrity.metadataVerified ? p.availability : "unknown";
-  const dtoBase = { discountPercent: pricing.discountPercent, rating, reviewCount, trendingScore: p.trendingScore, createdAt: p.createdAt, lastUpdated: p.lastUpdated, clickCount: p.clickCount, viewCount: p.viewCount };
+  const availability = direct
+    ? inventoryDecision.availability
+    : integrity.metadataVerified
+      ? p.availability
+      : "unknown";
+  const dtoBase = {
+    discountPercent: pricing.discountPercent,
+    rating,
+    reviewCount,
+    trendingScore: p.trendingScore,
+    createdAt: p.createdAt,
+    lastUpdated: p.lastUpdated,
+    clickCount: p.clickCount,
+    viewCount: p.viewCount,
+  };
+  const rankScore = computeRankScore(dtoBase) + (direct ? 0.35 : 0);
   return {
     id: p.id, asin: p.asin, slug: p.slug, title: p.title, description: p.description, brand: p.brand,
     categoryId: p.categoryId, categorySlug: p.category?.slug, categoryName: p.category?.name,
@@ -258,7 +304,9 @@ export function toProductDTO(p: ProductWithCategory): ProductDTO {
     rating, reviewCount,
     affiliateUrl: generateAffiliateLink(p.retailer, { asin: p.asin, url: p.affiliateUrl }),
     retailer: p.retailer, availability,
-    availabilityVerified: direct || integrity.metadataVerified,
+    availabilityVerified: direct && inventoryDecision.availabilityVerified,
+    inventoryVerifiedAt: direct ? inventoryDecision.observedAt?.toISOString() ?? null : null,
+    inventoryExpiresAt: direct ? inventoryDecision.expiresAt?.toISOString() ?? null : null,
     priceVerified: direct || (!priceEstimated && integrity.priceVerified),
     metadataVerified: integrity.metadataVerified,
     priceSource: direct ? "dealforge" : priceEstimated ? "dealforge_estimate" : p.priceSource,
@@ -267,7 +315,7 @@ export function toProductDTO(p: ProductWithCategory): ProductDTO {
     metadataVerifiedAt: direct ? null : (integrity.metadataVerified ? p.metadataVerifiedAt?.toISOString() ?? null : null),
     specifications: specs, trendingScore: p.trendingScore, clickCount: p.clickCount, viewCount: p.viewCount,
     isFeatured: p.isFeatured, isFlashDeal: p.isFlashDeal, flashEndsAt: p.flashEndsAt?.toISOString() ?? null,
-    lastUpdated: p.lastUpdated.toISOString(), createdAt: p.createdAt.toISOString(), rankScore: computeRankScore(dtoBase),
+    lastUpdated: p.lastUpdated.toISOString(), createdAt: p.createdAt.toISOString(), rankScore,
     purchaseMode: direct ? "direct" : "affiliate",
     commerceReady: direct,
     currency: p.currency.toLowerCase(),
@@ -336,11 +384,20 @@ function buildOrderBy(params: ProductQuery): Prisma.ProductOrderByWithRelationIn
   }
 }
 
+function applyInventoryAwareDefaultRanking(items: ProductDTO[], params: ProductQuery) {
+  if (params.sort || params.trending || params.newest) return items;
+  return [...items].sort((left, right) => {
+    const readiness = Number(right.commerceReady) - Number(left.commerceReady);
+    if (readiness !== 0) return readiness;
+    return right.rankScore - left.rankScore;
+  });
+}
+
 export async function queryProducts(params: ProductQuery) {
   const page = Math.max(1, params.page ?? 1);
   const limit = Math.min(48, Math.max(1, params.limit ?? 24));
   const scope = certificationCatalogScopeKey();
-  const cacheKey = `products:v13:${scope}:${JSON.stringify(params)}`;
+  const cacheKey = `products:v14:${scope}:${JSON.stringify(params)}`;
   const cached = await cacheGet<{ items: ProductDTO[]; total: number; page: number; hasMore: boolean }>(cacheKey);
   if (cached) return cached;
   const where = buildWhere(params); const orderBy = buildOrderBy(params); const skip = (page - 1) * limit;
@@ -348,8 +405,13 @@ export async function queryProducts(params: ProductQuery) {
   const [cachedTotal, rows] = await Promise.all([cacheGet<number>(countKey), prisma.product.findMany({ where, select: productListSelect, orderBy, skip, take: limit })]);
   let total = cachedTotal;
   if (total == null) { total = await prisma.product.count({ where }); await cacheSet(countKey, total, 120); }
-  const result = { items: rows.map(toProductDTO), total, page, hasMore: skip + limit < total };
-  await cacheSet(cacheKey, result, 45); return result;
+  const hydrated = await toPublicProductDTOs(rows);
+  const items = applyInventoryAwareDefaultRanking(hydrated, params);
+  const result = { items, total, page, hasMore: skip + limit < total };
+  // Never cache a positive direct-commerce claim across its inventory TTL. A
+  // later request must re-read the immutable observation and re-run the binding.
+  if (!items.some((item) => item.commerceReady)) await cacheSet(cacheKey, result, 45);
+  return result;
 }
 
 function internalCertificationRecord(product: Pick<ProductWithCategory, "id" | "specifications">) {
@@ -364,10 +426,12 @@ export async function getProductBySlug(slug: string) {
     select: productListSelect,
   });
   if (!product) return null;
+  const [dto] = await toPublicProductDTOs([product]);
+  if (!dto) return null;
   if (isCertificationCatalogMode()) {
-    return isCertificationCatalogProduct(product) ? toProductDTO(product) : null;
+    return isCertificationCatalogProduct(product) ? dto : null;
   }
-  return !internalCertificationRecord(product) ? toProductDTO(product) : null;
+  return !internalCertificationRecord(product) ? dto : null;
 }
 
 export async function getSimilarProducts(product: ProductDTO, limit = 8) {
@@ -377,7 +441,7 @@ export async function getSimilarProducts(product: ProductDTO, limit = 8) {
     orderBy: [{ discountPercent: "desc" }, { rating: "desc" }],
     take: Math.min(24, Math.max(1, limit)),
   });
-  return rows.map(toProductDTO);
+  return toPublicProductDTOs(rows);
 }
 
 export async function getRelatedProducts(product: ProductDTO, limit = 8) {
@@ -387,7 +451,7 @@ export async function getRelatedProducts(product: ProductDTO, limit = 8) {
     orderBy: [{ rating: "desc" }, { reviewCount: "desc" }],
     take: Math.min(24, Math.max(1, limit)),
   });
-  return rows.map(toProductDTO);
+  return toPublicProductDTOs(rows);
 }
 
 export async function getCategories() {
