@@ -25,15 +25,6 @@ const Schema = z.object({
     .max(20),
 });
 
-function parseSpecs(value: string) {
-  try {
-    const parsed = JSON.parse(value) as Record<string, unknown>;
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
-  } catch {
-    return {};
-  }
-}
-
 export async function POST(request: Request) {
   try {
     if (process.env.COMMERCE_ENABLED !== "true") {
