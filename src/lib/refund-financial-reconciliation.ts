@@ -94,6 +94,9 @@ export function validateRefundFinancialEvidence(input: {
   if (refundAmountCents === null || refundAmountCents <= 0 || !refundCurrency) {
     return { ok: false as const, reason: "REFUND_FINANCIAL_REFUND_INVALID" as const };
   }
+  if (paymentIntentId !== null && !/^pi_[A-Za-z0-9_]+$/.test(paymentIntentId)) {
+    return { ok: false as const, reason: "REFUND_FINANCIAL_PAYMENT_INTENT_INVALID" as const };
+  }
   if (!linkedBalanceTransactionId || linkedBalanceTransactionId !== balanceTransactionId) {
     return { ok: false as const, reason: "REFUND_FINANCIAL_BALANCE_TRANSACTION_MISMATCH" as const };
   }
@@ -187,11 +190,11 @@ export async function persistRefundFinancialEvidence(
   await tx.$executeRaw(
     Prisma.sql`
       INSERT INTO "RefundFinancialEvent" (
-        "id", "eventKey", "refundId", "providerRefundId", "providerEventId",
+        "id", "eventKey", "refundId", "providerRefundId", "paymentIntentId", "providerEventId",
         "providerBalanceTransactionId", "kind", "amountCents", "feeCents", "netCents",
         "currency", "transactionType", "reportingCategory", "sourceObjectId"
       ) VALUES (
-        ${id}, ${eventKey}, ${input.refundId}, ${input.evidence.providerRefundId}, ${providerEventId},
+        ${id}, ${eventKey}, ${input.refundId}, ${input.evidence.providerRefundId}, ${input.evidence.paymentIntentId}, ${providerEventId},
         ${input.evidence.balanceTransactionId}, ${input.evidence.kind}, ${input.evidence.amountCents},
         ${input.evidence.feeCents}, ${input.evidence.netCents}, ${input.evidence.currency},
         ${input.evidence.transactionType}, ${input.evidence.reportingCategory}, ${input.evidence.sourceObjectId}
@@ -203,7 +206,7 @@ export async function persistRefundFinancialEvidence(
   const rows = await tx.$queryRaw<RefundFinancialRow[]>(
     Prisma.sql`
       SELECT
-        "id", "eventKey", "refundId", "providerRefundId", "providerEventId",
+        "id", "eventKey", "refundId", "providerRefundId", "paymentIntentId", "providerEventId",
         "providerBalanceTransactionId" AS "balanceTransactionId", "kind",
         "amountCents", "feeCents", "netCents", "currency", "transactionType",
         "reportingCategory", "sourceObjectId", "createdAt"
@@ -221,6 +224,7 @@ export async function persistRefundFinancialEvidence(
     row.eventKey === eventKey &&
     row.refundId === input.refundId &&
     row.providerRefundId === input.evidence.providerRefundId &&
+    normalizedNullable(row.paymentIntentId) === normalizedNullable(input.evidence.paymentIntentId) &&
     row.balanceTransactionId === input.evidence.balanceTransactionId &&
     row.kind === input.evidence.kind &&
     row.amountCents === input.evidence.amountCents &&
