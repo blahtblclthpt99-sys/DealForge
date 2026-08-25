@@ -47,6 +47,18 @@ type CommercializationSnapshot = {
   priceVerifiedAt: string;
 };
 
+type ComparableOfferObservation = {
+  sourceUrl: string | null;
+  availability: string;
+  currency: string;
+  itemCostCents: number;
+  shippingCents: number;
+  taxCents: number;
+  supplierFeeCents: number;
+  handlingCents: number;
+  inventoryConfidenceBps: number;
+};
+
 function sha256(value: string) {
   return createHash("sha256").update(value).digest("hex");
 }
@@ -80,17 +92,7 @@ function canonicalSnapshot(specifications: string): CommercializationSnapshot {
 }
 
 function sameOfferObservation(
-  current: {
-    sourceUrl: string | null;
-    availability: string;
-    currency: string;
-    itemCostCents: number;
-    shippingCents: number;
-    taxCents: number;
-    supplierFeeCents: number;
-    handlingCents: number;
-    inventoryConfidenceBps: number;
-  },
+  current: ComparableOfferObservation,
   next: PersistedCommercializationInput,
   sourceUrl: string | null,
   currency: string,
@@ -126,11 +128,38 @@ function annotatePersistedSelection(
   return JSON.stringify(root);
 }
 
+function unavailableSnapshotAvailability(selection: SupplierSelectionResult) {
+  return selection.evaluated.length > 0 && selection.evaluated.every((entry) => entry.offer.availability === "out_of_stock")
+    ? "out_of_stock"
+    : "unknown";
+}
+
+async function readCurrentOffer(id: string) {
+  return prisma.supplierOffer.findUnique({
+    where: { id },
+    select: {
+      id: true,
+      supplierId: true,
+      productId: true,
+      sourceUrl: true,
+      availability: true,
+      currency: true,
+      itemCostCents: true,
+      shippingCents: true,
+      taxCents: true,
+      supplierFeeCents: true,
+      handlingCents: true,
+      priceVerifiedAt: true,
+      inventoryConfidenceBps: true,
+    },
+  });
+}
+
 /**
  * Persist one owner-verified supplier observation, then select only from the
  * normalized persisted offer set. Older price/source observations never roll
- * newer verification state backward. This function never purchases, reserves
- * inventory, or changes the global commerce switch.
+ * newer verification or revocation state backward. This function never
+ * purchases or reserves inventory and never changes the global commerce switch.
  */
 export async function persistSelectAndPrepareCommercialization(
   input: PersistedCommercializationInput,
@@ -186,11 +215,11 @@ export async function persistSelectAndPrepareCommercialization(
       sourceVerifiedAt,
       verificationSource: "owner_manual",
     },
+    // Existing authorization/revocation state is deliberately preserved here.
+    // Only a strictly newer owner verification below may re-authorize it.
     update: {
       name: supplierName,
       websiteUrl: websiteUrl ?? undefined,
-      active: true,
-      resaleAllowed: true,
     },
   });
   if (supplier.sourceClass !== input.sourceClass) throw new Error("SUPPLIER_KEY_CONFLICT");
@@ -200,7 +229,12 @@ export async function persistSelectAndPrepareCommercialization(
       id: supplier.id,
       OR: [{ sourceVerifiedAt: null }, { sourceVerifiedAt: { lt: sourceVerifiedAt } }],
     },
-    data: { sourceVerifiedAt, verificationSource: "owner_manual" },
+    data: {
+      sourceVerifiedAt,
+      verificationSource: "owner_manual",
+      active: true,
+      resaleAllowed: true,
+    },
   });
 
   const initialOffer = await prisma.supplierOffer.upsert({
@@ -221,7 +255,8 @@ export async function persistSelectAndPrepareCommercialization(
       priceVerifiedAt,
       inventoryConfidenceBps: input.inventoryConfidenceBps,
     },
-    update: { active: true },
+    // A stale observation cannot reactivate a deliberately disabled offer.
+    update: {},
   });
   if (initialOffer.supplierId !== supplier.id || initialOffer.productId !== productId) {
     throw new Error("SUPPLIER_OFFER_KEY_CONFLICT");
@@ -236,8 +271,11 @@ export async function persistSelectAndPrepareCommercialization(
   }
 
   if (currentPriceVerifiedAt === null || currentPriceVerifiedAt < priceVerifiedAt.getTime()) {
-    await prisma.supplierOffer.update({
-      where: { id: initialOffer.id },
+    const advanced = await prisma.supplierOffer.updateMany({
+      where: {
+        id: initialOffer.id,
+        OR: [{ priceVerifiedAt: null }, { priceVerifiedAt: { lt: priceVerifiedAt } }],
+      },
       data: {
         sourceUrl: snapshot.sourceUrl,
         active: true,
@@ -252,6 +290,18 @@ export async function persistSelectAndPrepareCommercialization(
         inventoryConfidenceBps: input.inventoryConfidenceBps,
       },
     });
+
+    if (advanced.count === 0) {
+      const winner = await readCurrentOffer(initialOffer.id);
+      if (!winner) throw new Error("SUPPLIER_OFFER_UPDATE_RACE");
+      const winnerVerifiedAt = winner.priceVerifiedAt?.getTime() ?? null;
+      if (
+        winnerVerifiedAt === priceVerifiedAt.getTime() &&
+        !sameOfferObservation(winner, input, snapshot.sourceUrl, currency)
+      ) {
+        throw new Error("SUPPLIER_OFFER_VERIFICATION_CONFLICT");
+      }
+    }
   }
 
   const selection = await selectPersistedSupplierOffer(
@@ -266,6 +316,16 @@ export async function persistSelectAndPrepareCommercialization(
   );
 
   if (!selection.selected) {
+    // Revoke the derived direct-commerce snapshot immediately. Historical price
+    // and cost fields remain for auditability, but they are no longer eligible
+    // for checkout and no stale in-stock claim survives the failed selection.
+    await prisma.product.update({
+      where: { id: productId },
+      data: {
+        commerceEnabled: false,
+        availability: unavailableSnapshotAvailability(selection),
+      },
+    });
     return {
       submittedSupplierId: supplier.id,
       submittedOfferId: initialOffer.id,
