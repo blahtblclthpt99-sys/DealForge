@@ -20,6 +20,9 @@ jobs:
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      AUTH_SECRET: ${{ secrets.AUTH_SECRET }}
+      STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
       STRIPE_WEBHOOK_SECRET_LIVE: ${{ secrets.STRIPE_WEBHOOK_SECRET_LIVE }}
       STRIPE_WEBHOOK_SECRET_TEST: ${{ secrets.STRIPE_WEBHOOK_SECRET_TEST }}
       STRIPE_WEBHOOK_SECRET_LEGACY: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
@@ -37,6 +40,9 @@ jobs:
           set -euo pipefail
           [[ -n "${CLOUDFLARE_API_TOKEN:-}" ]] || { echo '::error::CLOUDFLARE_API_TOKEN missing'; exit 1; }
           [[ -n "${CLOUDFLARE_ACCOUNT_ID:-}" ]] || { echo '::error::CLOUDFLARE_ACCOUNT_ID missing'; exit 1; }
+          [[ -n "${DATABASE_URL:-}" ]] || { echo '::error::DATABASE_URL missing'; exit 1; }
+          [[ -n "${AUTH_SECRET:-}" ]] || { echo '::error::AUTH_SECRET missing'; exit 1; }
+          [[ "${STRIPE_SECRET_KEY:-}" == sk_test_* ]] || { echo '::error::STRIPE_SECRET_KEY missing or not test-mode'; exit 1; }
           [[ "${STRIPE_WEBHOOK_SECRET_TEST:-}" == whsec_* ]] || { echo '::error::STRIPE_WEBHOOK_SECRET_TEST missing or invalid'; exit 1; }
 
       - name: Mark credentials valid
@@ -85,7 +91,7 @@ jobs:
         run: |
           gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -f state=pending -f context=cloudflare-deploy-publish -f description='Publishing Worker to Cloudflare'
 
-      - name: Deploy exact main revision with webhook secret
+      - name: Deploy exact main revision with required runtime secrets
         shell: bash
         run: |
           set -euo pipefail
@@ -94,18 +100,28 @@ jobs:
           chmod 600 "$secrets_file"
           SECRETS_FILE="$secrets_file" node <<'NODE'
           const fs = require('fs');
-          const names = ['STRIPE_WEBHOOK_SECRET_LIVE', 'STRIPE_WEBHOOK_SECRET_TEST', 'STRIPE_WEBHOOK_SECRET_LEGACY'];
+          const required = ['DATABASE_URL', 'AUTH_SECRET', 'STRIPE_SECRET_KEY', 'STRIPE_WEBHOOK_SECRET_TEST'];
+          const optional = ['STRIPE_WEBHOOK_SECRET_LIVE', 'STRIPE_WEBHOOK_SECRET_LEGACY'];
           const mapped = {
+            DATABASE_URL: 'DATABASE_URL',
+            AUTH_SECRET: 'AUTH_SECRET',
+            STRIPE_SECRET_KEY: 'STRIPE_SECRET_KEY',
             STRIPE_WEBHOOK_SECRET_LIVE: 'STRIPE_WEBHOOK_SECRET_LIVE',
             STRIPE_WEBHOOK_SECRET_TEST: 'STRIPE_WEBHOOK_SECRET_TEST',
             STRIPE_WEBHOOK_SECRET_LEGACY: 'STRIPE_WEBHOOK_SECRET',
           };
           const secrets = {};
-          for (const source of names) {
+          for (const source of [...required, ...optional]) {
             const value = (process.env[source] || '').trim();
             if (value) secrets[mapped[source]] = value;
           }
-          if (!(secrets.STRIPE_WEBHOOK_SECRET_TEST || '').startsWith('whsec_')) {
+          for (const source of required) {
+            if (!secrets[mapped[source]]) throw new Error(`${source} missing from deployment secret contract`);
+          }
+          if (!secrets.STRIPE_SECRET_KEY.startsWith('sk_test_')) {
+            throw new Error('STRIPE_SECRET_KEY must be test-mode while Phase 2.5 production certification uses STRIPE_WEBHOOK_SECRET_TEST');
+          }
+          if (!secrets.STRIPE_WEBHOOK_SECRET_TEST.startsWith('whsec_')) {
             throw new Error('STRIPE_WEBHOOK_SECRET_TEST missing or invalid');
           }
           fs.writeFileSync(process.env.SECRETS_FILE, JSON.stringify(secrets), { mode: 0o600 });
