@@ -6,6 +6,13 @@ import {
   applyInventoryObservation,
   sweepInventoryFreshness,
 } from "@/lib/inventory-operations";
+import {
+  claimDueInventoryRechecks,
+  completeInventoryRecheck,
+  failInventoryRecheck,
+  inventoryRecheckQueueSummary,
+  scheduleInventoryRecheck,
+} from "@/lib/inventory-recheck";
 import { readLimitedJson } from "@/lib/request-json";
 
 export const runtime = "nodejs";
@@ -30,7 +37,44 @@ const sweepSchema = z.object({
   limit: z.number().int().min(1).max(250).default(100),
 }).strict();
 
-const actionSchema = z.discriminatedUnion("action", [observationSchema, sweepSchema]);
+const scheduleSchema = z.object({
+  action: z.literal("schedule_recheck"),
+  supplierOfferId: z.string().trim().min(1).max(128),
+  dueAt: z.string().datetime({ offset: true }),
+  reason: z.string().trim().min(1).max(120),
+  maxAttempts: z.number().int().min(1).max(12).optional(),
+}).strict();
+
+const claimSchema = z.object({
+  action: z.literal("claim_rechecks"),
+  sourceKey: z.string().trim().min(1).max(180),
+  workerId: z.string().trim().min(1).max(160),
+  limit: z.number().int().min(1).max(25).default(5),
+  leaseSeconds: z.number().int().min(30).max(900).default(180),
+}).strict();
+
+const completeSchema = z.object({
+  action: z.literal("complete_recheck"),
+  jobId: z.string().trim().min(1).max(128),
+  leaseToken: z.string().trim().min(1).max(400),
+  nextDueAt: z.string().datetime({ offset: true }).nullable().optional(),
+}).strict();
+
+const failSchema = z.object({
+  action: z.literal("fail_recheck"),
+  jobId: z.string().trim().min(1).max(128),
+  leaseToken: z.string().trim().min(1).max(400),
+  error: z.string().trim().min(1).max(1000),
+}).strict();
+
+const actionSchema = z.discriminatedUnion("action", [
+  observationSchema,
+  sweepSchema,
+  scheduleSchema,
+  claimSchema,
+  completeSchema,
+  failSchema,
+]);
 
 async function requireOwner() {
   const session = await requireAdmin();
@@ -65,6 +109,17 @@ function authError(error: unknown) {
   return null;
 }
 
+export async function GET() {
+  try {
+    await requireOwner();
+    return NextResponse.json({ queue: await inventoryRecheckQueueSummary() }, {
+      headers: { "Cache-Control": "private, no-store" },
+    });
+  } catch (error) {
+    return authError(error) ?? NextResponse.json({ error: "Inventory control unavailable" }, { status: 500 });
+  }
+}
+
 export async function POST(req: Request) {
   try {
     const owner = await requireOwner();
@@ -84,6 +139,44 @@ export async function POST(req: Request) {
 
     if (parsed.data.action === "sweep") {
       return NextResponse.json(await sweepInventoryFreshness(owner.email, parsed.data.limit));
+    }
+
+    if (parsed.data.action === "schedule_recheck") {
+      return NextResponse.json(await scheduleInventoryRecheck({
+        supplierOfferId: parsed.data.supplierOfferId,
+        dueAt: new Date(parsed.data.dueAt),
+        reason: parsed.data.reason,
+        actor: owner.email,
+        maxAttempts: parsed.data.maxAttempts,
+      }), { status: 201 });
+    }
+
+    if (parsed.data.action === "claim_rechecks") {
+      return NextResponse.json(await claimDueInventoryRechecks({
+        sourceKey: parsed.data.sourceKey,
+        workerId: parsed.data.workerId,
+        limit: parsed.data.limit,
+        leaseSeconds: parsed.data.leaseSeconds,
+        actor: owner.email,
+      }));
+    }
+
+    if (parsed.data.action === "complete_recheck") {
+      return NextResponse.json(await completeInventoryRecheck({
+        jobId: parsed.data.jobId,
+        leaseToken: parsed.data.leaseToken,
+        actor: owner.email,
+        nextDueAt: parsed.data.nextDueAt ? new Date(parsed.data.nextDueAt) : null,
+      }));
+    }
+
+    if (parsed.data.action === "fail_recheck") {
+      return NextResponse.json(await failInventoryRecheck({
+        jobId: parsed.data.jobId,
+        leaseToken: parsed.data.leaseToken,
+        error: parsed.data.error,
+        actor: owner.email,
+      }));
     }
 
     const observedAt = new Date(parsed.data.observedAt);
@@ -116,13 +209,18 @@ export async function POST(req: Request) {
     const auth = authError(error);
     if (auth) return auth;
     const message = error instanceof Error ? error.message : "INVENTORY_OPERATION_FAILED";
-    if (message === "SUPPLIER_OFFER_NOT_FOUND") {
+    if (message === "SUPPLIER_OFFER_NOT_FOUND" || message === "RECHECK_SUPPLIER_OFFER_NOT_FOUND") {
       return NextResponse.json({ error: message }, { status: 404 });
     }
-    if (message === "SUPPLIER_OFFER_NOT_OBSERVABLE") {
+    if (message === "SUPPLIER_OFFER_NOT_OBSERVABLE" || message === "RECHECK_SUPPLIER_OFFER_NOT_ELIGIBLE") {
       return NextResponse.json({ error: message }, { status: 409 });
     }
-    const badRequest = message.startsWith("INVENTORY_") && (
+    if (message === "RECHECK_LEASE_INVALID") {
+      return NextResponse.json({ error: message }, { status: 409 });
+    }
+    const badRequest = (
+      message.startsWith("INVENTORY_") || message.startsWith("RECHECK_")
+    ) && (
       message.endsWith("_INVALID") || message.endsWith("_TOO_LONG")
     );
     return NextResponse.json(
