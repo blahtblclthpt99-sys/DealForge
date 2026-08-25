@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
+import { persistCheckoutOrderDestination } from "@/lib/order-destination";
 import { ensureProcurementIntentsForPaidOrder } from "@/lib/procurement-intents";
 import {
   assertStripeEventMode,
@@ -184,8 +185,6 @@ async function markPaymentSucceeded(
       paidAt: order.paidAt || new Date(),
     },
   });
-
-  await ensureProcurementIntentsForPaidOrder(tx, orderId);
 }
 
 async function markPaymentFailed(
@@ -412,14 +411,32 @@ async function processStripeEvent(
 
   switch (event.type) {
     case "checkout.session.completed":
+      if (!orderId) throw new Error("WEBHOOK_ORDER_ID_MISSING");
+      await persistCheckoutOrderDestination(tx, {
+        orderId,
+        sourceEventId: event.id,
+        object,
+      });
       if (asString(object.payment_status) === "paid") {
-        if (!orderId) throw new Error("WEBHOOK_ORDER_ID_MISSING");
         await markPaymentSucceeded(tx, orderId, object);
+        await ensureProcurementIntentsForPaidOrder(tx, orderId);
       }
       break;
     case "checkout.session.async_payment_succeeded":
+      if (!orderId) throw new Error("WEBHOOK_ORDER_ID_MISSING");
+      await persistCheckoutOrderDestination(tx, {
+        orderId,
+        sourceEventId: event.id,
+        object,
+      });
+      await markPaymentSucceeded(tx, orderId, object);
+      await ensureProcurementIntentsForPaidOrder(tx, orderId);
+      break;
     case "payment_intent.succeeded":
       if (!orderId) throw new Error("WEBHOOK_ORDER_ID_MISSING");
+      // PaymentIntent events are authoritative for payment state, but they do
+      // not carry the Checkout fulfillment destination. Never release
+      // procurement from this event alone.
       await markPaymentSucceeded(tx, orderId, object);
       break;
     case "checkout.session.async_payment_failed":
