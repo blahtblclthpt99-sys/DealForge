@@ -57,7 +57,7 @@ function isSafePositiveInteger(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
 }
 
-function isBasisPoints(value: unknown) {
+function isBasisPoints(value: unknown): value is number {
   return isSafeNonNegativeInteger(value) && value <= 10_000;
 }
 
