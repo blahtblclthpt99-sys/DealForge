@@ -8,6 +8,7 @@ import {
   expectedStripeLivemode,
   isExactWebhookReplay,
   payloadSha256,
+  resolveStripeRuntimeValue,
   verifyStripeSignature,
 } from "../src/lib/stripe-commerce";
 
@@ -96,6 +97,41 @@ test("exact webhook replay requires the identical raw payload", () => {
   assert.equal(isExactWebhookReplay(hash, original), true);
   assert.equal(isExactWebhookReplay(hash, `${original} `), false);
   assert.equal(isExactWebhookReplay("not-a-hash", original), false);
+});
+
+test("Stripe runtime values prefer exact Cloudflare bindings over process snapshots", () => {
+  const processEnv = {
+    STRIPE_SECRET_KEY: "sk_test_process",
+    STRIPE_WEBHOOK_SECRET_TEST: "whsec_process",
+  };
+  const cloudflareEnv = {
+    STRIPE_SECRET_KEY: "  sk_test_cloudflare  ",
+    STRIPE_WEBHOOK_SECRET_TEST: "  whsec_cloudflare  ",
+    ASSETS: { type: "assets" },
+  };
+
+  assert.equal(
+    resolveStripeRuntimeValue("STRIPE_SECRET_KEY", processEnv, cloudflareEnv),
+    "sk_test_cloudflare",
+  );
+  assert.equal(
+    resolveStripeRuntimeValue("STRIPE_WEBHOOK_SECRET_TEST", processEnv, cloudflareEnv),
+    "whsec_cloudflare",
+  );
+  assert.equal(
+    resolveStripeRuntimeValue("STRIPE_WEBHOOK_SECRET_LIVE", processEnv, cloudflareEnv),
+    "",
+  );
+});
+
+test("Stripe runtime values fall back to process env outside Cloudflare", () => {
+  const processEnv = {
+    STRIPE_SECRET_KEY: "  sk_live_process  ",
+  };
+  assert.equal(
+    resolveStripeRuntimeValue("STRIPE_SECRET_KEY", processEnv, null),
+    "sk_live_process",
+  );
 });
 
 test("Stripe mode is derived from the configured secret key", () => {
