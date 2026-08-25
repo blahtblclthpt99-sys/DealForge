@@ -1,4 +1,5 @@
 import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto";
+import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { prisma } from "./db";
 
 const MAX_CLOCK_SKEW_SECONDS = 300;
@@ -6,6 +7,9 @@ const NONCE_TTL_SECONDS = 10 * 60;
 const MAX_ADAPTER_ID = 120;
 const MAX_SOURCE_KEY = 180;
 const MAX_NONCE = 180;
+
+type ProcessEnvLike = Record<string, string | undefined>;
+type CloudflareEnvLike = Record<string, unknown>;
 
 export type InventoryAdapterIdentity = {
   adapterId: string;
@@ -25,8 +29,32 @@ function clean(value: string | null, field: string, maxLength: number) {
   return normalized;
 }
 
+/**
+ * Resolve machine-auth configuration from the deployed Cloudflare binding first.
+ * `process.env` remains only a portable fallback for local Node/CI. This mirrors
+ * the already-certified Stripe runtime-secret resolution pattern.
+ */
+export function resolveInventoryAdapterRuntimeValue(
+  name: string,
+  processEnv: ProcessEnvLike = process.env,
+  cloudflareEnv?: CloudflareEnvLike | null,
+) {
+  let bindings = cloudflareEnv;
+  if (bindings === undefined) {
+    try {
+      bindings = getCloudflareContext().env as CloudflareEnvLike;
+    } catch {
+      bindings = null;
+    }
+  }
+
+  const boundValue = bindings?.[name];
+  if (typeof boundValue === "string" && boundValue.trim()) return boundValue.trim();
+  return (processEnv[name] || "").trim();
+}
+
 function parseSecrets(): AdapterSecretMap | null {
-  const raw = process.env.INVENTORY_ADAPTER_SECRETS_JSON?.trim();
+  const raw = resolveInventoryAdapterRuntimeValue("INVENTORY_ADAPTER_SECRETS_JSON");
   if (!raw) return null;
   try {
     const parsed = JSON.parse(raw) as Record<string, unknown>;
