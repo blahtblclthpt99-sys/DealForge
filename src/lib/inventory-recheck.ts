@@ -1,5 +1,12 @@
 import { createHash, randomUUID } from "node:crypto";
 import { prisma } from "./db";
+import {
+  DIRECT_RESALE_SOURCE_CLASSES,
+  DIRECT_RESALE_SOURCE_MAX_AGE_MS,
+  SOURCE_VERIFICATION_FUTURE_TOLERANCE_MS,
+  evaluateDirectResaleSourceAuthorization,
+} from "./source-policy";
+import { requirePersistedSupplierSourceAuthorization } from "./supplier-source-authorization";
 
 const MAX_CLAIM_BATCH = 25;
 const MIN_LEASE_SECONDS = 30;
@@ -95,6 +102,8 @@ async function audit(actor: string, action: string, detail: Record<string, unkno
 /**
  * Queue a verification request for an exact persisted offer. The supplier key
  * is derived from normalized persistence rather than trusted from the caller.
+ * Scheduling also requires current supplier authorization, not merely an
+ * historically active/resale flag.
  */
 export async function scheduleInventoryRecheck(input: {
   supplierOfferId: string;
@@ -113,13 +122,22 @@ export async function scheduleInventoryRecheck(input: {
     select: {
       id: true,
       active: true,
-      supplier: { select: { key: true, active: true, resaleAllowed: true } },
+      supplier: {
+        select: {
+          key: true,
+          active: true,
+          sourceClass: true,
+          resaleAllowed: true,
+          sourceVerifiedAt: true,
+        },
+      },
     },
   });
   if (!offer) throw new Error("RECHECK_SUPPLIER_OFFER_NOT_FOUND");
-  if (!offer.active || !offer.supplier.active || !offer.supplier.resaleAllowed) {
-    throw new Error("RECHECK_SUPPLIER_OFFER_NOT_ELIGIBLE");
-  }
+  if (!offer.active) throw new Error("RECHECK_SUPPLIER_OFFER_NOT_ELIGIBLE");
+  const authorization = evaluateDirectResaleSourceAuthorization(offer.supplier);
+  if (!authorization.allowed) throw new Error("RECHECK_SUPPLIER_SOURCE_NOT_AUTHORIZED");
+
   const sourceKey = cleanText(offer.supplier.key, "SOURCE_KEY", MAX_SOURCE_KEY_LENGTH);
   const key = idempotencyKey({ supplierOfferId, sourceKey, reason, dueAt });
   const id = `recheck_${randomUUID()}`;
@@ -149,9 +167,9 @@ export async function scheduleInventoryRecheck(input: {
 }
 
 /**
- * Lease a bounded batch for one normalized source only. Keeping claims source-
- * scoped gives each authorized adapter an explicit pacing boundary; callers
- * cannot accidentally fan out across every supplier in one request.
+ * Lease a bounded batch for one normalized source only. Both a live persisted
+ * authorization check and the claim UPDATE's database predicate enforce source
+ * state, closing the revocation race between request authentication and lease.
  */
 export async function claimDueInventoryRechecks(input: {
   sourceKey: string;
@@ -168,21 +186,47 @@ export async function claimDueInventoryRechecks(input: {
   const limit = clampInt(input.limit ?? 5, 1, MAX_CLAIM_BATCH);
   const leaseSeconds = clampInt(input.leaseSeconds ?? 180, MIN_LEASE_SECONDS, MAX_LEASE_SECONDS);
   const now = safeDate(input.now ?? new Date(), "NOW");
+  await requirePersistedSupplierSourceAuthorization(
+    sourceKey,
+    "RECHECK_SUPPLIER_SOURCE_NOT_AUTHORIZED",
+    now.getTime(),
+  );
+
   const leaseExpiresAt = new Date(now.getTime() + leaseSeconds * 1000);
+  const minSourceVerifiedAt = new Date(now.getTime() - DIRECT_RESALE_SOURCE_MAX_AGE_MS);
+  const maxSourceVerifiedAt = new Date(now.getTime() + SOURCE_VERIFICATION_FUTURE_TOLERANCE_MS);
   const leaseTokenPrefix = `${workerId}:${randomUUID()}`;
 
   const rows = await prisma.$queryRaw<ClaimedJobRow[]>`
     WITH claimable AS (
-      SELECT "id"
-      FROM "InventoryRecheckJob"
-      WHERE "sourceKey" = ${sourceKey}
-        AND "status" IN ('pending', 'retry', 'leased')
-        AND "attemptCount" < "maxAttempts"
-        AND "dueAt" <= ${now}
-        AND ("status" <> 'leased' OR "leaseExpiresAt" IS NULL OR "leaseExpiresAt" <= ${now})
-      ORDER BY "dueAt" ASC, "createdAt" ASC, "id" ASC
+      SELECT job."id"
+      FROM "InventoryRecheckJob" AS job
+      INNER JOIN "SupplierOffer" AS offer
+        ON offer."id" = job."supplierOfferId"
+       AND offer."active" = TRUE
+      INNER JOIN "Supplier" AS supplier
+        ON supplier."id" = offer."supplierId"
+      WHERE job."sourceKey" = ${sourceKey}
+        AND supplier."key" = ${sourceKey}
+        AND supplier."active" = TRUE
+        AND supplier."resaleAllowed" = TRUE
+        AND supplier."sourceVerifiedAt" IS NOT NULL
+        AND supplier."sourceVerifiedAt" >= ${minSourceVerifiedAt}
+        AND supplier."sourceVerifiedAt" <= ${maxSourceVerifiedAt}
+        AND (
+          supplier."sourceClass" = ${DIRECT_RESALE_SOURCE_CLASSES[0]} OR
+          supplier."sourceClass" = ${DIRECT_RESALE_SOURCE_CLASSES[1]} OR
+          supplier."sourceClass" = ${DIRECT_RESALE_SOURCE_CLASSES[2]} OR
+          supplier."sourceClass" = ${DIRECT_RESALE_SOURCE_CLASSES[3]} OR
+          supplier."sourceClass" = ${DIRECT_RESALE_SOURCE_CLASSES[4]}
+        )
+        AND job."status" IN ('pending', 'retry', 'leased')
+        AND job."attemptCount" < job."maxAttempts"
+        AND job."dueAt" <= ${now}
+        AND (job."status" <> 'leased' OR job."leaseExpiresAt" IS NULL OR job."leaseExpiresAt" <= ${now})
+      ORDER BY job."dueAt" ASC, job."createdAt" ASC, job."id" ASC
       LIMIT ${limit}
-      FOR UPDATE SKIP LOCKED
+      FOR UPDATE OF job SKIP LOCKED
     )
     UPDATE "InventoryRecheckJob" AS job
     SET "status" = 'leased',
