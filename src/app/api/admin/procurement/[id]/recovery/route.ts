@@ -175,6 +175,11 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
 
   try {
     const result = await prisma.$transaction(async (tx) => {
+      const locked = await tx.$queryRaw<Array<{ id: string }>>`
+        SELECT "id" FROM "ProcurementIntent" WHERE "id" = ${id} FOR UPDATE
+      `;
+      if (locked.length !== 1) throw new Error("RECOVERY_INTENT_NOT_FOUND");
+
       const intent = await tx.procurementIntent.findUnique({
         where: { id },
         include: {
@@ -263,12 +268,6 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       }
 
       const now = new Date();
-      const locked = await tx.procurementIntent.updateMany({
-        where: { id: intent.id, updatedAt: intent.updatedAt },
-        data: { updatedAt: now },
-      });
-      if (locked.count !== 1) throw new Error("RECOVERY_CONCURRENT_CHANGE");
-
       const detail: Record<string, unknown> = {
         version: 1,
         refundIdempotencyKey: action.refundIdempotencyKey,
@@ -353,7 +352,6 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       RECOVERY_EXCEPTION_EVENT_INVALID: 409,
       RECOVERY_KEY_CONFLICT: 409,
       RECOVERY_ALREADY_CLOSED: 409,
-      RECOVERY_CONCURRENT_CHANGE: 409,
       RECOVERY_RETURN_QUANTITY_EXCEEDS_PURCHASE: 422,
       RECOVERY_SUPPLIER_RETURN_QUANTITY_EXCEEDS_PURCHASE: 422,
       RECOVERY_SUPPLIER_RETURN_NOT_PLANNED: 422,
