@@ -44,6 +44,14 @@ test("certification checkout is test-mode-only and still runs pricing", async ()
   assert.match(checkout, /cardOnly: certificationOnly && isStripeTestMode\(\)/);
 });
 
+test("certification product pages never fall back to an external source checkout", async () => {
+  const productPage = await readFile("src/app/product/[slug]/page.tsx", "utf8");
+  assert.match(productPage, /product\.retailer === "dealforge-test"/);
+  assert.match(productPage, /direct \|\| !certificationProduct/);
+  assert.match(productPage, /!direct && !certificationProduct/);
+  assert.match(productPage, /This internal certification item has no external source checkout/);
+});
+
 test("planned certification prices remain above canonical safe floors", () => {
   const fixtures = [
     { id: "home-main", landed: 1800, published: 2499 },
