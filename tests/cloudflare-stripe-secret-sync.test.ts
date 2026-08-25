@@ -9,39 +9,35 @@ test("Cloudflare webhook sync preserves Stripe secret modes and the legacy fallb
   assert.match(source, /STRIPE_WEBHOOK_SECRET_TEST: \$\{\{ secrets\.STRIPE_WEBHOOK_SECRET_TEST \}\}/);
   assert.match(source, /STRIPE_WEBHOOK_SECRET_LEGACY: \$\{\{ secrets\.STRIPE_WEBHOOK_SECRET \}\}/);
 
-  assert.match(
-    source,
-    /write_secret STRIPE_WEBHOOK_SECRET_LIVE "\$\{STRIPE_WEBHOOK_SECRET_LIVE:-\}"/,
-  );
-  assert.match(
-    source,
-    /write_secret STRIPE_WEBHOOK_SECRET_TEST "\$\{STRIPE_WEBHOOK_SECRET_TEST:-\}"/,
-  );
-  assert.match(
-    source,
-    /write_secret STRIPE_WEBHOOK_SECRET "\$\{STRIPE_WEBHOOK_SECRET_LEGACY:-\}"/,
-  );
-  assert.doesNotMatch(
-    source,
-    /write_secret STRIPE_WEBHOOK_SECRET_TEST "\$\{STRIPE_WEBHOOK_SECRET_LEGACY:-\}"/,
-  );
+  assert.match(source, /write_secret STRIPE_WEBHOOK_SECRET_LIVE "\$\{STRIPE_WEBHOOK_SECRET_LIVE:-\}"/);
+  assert.match(source, /write_secret STRIPE_WEBHOOK_SECRET_TEST "\$\{STRIPE_WEBHOOK_SECRET_TEST:-\}"/);
+  assert.match(source, /write_secret STRIPE_WEBHOOK_SECRET "\$\{STRIPE_WEBHOOK_SECRET_LEGACY:-\}"/);
+  assert.doesNotMatch(source, /write_secret STRIPE_WEBHOOK_SECRET_TEST "\$\{STRIPE_WEBHOOK_SECRET_LEGACY:-\}"/);
 });
 
-test("production deploy binds webhook secrets atomically to the published Worker version", async () => {
+test("production deploy binds the complete required secret contract atomically to the published Worker version", async () => {
   const source = await readFile(".github/workflows/cloudflare-production-deploy.yml", "utf8");
 
-  const validateIndex = source.indexOf("Validate Stripe webhook secret sources");
-  const deployIndex = source.indexOf("Deploy exact main revision with webhook secret");
-  assert.ok(validateIndex >= 0, "missing webhook-secret validation step");
+  const validateIndex = source.indexOf("Validate complete production secret contract");
+  const deployIndex = source.indexOf("Deploy exact main revision with complete runtime secrets");
+  assert.ok(validateIndex >= 0, "missing complete production-secret validation step");
   assert.ok(deployIndex >= 0, "missing atomic production deploy step");
-  assert.ok(validateIndex < deployIndex, "webhook secrets must be validated before production publish");
+  assert.ok(validateIndex < deployIndex, "runtime secrets must be validated before production publish");
 
+  assert.match(source, /DATABASE_URL: \$\{\{ secrets\.DATABASE_URL \}\}/);
+  assert.match(source, /AUTH_SECRET: \$\{\{ secrets\.AUTH_SECRET \}\}/);
+  assert.match(source, /STRIPE_SECRET_KEY: \$\{\{ secrets\.STRIPE_SECRET_KEY \}\}/);
   assert.match(source, /STRIPE_WEBHOOK_SECRET_LIVE: \$\{\{ secrets\.STRIPE_WEBHOOK_SECRET_LIVE \}\}/);
   assert.match(source, /STRIPE_WEBHOOK_SECRET_TEST: \$\{\{ secrets\.STRIPE_WEBHOOK_SECRET_TEST \}\}/);
   assert.match(source, /STRIPE_WEBHOOK_SECRET_LEGACY: \$\{\{ secrets\.STRIPE_WEBHOOK_SECRET \}\}/);
+
+  assert.match(source, /DATABASE_URL: 'DATABASE_URL'/);
+  assert.match(source, /AUTH_SECRET: 'AUTH_SECRET'/);
+  assert.match(source, /STRIPE_SECRET_KEY: 'STRIPE_SECRET_KEY'/);
+  assert.match(source, /STRIPE_WEBHOOK_SECRET_TEST: 'STRIPE_WEBHOOK_SECRET_TEST'/);
+  assert.match(source, /STRIPE_WEBHOOK_SECRET_LEGACY: 'STRIPE_WEBHOOK_SECRET'/);
   assert.match(source, /--secrets-file "\$secrets_file"/);
   assert.match(source, /chmod 600 "\$secrets_file"/);
-  assert.match(source, /STRIPE_WEBHOOK_SECRET_LEGACY: 'STRIPE_WEBHOOK_SECRET'/);
   assert.match(source, /STRIPE_WEBHOOK_SECRET_TEST missing or invalid/);
   assert.doesNotMatch(source, /wrangler versions secret put/);
 });
