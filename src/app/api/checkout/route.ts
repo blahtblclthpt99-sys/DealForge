@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { readSession } from "@/lib/auth";
+import { checkCheckoutExposure } from "@/lib/checkout-exposure";
 import { prisma } from "@/lib/db";
 import { evaluateCommerceGate } from "@/lib/commerce-gate";
 import {
@@ -304,6 +305,19 @@ export async function POST(request: Request) {
     const subtotalCents = pricedItems.reduce((sum, item) => sum + item.lineTotalCents, 0);
     if (!Number.isSafeInteger(subtotalCents) || subtotalCents <= 0) {
       return NextResponse.json({ error: "ORDER_AMOUNT_INVALID" }, { status: 409 });
+    }
+
+    stage = "exposure_gate";
+    const exposure = checkCheckoutExposure(
+      pricedItems.map(({ product, quantity, unitPriceCents }) => ({
+        quantity,
+        unitPriceCents,
+        landedCostCents: product.landedCostCents,
+      })),
+    );
+    if (!exposure.eligible) {
+      console.warn("checkout.exposure_gate.blocked", { reason: exposure.reason });
+      return NextResponse.json({ error: "CHECKOUT_LIMIT_EXCEEDED" }, { status: 409 });
     }
 
     stage = "order_create";
