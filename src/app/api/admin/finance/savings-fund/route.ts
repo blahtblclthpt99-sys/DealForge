@@ -2,7 +2,10 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireAdmin } from "@/lib/auth";
 import { loadCertifiedOrderProfit } from "@/lib/certified-order-profit";
-import { currentSavingsFundPolicy } from "@/lib/customer-savings-fund";
+import {
+  calculateSavingsFundDryRun,
+  currentSavingsFundPolicy,
+} from "@/lib/customer-savings-fund";
 import { prisma } from "@/lib/db";
 import {
   getShadowSavingsFundBalance,
@@ -14,8 +17,16 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const ReconcileSchema = z.object({
+  action: z.literal("reconcile").default("reconcile"),
   orderId: z.string().trim().min(1).max(128).optional(),
   trailingDays: z.number().int().min(1).max(90).default(30),
+});
+
+const SimulateSchema = z.object({
+  action: z.literal("simulate"),
+  currency: z.string().trim().toLowerCase().regex(/^[a-z]{3}$/).default("usd"),
+  cartSubtotalCents: z.number().int().positive().max(100_000_000),
+  preSubsidyContributionCents: z.number().int().positive().max(100_000_000),
 });
 
 function noStore(response: NextResponse) {
@@ -75,7 +86,39 @@ export async function POST(request: Request) {
   if (auth) return auth;
 
   const raw = await request.json().catch(() => ({}));
-  const parsed = ReconcileSchema.safeParse(raw);
+
+  if ((raw as { action?: unknown }).action === "simulate") {
+    const parsedSimulation = SimulateSchema.safeParse(raw);
+    if (!parsedSimulation.success) {
+      return noStore(NextResponse.json({ error: "INVALID_SIMULATION_REQUEST" }, { status: 400 }));
+    }
+    const balance = await getShadowSavingsFundBalance(parsedSimulation.data.currency);
+    if (!balance.available || !balance.integrityOk) {
+      return noStore(NextResponse.json({
+        error: "SAVINGS_FUND_LEDGER_UNAVAILABLE",
+        phase: "A",
+        appliesToCheckout: false,
+      }, { status: 503 }));
+    }
+    const simulation = calculateSavingsFundDryRun({
+      availableFundCents: balance.balanceCents,
+      cartSubtotalCents: parsedSimulation.data.cartSubtotalCents,
+      preSubsidyContributionCents: parsedSimulation.data.preSubsidyContributionCents,
+    });
+    return noStore(NextResponse.json({
+      phase: "A",
+      mode: "measure_only",
+      appliesToCheckout: false,
+      automaticReleaseEnabled: false,
+      currency: parsedSimulation.data.currency,
+      simulation,
+    }));
+  }
+
+  const parsed = ReconcileSchema.safeParse({
+    ...(raw as Record<string, unknown>),
+    action: (raw as { action?: unknown }).action || "reconcile",
+  });
   if (!parsed.success) {
     return noStore(NextResponse.json({ error: "INVALID_RECONCILIATION_REQUEST" }, { status: 400 }));
   }
