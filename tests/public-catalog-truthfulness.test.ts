@@ -61,9 +61,11 @@ test("non-Amazon metadata expires within a conservative public freshness window"
   assert.equal(stale.metadataVerified, false);
 });
 
-test("public query policy excludes certification, enrichment placeholders, and known out-of-stock rows before pagination", async () => {
+test("public query policy is scope-aware and filters before pagination", async () => {
   const source = await readFile("src/lib/products.ts", "utf8");
   assert.match(source, /export function publicCatalogWhere/);
+  assert.match(source, /isCertificationCatalogMode\(\)/);
+  assert.match(source, /id: \{ in: \[\.\.\.CERTIFICATION_CATALOG_PRODUCT_IDS\] \}/);
   assert.match(source, /availability: \{ not: "out_of_stock" \}/);
   assert.match(source, /startsWith: "cert_"/);
   assert.match(source, /internalCertification/);
@@ -72,7 +74,7 @@ test("public query policy excludes certification, enrichment placeholders, and k
   assert.match(source, /prisma\.product\.count\(\{ where \}\)/);
 });
 
-test("related products, categories, and brands reuse the same public policy", async () => {
+test("related products, categories, and brands reuse the same scoped public policy", async () => {
   const source = await readFile("src/lib/products.ts", "utf8");
   assert.match(source, /AND: \[publicCatalogWhere\(\), \{ categoryId:/);
   assert.match(source, /AND: \[publicCatalogWhere\(\), \{ brand:/);
@@ -80,10 +82,12 @@ test("related products, categories, and brands reuse the same public policy", as
   assert.match(source, /groupBy\(\{ where: publicCatalogWhere\(\)/);
 });
 
-test("internal certification products are also blocked from direct public detail lookup", async () => {
+test("detail lookup stays inside the active catalog scope", async () => {
   const source = await readFile("src/lib/products.ts", "utf8");
-  assert.match(source, /internalCertificationRecord/);
-  assert.match(source, /product && !internalCertificationRecord\(product\)/);
+  assert.match(source, /findFirst\([\s\S]*publicCatalogWhere\(\)[\s\S]*slug/);
+  assert.match(source, /if \(isCertificationCatalogMode\(\)\)/);
+  assert.match(source, /isCertificationCatalogProduct\(product\)/);
+  assert.match(source, /!internalCertificationRecord\(product\)/);
 });
 
 test("estimated prices are never labeled verified retailer prices", async () => {
@@ -92,10 +96,11 @@ test("estimated prices are never labeled verified retailer prices", async () => 
   assert.match(source, /priceSource: direct \? "dealforge" : priceEstimated \? "dealforge_estimate"/);
 });
 
-test("catalog cache namespaces advance when public filtering semantics change", async () => {
+test("catalog caches are versioned and certification scope-aware", async () => {
   const source = await readFile("src/lib/products.ts", "utf8");
-  assert.match(source, /products:v12:/);
-  assert.match(source, /products:count:v6:/);
-  assert.match(source, /categories:public:v2/);
-  assert.match(source, /brands:public:v2/);
+  assert.match(source, /certificationCatalogScopeKey\(\)/);
+  assert.match(source, /products:v13:\$\{scope\}:/);
+  assert.match(source, /products:count:v7:\$\{scope\}:/);
+  assert.match(source, /categories:public:v3:\$\{scope\}/);
+  assert.match(source, /brands:public:v3:\$\{scope\}:/);
 });
