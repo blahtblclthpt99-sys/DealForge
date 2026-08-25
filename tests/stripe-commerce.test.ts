@@ -9,8 +9,35 @@ import {
   isExactWebhookReplay,
   payloadSha256,
   resolveStripeRuntimeValue,
+  stripeWebhookSecret,
   verifyStripeSignature,
 } from "../src/lib/stripe-commerce";
+
+function withStripeEnv(
+  values: Record<string, string | undefined>,
+  run: () => void,
+) {
+  const names = [
+    "STRIPE_SECRET_KEY",
+    "STRIPE_WEBHOOK_SECRET_LIVE",
+    "STRIPE_WEBHOOK_SECRET_TEST",
+    "STRIPE_WEBHOOK_SECRET",
+  ] as const;
+  const before = new Map(names.map((name) => [name, process.env[name]]));
+  try {
+    for (const name of names) delete process.env[name];
+    for (const [name, value] of Object.entries(values)) {
+      if (value !== undefined) process.env[name] = value;
+    }
+    run();
+  } finally {
+    for (const name of names) {
+      const value = before.get(name);
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  }
+}
 
 test("Stripe webhook signature accepts the exact signed payload", () => {
   const secret = "whsec_test_secret";
@@ -137,8 +164,49 @@ test("Stripe runtime values fall back to process env outside Cloudflare", () => 
 test("Stripe mode is derived from the configured secret key", () => {
   assert.equal(expectedStripeLivemode("sk_live_example"), true);
   assert.equal(expectedStripeLivemode("sk_test_example"), false);
-  assert.throws(() => expectedStripeLivemode("rk_live_example"), /STRIPE_SECRET_KEY_MODE_UNKNOWN/);
-  assert.throws(() => expectedStripeLivemode(""), /STRIPE_SECRET_KEY_MODE_UNKNOWN/);
+});
+
+test("Stripe webhook mode falls back to a single test signing secret when API key is absent", () => {
+  withStripeEnv(
+    {
+      STRIPE_WEBHOOK_SECRET_TEST: "whsec_test_runtime",
+    },
+    () => {
+      assert.equal(expectedStripeLivemode(""), false);
+      assert.equal(stripeWebhookSecret(), "whsec_test_runtime");
+    },
+  );
+});
+
+test("Stripe webhook mode falls back to a single live signing secret when API key is absent", () => {
+  withStripeEnv(
+    {
+      STRIPE_WEBHOOK_SECRET_LIVE: "whsec_live_runtime",
+    },
+    () => {
+      assert.equal(expectedStripeLivemode(""), true);
+      assert.equal(stripeWebhookSecret(), "whsec_live_runtime");
+    },
+  );
+});
+
+test("Stripe webhook mode fails closed when live and test secrets are both present without API-key mode", () => {
+  withStripeEnv(
+    {
+      STRIPE_WEBHOOK_SECRET_LIVE: "whsec_live_runtime",
+      STRIPE_WEBHOOK_SECRET_TEST: "whsec_test_runtime",
+    },
+    () => {
+      assert.throws(() => expectedStripeLivemode(""), /STRIPE_WEBHOOK_MODE_AMBIGUOUS/);
+      assert.throws(() => stripeWebhookSecret(), /STRIPE_WEBHOOK_MODE_AMBIGUOUS/);
+    },
+  );
+});
+
+test("Stripe mode remains unknown when neither API-key mode nor mode-specific webhook secret exists", () => {
+  withStripeEnv({}, () => {
+    assert.throws(() => expectedStripeLivemode(""), /STRIPE_SECRET_KEY_MODE_UNKNOWN/);
+  });
 });
 
 test("Stripe webhook event mode must be explicit and match the configured environment", () => {
