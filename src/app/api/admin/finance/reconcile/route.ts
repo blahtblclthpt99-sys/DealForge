@@ -1,20 +1,34 @@
 import { NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
 import { requireAdmin } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import {
   retrieveStripeBalanceTransaction,
   retrieveStripePaymentIntent,
+  retrieveStripeRefund,
   type StripeBalanceTransaction,
   type StripeCharge,
+  type StripeRefund,
 } from "@/lib/stripe-commerce";
 import {
   mergeStripeFeeMeta,
   STRIPE_FEE_SOURCE,
   validateStripeFeeEvidence,
 } from "@/lib/stripe-fee-reconciliation";
+import {
+  persistRefundFinancialEvidence,
+  validateRefundFinancialEvidence,
+  type RefundFinancialEvidence,
+  type RefundFinancialKind,
+} from "@/lib/refund-financial-reconciliation";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+type RefundFinancialCountRow = {
+  refundId: string;
+  eventCount: bigint;
+};
 
 function noStore(response: NextResponse) {
   response.headers.set("Cache-Control", "private, no-store, max-age=0");
@@ -59,18 +73,24 @@ function expandedCharge(value: unknown): StripeCharge | null {
     : null;
 }
 
+function expandedBalanceTransaction(value: unknown): StripeBalanceTransaction | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as StripeBalanceTransaction)
+    : null;
+}
+
+async function balanceTransactionFromValue(value: unknown) {
+  const expanded = expandedBalanceTransaction(value);
+  if (expanded) return expanded;
+  return typeof value === "string" ? retrieveStripeBalanceTransaction(value) : null;
+}
+
 async function feeEvidenceForPaymentIntent(paymentIntentId: string) {
   const stripe = await retrieveStripePaymentIntent(paymentIntentId);
   const charge = expandedCharge(stripe.latest_charge);
   if (!charge) return { stripe, charge: null, evidence: null, reason: "STRIPE_CHARGE_NOT_AVAILABLE" as const };
 
-  const rawBalanceTransaction = charge.balance_transaction;
-  let balanceTransaction: StripeBalanceTransaction | null = null;
-  if (rawBalanceTransaction && typeof rawBalanceTransaction === "object") {
-    balanceTransaction = rawBalanceTransaction;
-  } else if (typeof rawBalanceTransaction === "string") {
-    balanceTransaction = await retrieveStripeBalanceTransaction(rawBalanceTransaction);
-  }
+  const balanceTransaction = await balanceTransactionFromValue(charge.balance_transaction);
   if (!balanceTransaction) {
     return { stripe, charge, evidence: null, reason: "STRIPE_BALANCE_TRANSACTION_NOT_AVAILABLE" as const };
   }
@@ -82,6 +102,40 @@ async function feeEvidenceForPaymentIntent(paymentIntentId: string) {
   });
   if (!validated.ok) throw new Error(validated.reason);
   return { stripe, charge, evidence: validated.evidence, reason: null };
+}
+
+async function refundEvidenceForStripeRefund(stripeRefund: StripeRefund) {
+  const evidence: RefundFinancialEvidence[] = [];
+  const candidates: Array<{ kind: RefundFinancialKind; value: unknown }> = [
+    { kind: "refund_balance", value: stripeRefund.balance_transaction },
+    { kind: "refund_failure_balance", value: stripeRefund.failure_balance_transaction },
+  ];
+  for (const candidate of candidates) {
+    if (!candidate.value) continue;
+    const balanceTransaction = await balanceTransactionFromValue(candidate.value);
+    if (!balanceTransaction) continue;
+    const validated = validateRefundFinancialEvidence({
+      refund: stripeRefund,
+      balanceTransaction,
+      kind: candidate.kind,
+    });
+    if (!validated.ok) throw new Error(validated.reason);
+    evidence.push(validated.evidence);
+  }
+  return evidence;
+}
+
+async function localRefundFinancialCounts(refundIds: string[]) {
+  if (refundIds.length === 0) return new Map<string, number>();
+  const rows = await prisma.$queryRaw<RefundFinancialCountRow[]>(
+    Prisma.sql`
+      SELECT "refundId", COUNT(*) AS "eventCount"
+      FROM "RefundFinancialEvent"
+      WHERE "refundId" IN (${Prisma.join(refundIds)})
+      GROUP BY "refundId"
+    `,
+  );
+  return new Map(rows.map((row) => [row.refundId, Number(row.eventCount)]));
 }
 
 export async function GET(request: Request) {
@@ -119,6 +173,11 @@ export async function GET(request: Request) {
     const localPayment = order.payments.find(
       (payment) => payment.providerPaymentId === order.stripePaymentIntentId,
     );
+    const refundFinancialCounts = await localRefundFinancialCounts(order.refunds.map((refund) => refund.id));
+    const succeededRefundsWithFinancialEvidence = order.refunds.filter(
+      (refund) => refund.status === "succeeded" && (refundFinancialCounts.get(refund.id) || 0) > 0,
+    ).length;
+    const succeededRefundCount = order.refunds.filter((refund) => refund.status === "succeeded").length;
 
     const checks = {
       paymentIntentId: stripe.id === order.stripePaymentIntentId,
@@ -131,6 +190,8 @@ export async function GET(request: Request) {
       paymentLedger: stripe.status !== "succeeded" || localPayment?.status === "succeeded",
       refunds: stripeRefundedCents === ledgerRefundedCents,
       feeEvidenceAvailable: feeLookup.evidence !== null,
+      refundFinancialEvidence:
+        succeededRefundsWithFinancialEvidence === succeededRefundCount,
     };
     const mismatches = Object.entries(checks)
       .filter(([, passed]) => !passed)
@@ -146,6 +207,8 @@ export async function GET(request: Request) {
         currency: order.currency,
         paymentIntentId: order.stripePaymentIntentId,
         succeededRefundCents: ledgerRefundedCents,
+        succeededRefundCount,
+        succeededRefundsWithFinancialEvidence,
       },
       stripe: {
         paymentIntentId: stripe.id,
@@ -193,6 +256,14 @@ export async function POST(request: Request) {
     }
     const evidence = lookup.evidence;
 
+    const refundLookups = await Promise.all(
+      order.refunds.map(async (refund) => {
+        const stripeRefund = await retrieveStripeRefund(refund.providerRefundId);
+        const financialEvidence = await refundEvidenceForStripeRefund(stripeRefund);
+        return { local: refund, stripe: stripeRefund, financialEvidence };
+      }),
+    );
+
     const result = await prisma.$transaction(async (tx) => {
       const payment = await tx.payment.findUnique({
         where: { providerPaymentId: order.stripePaymentIntentId! },
@@ -222,7 +293,33 @@ export async function POST(request: Request) {
         data: { meta: merged.meta },
       });
       if (updated.count !== 1) throw new Error("FEE_RECONCILIATION_CONCURRENT_CHANGE");
-      return { paymentId: payment.id, evidence };
+
+      let refundFinancialEventsRecorded = 0;
+      for (const lookupRefund of refundLookups) {
+        const local = await tx.refund.findUnique({ where: { id: lookupRefund.local.id } });
+        if (!local) throw new Error("REFUND_FINANCIAL_LOCAL_REFUND_NOT_FOUND");
+        const stripeStatus = lookupRefund.stripe.status || "unknown";
+        const stripePaymentIntentId = lookupRefund.stripe.payment_intent || null;
+        if (
+          local.updatedAt.getTime() !== lookupRefund.local.updatedAt.getTime() ||
+          local.providerRefundId !== lookupRefund.stripe.id ||
+          local.status !== stripeStatus ||
+          local.amountCents !== lookupRefund.stripe.amount ||
+          local.currency.toLowerCase() !== lookupRefund.stripe.currency.toLowerCase() ||
+          (stripePaymentIntentId !== null && stripePaymentIntentId !== order.stripePaymentIntentId)
+        ) {
+          throw new Error("REFUND_FINANCIAL_LEDGER_MISMATCH");
+        }
+        for (const refundEvidence of lookupRefund.financialEvidence) {
+          await persistRefundFinancialEvidence(tx, {
+            refundId: local.id,
+            evidence: refundEvidence,
+          });
+          refundFinancialEventsRecorded += 1;
+        }
+      }
+
+      return { paymentId: payment.id, evidence, refundFinancialEventsRecorded };
     });
 
     return noStore(NextResponse.json({
@@ -230,6 +327,7 @@ export async function POST(request: Request) {
       automaticSupplierPurchasingEnabled: false,
       paymentId: result.paymentId,
       fee: result.evidence,
+      refundFinancialEventsRecorded: result.refundFinancialEventsRecorded,
     }));
   } catch (error) {
     const message = error instanceof Error ? error.message : "UNKNOWN";
@@ -239,6 +337,10 @@ export async function POST(request: Request) {
       "FEE_RECONCILIATION_PAYMENT_MISMATCH",
       "FEE_RECONCILIATION_CONCURRENT_CHANGE",
       "STRIPE_FEE_IMMUTABLE_MISMATCH",
+      "REFUND_FINANCIAL_LOCAL_REFUND_NOT_FOUND",
+      "REFUND_FINANCIAL_LEDGER_MISMATCH",
+      "REFUND_FINANCIAL_EVENT_KEY_CONFLICT",
+      "REFUND_FINANCIAL_IMMUTABLE_MISMATCH",
     ]);
     if (conflicts.has(message)) {
       return noStore(NextResponse.json({ error: message }, { status: 409 }));
