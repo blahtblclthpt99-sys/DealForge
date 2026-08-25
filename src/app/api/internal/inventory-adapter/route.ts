@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { authenticateInventoryAdapterRequest } from "@/lib/inventory-adapter-auth";
+import {
+  consumeInventoryAdapterRateLimit,
+  InventoryAdapterRateLimitError,
+} from "@/lib/inventory-adapter-rate-limit";
 import { applyInventoryObservation } from "@/lib/inventory-operations";
 import {
   claimDueInventoryRechecks,
@@ -84,8 +88,21 @@ function validateNextDueAt(value: string | null | undefined, nowMs: number) {
 }
 
 function errorResponse(error: unknown) {
+  if (error instanceof InventoryAdapterRateLimitError) {
+    return NextResponse.json(
+      { error: error.message, limitKind: error.kind },
+      {
+        status: 429,
+        headers: {
+          "Cache-Control": "no-store",
+          "Retry-After": String(error.retryAfterSeconds),
+        },
+      },
+    );
+  }
+
   const message = error instanceof Error ? error.message : "ADAPTER_REQUEST_FAILED";
-  if (message === "ADAPTER_AUTH_NOT_CONFIGURED") {
+  if (message === "ADAPTER_AUTH_NOT_CONFIGURED" || message === "ADAPTER_RATE_LIMIT_CONFIG_INVALID") {
     return NextResponse.json({ error: message }, { status: 503, headers: { "Cache-Control": "no-store" } });
   }
   if (
@@ -93,9 +110,7 @@ function errorResponse(error: unknown) {
     message === "ADAPTER_TIMESTAMP_INVALID" ||
     message === "ADAPTER_ID_INVALID" ||
     message === "ADAPTER_SOURCE_KEY_INVALID" ||
-    message === "ADAPTER_TIMESTAMP_INVALID" ||
-    message === "ADAPTER_NONCE_INVALID" ||
-    message === "ADAPTER_SIGNATURE_INVALID"
+    message === "ADAPTER_NONCE_INVALID"
   ) {
     return NextResponse.json({ error: "ADAPTER_AUTH_FAILED" }, { status: 401, headers: { "Cache-Control": "no-store" } });
   }
@@ -119,6 +134,11 @@ export async function POST(req: Request) {
     const rawBody = await readRawBody(req);
     const identity = await authenticateInventoryAdapterRequest({ headers: req.headers, body: rawBody });
 
+    // Every valid signed machine request consumes the source-scoped request
+    // budget before JSON parsing or any inventory operation. Replay attempts
+    // have already failed during authentication and cannot reach this point.
+    await consumeInventoryAdapterRateLimit({ identity, requestIncrement: 1, claimUnits: 0 });
+
     let json: unknown;
     try {
       json = JSON.parse(rawBody);
@@ -135,6 +155,14 @@ export async function POST(req: Request) {
 
     const actor = `adapter:${identity.adapterId}`;
     if (parsed.data.action === "claim") {
+      // Claim volume has a second durable budget. This prevents multiple
+      // workers sharing one source identity from collectively outrunning the
+      // supplier-specific pacing contract even when requests race.
+      await consumeInventoryAdapterRateLimit({
+        identity,
+        requestIncrement: 0,
+        claimUnits: parsed.data.limit,
+      });
       const result = await claimDueInventoryRechecks({
         sourceKey: identity.sourceKey,
         workerId: `${identity.adapterId}:${parsed.data.workerId}`.slice(0, 160),
