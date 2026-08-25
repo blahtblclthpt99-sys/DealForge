@@ -35,7 +35,7 @@ const PublicProductQuerySchema = z
     minRating: optionalNumber(0, 5),
     minDiscount: optionalNumber(0, 100),
     sort: z
-      .enum(["newest", "rating", "popularity", "savings", "price_asc", "price_desc"])
+      .enum(["rank", "newest", "rating", "popularity", "savings", "price_asc", "price_desc"])
       .optional(),
     page: optionalInteger(1, 10_000),
     limit: optionalInteger(1, 48),
