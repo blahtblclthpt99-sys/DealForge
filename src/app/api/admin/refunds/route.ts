@@ -4,17 +4,31 @@ import { requireAdmin } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import {
   evaluateRefundProcurementInterlock,
+  postPurchaseRefundExceptionEventKey,
   refundInterlockEventKey,
 } from "@/lib/refund-procurement-interlock";
 import { createStripeRefund } from "@/lib/stripe-commerce";
 
 export const runtime = "nodejs";
 
+const PostPurchaseExceptionSchema = z.object({
+  acknowledgeIrreversibleFulfillment: z.literal(true),
+  recoveryPlan: z.enum([
+    "supplier_cancel_requested",
+    "supplier_return_required",
+    "customer_return_required",
+    "customer_keep_accept_loss",
+  ]),
+  acceptUnrecoveredLoss: z.boolean().optional(),
+  note: z.string().trim().min(8).max(500),
+});
+
 const RefundSchema = z.object({
   orderId: z.string().trim().min(1).max(128),
   amountCents: z.number().int().positive(),
   idempotencyKey: z.string().trim().min(12).max(128).regex(/^[A-Za-z0-9:_-]+$/),
   reason: z.enum(["duplicate", "fraudulent", "requested_by_customer"]).optional(),
+  postPurchaseException: PostPurchaseExceptionSchema.optional(),
 });
 
 export async function POST(request: Request) {
@@ -58,7 +72,10 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "ORDER_NOT_REFUNDABLE" }, { status: 409 });
   }
 
-  const interlock = evaluateRefundProcurementInterlock(order.procurementIntents);
+  const interlock = evaluateRefundProcurementInterlock(
+    order.procurementIntents,
+    parsed.data.postPurchaseException,
+  );
   if (!interlock.ok) {
     return NextResponse.json(
       { error: interlock.reason, blockedProcurementIntentIds: interlock.intentIds },
@@ -100,7 +117,10 @@ export async function POST(request: Request) {
       if (parsed.data.amountCents > currentOrder.totalCents - currentAlreadyRefunded) {
         throw new Error("REFUND_AMOUNT_CHANGED");
       }
-      const currentInterlock = evaluateRefundProcurementInterlock(currentOrder.procurementIntents);
+      const currentInterlock = evaluateRefundProcurementInterlock(
+        currentOrder.procurementIntents,
+        parsed.data.postPurchaseException,
+      );
       if (!currentInterlock.ok) throw new Error(currentInterlock.reason);
 
       for (const intentId of currentInterlock.holdIntentIds) {
@@ -124,6 +144,37 @@ export async function POST(request: Request) {
               previousStatus: current.status,
               nextStatus: "hold",
               reason: parsed.data.reason || null,
+            }),
+          },
+          update: {},
+        });
+      }
+
+      for (const intentId of currentInterlock.exceptionIntentIds) {
+        const current = currentOrder.procurementIntents.find((intent) => intent.id === intentId);
+        if (!current || !parsed.data.postPurchaseException) {
+          throw new Error("POST_PURCHASE_EXCEPTION_STATE_CHANGED");
+        }
+        await tx.procurementEvent.upsert({
+          where: {
+            eventKey: postPurchaseRefundExceptionEventKey(intentId, parsed.data.idempotencyKey),
+          },
+          create: {
+            eventKey: postPurchaseRefundExceptionEventKey(intentId, parsed.data.idempotencyKey),
+            procurementIntentId: intentId,
+            type: "POST_PURCHASE_REFUND_EXCEPTION_APPROVED",
+            actor: `admin:${admin.id}`,
+            detail: JSON.stringify({
+              refundIdempotencyKey: parsed.data.idempotencyKey,
+              amountCents: parsed.data.amountCents,
+              currentStatus: current.status,
+              reason: parsed.data.reason || null,
+              recoveryPlan: parsed.data.postPurchaseException.recoveryPlan,
+              acknowledgeIrreversibleFulfillment: true,
+              acceptUnrecoveredLoss: parsed.data.postPurchaseException.acceptUnrecoveredLoss === true,
+              note: parsed.data.postPurchaseException.note,
+              automaticSupplierPurchasingEnabled: false,
+              automaticRecoveryEnabled: false,
             }),
           },
           update: {},
@@ -160,7 +211,11 @@ export async function POST(request: Request) {
         refundId: refund.providerRefundId,
         status: refund.status,
         amountCents: refund.amountCents,
-        procurementInterlock: "hold",
+        procurementInterlock: interlock.exceptionIntentIds.length > 0 ? "post_purchase_exception" : "hold",
+        recoveryPlan:
+          interlock.exceptionIntentIds.length > 0
+            ? parsed.data.postPurchaseException?.recoveryPlan || null
+            : null,
       },
       { status: 201 },
     );
@@ -168,8 +223,7 @@ export async function POST(request: Request) {
     const message = error instanceof Error ? error.message : "UNKNOWN";
     if (
       message.startsWith("REFUND_") ||
-      message === "REFUND_BLOCKED_AFTER_SUPPLIER_PURCHASE" ||
-      message === "REFUND_PROCUREMENT_STATE_UNSAFE"
+      message.startsWith("POST_PURCHASE_")
     ) {
       return NextResponse.json({ error: "REFUND_STATE_CONFLICT" }, { status: 409 });
     }
