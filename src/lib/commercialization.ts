@@ -1,6 +1,11 @@
 import { type CartPricingPolicy, calculateMinimumSafeCustomerPrice, currentCartPricingPolicy, minimumSafeProfitCents } from "@/lib/cart-pricing";
 import { evaluateCommerceGate, type CommerceGateDecision } from "@/lib/commerce-gate";
-import { DIRECT_RESALE_SOURCE_CLASSES, isDirectResaleSourceClass, type DirectResaleSourceClass } from "@/lib/source-policy";
+import {
+  DIRECT_RESALE_SOURCE_CLASSES,
+  DIRECT_RESALE_SOURCE_MAX_AGE_DAYS,
+  isDirectResaleSourceClass,
+  type DirectResaleSourceClass,
+} from "@/lib/source-policy";
 
 export { DIRECT_RESALE_SOURCE_CLASSES };
 export type { DirectResaleSourceClass };
@@ -9,7 +14,7 @@ export const CANONICAL_PRICING_POLICY_VERSION = "minimum-safe-profit-v2";
 export const MIN_PROFIT_CENTS = 0;
 export const MIN_MARGIN_BPS = 0;
 export const MIN_INVENTORY_CONFIDENCE_BPS = 8000;
-export const MAX_SOURCE_AGE_DAYS = 30;
+export const MAX_SOURCE_AGE_DAYS = DIRECT_RESALE_SOURCE_MAX_AGE_DAYS;
 export const MAX_PRICE_AGE_MINUTES = 180;
 
 type CostInput = {
