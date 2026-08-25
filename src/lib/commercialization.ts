@@ -1,5 +1,10 @@
 import { evaluateCommerceGate, type CommerceGateDecision } from "@/lib/commerce-gate";
-import { recommendSellingPrice, type DynamicPricingDecision } from "@/lib/dynamic-pricing";
+import {
+  calculateMinimumSafeCustomerPrice,
+  currentCartPricingPolicy,
+  minimumSafeProfitCents,
+  type CartPricingPolicy,
+} from "@/lib/cart-pricing";
 import {
   DIRECT_RESALE_SOURCE_CLASSES,
   isDirectResaleSourceClass,
@@ -9,12 +14,18 @@ import {
 export { DIRECT_RESALE_SOURCE_CLASSES };
 export type { DirectResaleSourceClass };
 
+export const CANONICAL_PRICING_POLICY_VERSION = "minimum-safe-profit-v2";
+
 type CostInput = {
   itemCostCents: number;
   shippingCents: number;
   taxCents: number;
   supplierFeeCents: number;
   handlingCents: number;
+  /**
+   * Backward-compatible field name. V2 treats this only as an explicitly
+   * attributable per-order acquisition cost, never as a generic padding bucket.
+   */
   acquisitionReserveCents: number;
 };
 
@@ -30,10 +41,29 @@ export type CommercializationInput = CostInput & {
   availability: "in_stock" | "out_of_stock" | "unknown";
 };
 
-export type CommercialPriceRecommendation = DynamicPricingDecision & {
+type CanonicalReserves = {
+  paymentCents: number;
+  returnsCents: number;
+  chargebackCents: number;
+  fraudCents: number;
+  supportCents: number;
+  fulfillmentCents: number;
+  acquisitionCents: number;
+};
+
+export type CommercialPriceRecommendation = {
+  recommendedPriceCents: number;
+  minimumSafePriceCents: number;
+  contributionProfitCents: number;
+  contributionMarginBps: number;
+  marketCeilingCents: number | null;
+  marketCompatible: boolean;
+  reasons: string[];
   landedCostCents: number;
   reserveTotalCents: number;
-  reserves: ReturnType<typeof buildReserves>;
+  reserves: CanonicalReserves;
+  minimumProfitCents: number;
+  pricingPolicyVersion: typeof CANONICAL_PRICING_POLICY_VERSION;
 };
 
 export type PreparedCommercialization = {
@@ -46,8 +76,10 @@ export type PreparedCommercialization = {
   decision: CommerceGateDecision;
 };
 
-export const MIN_PROFIT_CENTS = 500;
-export const MIN_MARGIN_BPS = 1000;
+// Kept for compatibility with callers/tests that imported the previous constants.
+// V2 uses the tiered fixed-dollar-or-percentage profit table instead of one global floor.
+export const MIN_PROFIT_CENTS = 0;
+export const MIN_MARGIN_BPS = 0;
 export const MIN_INVENTORY_CONFIDENCE_BPS = 8000;
 export const MAX_SOURCE_AGE_DAYS = 30;
 export const MAX_PRICE_AGE_MINUTES = 180;
@@ -98,7 +130,7 @@ function safeSourceUrl(value: string | null | undefined) {
   return url.toString().slice(0, 2000);
 }
 
-function percentageReserve(amountCents: number, basisPoints: number) {
+function percentageCost(amountCents: number, basisPoints: number) {
   return Math.ceil((amountCents * basisPoints) / 10_000);
 }
 
@@ -123,6 +155,8 @@ function validatedCosts(input: CostInput) {
   const acquisitionReserveCents = safeNonNegativeInteger(input.acquisitionReserveCents, "acquisition_reserve_cents");
   const landedCostCents = itemCostCents + shippingCents + taxCents + supplierFeeCents + handlingCents;
   if (!Number.isSafeInteger(landedCostCents) || landedCostCents <= 0) throw new Error("LANDED_COST_INVALID");
+  const pricingBasisCents = landedCostCents + acquisitionReserveCents;
+  if (!Number.isSafeInteger(pricingBasisCents) || pricingBasisCents <= 0) throw new Error("PRICING_BASIS_INVALID");
   return {
     itemCostCents,
     shippingCents,
@@ -131,24 +165,37 @@ function validatedCosts(input: CostInput) {
     handlingCents,
     acquisitionReserveCents,
     landedCostCents,
+    pricingBasisCents,
   };
 }
 
-export function buildReserves(sellingPriceCents: number, acquisitionReserveCents: number) {
+/**
+ * Backward-compatible reserve shape for commerceV1. In canonical V2 only the
+ * payment-cost estimate, pooled loss reserve, and an explicitly supplied
+ * attributable acquisition cost are non-zero. The old stacked return,
+ * chargeback, fraud, support, and fulfillment padding is not carried forward.
+ */
+export function buildReserves(
+  sellingPriceCents: number,
+  acquisitionReserveCents: number,
+  policy: CartPricingPolicy = currentCartPricingPolicy(),
+): CanonicalReserves {
   safePositiveInteger(sellingPriceCents, "selling_price_cents");
   safeNonNegativeInteger(acquisitionReserveCents, "acquisition_reserve_cents");
   return {
-    paymentCents: percentageReserve(sellingPriceCents, 350) + 30,
-    returnsCents: percentageReserve(sellingPriceCents, 300),
-    chargebackCents: percentageReserve(sellingPriceCents, 100),
-    fraudCents: percentageReserve(sellingPriceCents, 50),
-    supportCents: 50,
-    fulfillmentCents: 100,
+    paymentCents: percentageCost(sellingPriceCents, policy.paymentRateBps) + policy.paymentFixedCents,
+    // commerceV1's historical `returnsCents` slot is used only as a compatibility
+    // carrier for the single pooled monthly loss reserve. commerceV2 names it correctly.
+    returnsCents: percentageCost(sellingPriceCents, policy.lossReserveBps),
+    chargebackCents: 0,
+    fraudCents: 0,
+    supportCents: 0,
+    fulfillmentCents: 0,
     acquisitionCents: acquisitionReserveCents,
   };
 }
 
-function reserveTotal(reserves: ReturnType<typeof buildReserves>) {
+function reserveTotal(reserves: CanonicalReserves) {
   const total = Object.values(reserves).reduce((sum, value) => sum + value, 0);
   if (!Number.isSafeInteger(total) || total < 0) throw new Error("RESERVE_TOTAL_INVALID");
   return total;
@@ -161,48 +208,49 @@ export function recommendCommercialPrice(
   },
 ): CommercialPriceRecommendation {
   const costs = validatedCosts(input);
-  let candidate = costs.landedCostCents + costs.acquisitionReserveCents + 180 + MIN_PROFIT_CENTS;
-  let final: DynamicPricingDecision | null = null;
-  let finalReserves = buildReserves(candidate, costs.acquisitionReserveCents);
+  const policy = currentCartPricingPolicy();
+  const safePrice = calculateMinimumSafeCustomerPrice({
+    landedCostCents: costs.landedCostCents,
+    attributableCostCents: costs.acquisitionReserveCents,
+    policy,
+  });
+  const recommendedPriceCents = safePrice.customerPriceCents;
+  const reserves = buildReserves(recommendedPriceCents, costs.acquisitionReserveCents, policy);
+  const total = reserveTotal(reserves);
+  const contributionProfitCents = recommendedPriceCents - costs.landedCostCents - total;
+  const contributionMarginBps = Math.floor((contributionProfitCents * 10_000) / recommendedPriceCents);
 
-  // Percentage-based reserves depend on the selling price. Iterate upward to a
-  // stable price; never solve by reducing profit or margin floors.
-  for (let i = 0; i < 32; i += 1) {
-    finalReserves = buildReserves(candidate, costs.acquisitionReserveCents);
-    const total = reserveTotal(finalReserves);
-    final = recommendSellingPrice({
-      landedCostCents: costs.landedCostCents,
-      reserveTotalCents: total,
-      minContributionProfitCents: MIN_PROFIT_CENTS,
-      minContributionMarginBps: MIN_MARGIN_BPS,
-      marketReferenceCents: input.marketReferenceCents,
-      maxMarketPremiumBps: input.maxMarketPremiumBps,
-      psychologicalEndingCents: 99,
-    });
-    if (final.recommendedPriceCents <= candidate) {
-      const contributionProfitCents = candidate - costs.landedCostCents - total;
-      const contributionMarginBps = Math.floor((contributionProfitCents * 10_000) / candidate);
-      const marketCompatible = final.marketCeilingCents === null || candidate <= final.marketCeilingCents;
-      const reasons = [...final.reasons];
-      if (!marketCompatible && !reasons.includes("safe_price_exceeds_market_ceiling")) {
-        reasons.push("safe_price_exceeds_market_ceiling");
-      }
-      return {
-        ...final,
-        recommendedPriceCents: candidate,
-        contributionProfitCents,
-        contributionMarginBps,
-        marketCompatible,
-        reasons,
-        landedCostCents: costs.landedCostCents,
-        reserveTotalCents: total,
-        reserves: finalReserves,
-      };
+  let marketCeilingCents: number | null = null;
+  let marketCompatible = true;
+  const reasons: string[] = [];
+  if (input.marketReferenceCents !== null && input.marketReferenceCents !== undefined) {
+    const marketReference = safePositiveInteger(input.marketReferenceCents, "market_reference_cents");
+    const maxPremiumBps = safeBasisPoints(input.maxMarketPremiumBps ?? 1500, "max_market_premium_bps");
+    marketCeilingCents = Math.floor((marketReference * (10_000 + maxPremiumBps)) / 10_000);
+    if (recommendedPriceCents > marketCeilingCents) {
+      marketCompatible = false;
+      reasons.push("safe_price_exceeds_market_ceiling");
     }
-    candidate = final.recommendedPriceCents;
   }
 
-  throw new Error("DYNAMIC_PRICE_DID_NOT_CONVERGE");
+  if (contributionProfitCents < safePrice.minimumProfitCents) {
+    reasons.push("profit_floor_not_met");
+  }
+
+  return {
+    recommendedPriceCents,
+    minimumSafePriceCents: safePrice.minimumSafePriceCents,
+    contributionProfitCents,
+    contributionMarginBps,
+    marketCeilingCents,
+    marketCompatible,
+    reasons,
+    landedCostCents: costs.landedCostCents,
+    reserveTotalCents: total,
+    reserves,
+    minimumProfitCents: safePrice.minimumProfitCents,
+    pricingPolicyVersion: CANONICAL_PRICING_POLICY_VERSION,
+  };
 }
 
 export function isInternalCertificationSpecifications(specifications: string) {
@@ -230,7 +278,9 @@ export function prepareCommercialization(
   const costs = validatedCosts(input);
   const sellingPriceCents = safePositiveInteger(input.sellingPriceCents, "selling_price_cents");
   const inventoryConfidenceBps = safeBasisPoints(input.inventoryConfidenceBps, "inventory_confidence_bps");
-  const reserves = buildReserves(sellingPriceCents, costs.acquisitionReserveCents);
+  const pricingPolicy = currentCartPricingPolicy();
+  const reserves = buildReserves(sellingPriceCents, costs.acquisitionReserveCents, pricingPolicy);
+  const minimumProfitCents = minimumSafeProfitCents(costs.pricingBasisCents);
 
   const root = parseSpecifications(existingSpecifications);
   root.supplierOfferV1 = {
@@ -251,6 +301,9 @@ export function prepareCommercialization(
       landedCostCents: costs.landedCostCents,
     },
   };
+
+  // Keep commerceV1 populated so existing gate/read paths remain compatible.
+  // The values now mirror the canonical policy instead of the legacy stacked reserves.
   root.commerceV1 = {
     sourceClass: input.sourceClass,
     resaleAllowed: true,
@@ -259,9 +312,22 @@ export function prepareCommercialization(
     maxPriceAgeMinutes: MAX_PRICE_AGE_MINUTES,
     inventoryConfidenceBps,
     minInventoryConfidenceBps: MIN_INVENTORY_CONFIDENCE_BPS,
-    minContributionProfitCents: MIN_PROFIT_CENTS,
-    minContributionMarginBps: MIN_MARGIN_BPS,
+    minContributionProfitCents: minimumProfitCents,
+    minContributionMarginBps: 0,
     reserves,
+  };
+
+  root.commerceV2 = {
+    pricingPolicyVersion: CANONICAL_PRICING_POLICY_VERSION,
+    paymentRateBps: pricingPolicy.paymentRateBps,
+    paymentFixedCents: pricingPolicy.paymentFixedCents,
+    lossReserveBps: pricingPolicy.lossReserveBps,
+    maximumLossReserveBps: 200,
+    attributableAcquisitionCostCents: costs.acquisitionReserveCents,
+    minimumProfitCents,
+    rounding: "next_49_or_99_only",
+    publishedPriceBehavior: "ceiling_never_auto_raise_at_cart",
+    marketBehavior: "pause_or_reprice_source_when_safe_price_exceeds_verified_market",
   };
 
   const specifications = JSON.stringify(root);
