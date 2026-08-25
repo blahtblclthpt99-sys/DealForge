@@ -110,7 +110,8 @@ export async function POST(req: Request) {
       sourceStatusDetail: parsed.data.sourceStatusDetail,
       actor: owner.email,
     });
-    return NextResponse.json(result, { status: result.applied === false ? 202 : 201 });
+    const olderObservation = "applied" in result && result.applied === false;
+    return NextResponse.json(result, { status: olderObservation ? 202 : 201 });
   } catch (error) {
     const auth = authError(error);
     if (auth) return auth;
@@ -121,7 +122,9 @@ export async function POST(req: Request) {
     if (message === "SUPPLIER_OFFER_NOT_OBSERVABLE") {
       return NextResponse.json({ error: message }, { status: 409 });
     }
-    const badRequest = message.startsWith("INVENTORY_") && message.endsWith("_INVALID");
+    const badRequest = message.startsWith("INVENTORY_") && (
+      message.endsWith("_INVALID") || message.endsWith("_TOO_LONG")
+    );
     return NextResponse.json(
       { error: badRequest ? message : "Inventory operation failed" },
       { status: badRequest ? 400 : 500 },
