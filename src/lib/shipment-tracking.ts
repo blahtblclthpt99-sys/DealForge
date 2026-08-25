@@ -37,8 +37,8 @@ function safeTimestamp(value: unknown, futureAllowanceMs = 15 * 60 * 1000): stri
 }
 
 export function normalizeTrackingNumber(value: unknown): string | null {
-  if (typeof value !== "string") return null;
-  const normalized = value.trim().replace(/\s+/g, "");
+  if (typeof value !== "string" || /[\r\n\t\0]/.test(value)) return null;
+  const normalized = value.trim().replace(/ +/g, "");
   if (normalized.length < 4 || normalized.length > 80) return null;
   if (!/^[A-Za-z0-9-]+$/.test(normalized)) return null;
   return normalized;
