@@ -8,6 +8,7 @@ CREATE TABLE "RefundFinancialEvent" (
   "eventKey" TEXT NOT NULL,
   "refundId" TEXT NOT NULL,
   "providerRefundId" TEXT NOT NULL,
+  "paymentIntentId" TEXT,
   "providerEventId" TEXT,
   "providerBalanceTransactionId" TEXT NOT NULL,
   "kind" TEXT NOT NULL,
