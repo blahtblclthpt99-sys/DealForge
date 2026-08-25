@@ -23,6 +23,7 @@ export type SavingsFundLedgerEntry = {
 };
 
 type SumRow = { balance: bigint | number | string | null };
+type OrderStateRow = SumRow & { entryCount: bigint | number | string | null };
 type CurrencyRow = { currency: string };
 
 function normalizeCurrency(value: string) {
@@ -38,7 +39,7 @@ function safeInteger(value: number, field: string) {
 
 function dbInteger(value: bigint | number | string | null | undefined, field: string) {
   if (value === null || value === undefined) return 0;
-  const parsed = typeof value === "bigint" ? Number(value) : Number(value);
+  const parsed = Number(value);
   if (!Number.isSafeInteger(parsed)) throw new Error(`${field.toUpperCase()}_INVALID`);
   return parsed;
 }
@@ -63,21 +64,26 @@ export async function getShadowSavingsFundBalance(currencyInput: string) {
       currency,
       error: error instanceof Error ? error.message : "UNKNOWN",
     });
-    // Cart quoting must remain available if the Phase-A ledger migration has not
-    // reached an environment yet. Fail closed to zero proposed savings.
+    // Phase A callers fail closed if the ledger migration has not reached an
+    // environment yet; no real customer price depends on this shadow balance.
     return { available: false, integrityOk: false, currency, balanceCents: 0 } as const;
   }
 }
 
-async function shadowOrderBalance(orderId: string, policyVersion: string) {
-  const rows = await prisma.$queryRaw<SumRow[]>(Prisma.sql`
-    SELECT COALESCE(SUM("amountCents"), 0) AS "balance"
+async function shadowOrderState(orderId: string, policyVersion: string) {
+  const rows = await prisma.$queryRaw<OrderStateRow[]>(Prisma.sql`
+    SELECT
+      COALESCE(SUM("amountCents"), 0) AS "balance",
+      COUNT(*) AS "entryCount"
     FROM "SavingsFundEntry"
     WHERE "orderId" = ${orderId}
       AND "dryRun" = TRUE
       AND "policyVersion" = ${policyVersion}
   `);
-  return dbInteger(rows[0]?.balance, "savings_fund_order_balance");
+  return {
+    balanceCents: dbInteger(rows[0]?.balance, "savings_fund_order_balance"),
+    entryCount: dbInteger(rows[0]?.entryCount, "savings_fund_order_entry_count"),
+  };
 }
 
 async function shadowOrderCurrencies(orderId: string, policyVersion: string) {
@@ -93,6 +99,11 @@ async function shadowOrderCurrencies(orderId: string, policyVersion: string) {
 /**
  * Reconciles one order to its current certified-profit target by appending a
  * new delta entry. Existing ledger rows are never updated or deleted.
+ *
+ * The entry key is a per-order revision number. Concurrent reconcilers that
+ * observe the same state therefore compete for the same unique revision key;
+ * only one can append. A loser verifies the resulting balance and either
+ * accepts the already-correct state or fails closed for a retry.
  */
 export async function reconcileShadowSavingsFundOrder(input: {
   orderId: string;
@@ -121,8 +132,8 @@ export async function reconcileShadowSavingsFundOrder(input: {
     throw new Error("SAVINGS_FUND_ORDER_CURRENCY_MISMATCH");
   }
 
-  const currentAccrualCents = await shadowOrderBalance(orderId, policy.version);
-  const deltaCents = targetAccrualCents - currentAccrualCents;
+  const before = await shadowOrderState(orderId, policy.version);
+  const deltaCents = targetAccrualCents - before.balanceCents;
   if (deltaCents === 0) {
     return {
       changed: false,
@@ -130,32 +141,27 @@ export async function reconcileShadowSavingsFundOrder(input: {
       orderId,
       currency,
       targetAccrualCents,
-      previousAccrualCents: currentAccrualCents,
+      previousAccrualCents: before.balanceCents,
       deltaCents: 0,
+      revision: before.entryCount,
       dryRun: true,
     } as const;
   }
 
   const type = deltaCents > 0 ? "accrual" : "reversal";
-  const entryKey = [
-    policy.version,
-    "order",
-    orderId,
-    "target",
-    targetAccrualCents,
-    "source",
-    sourceProfitCents ?? "uncertified",
-  ].join(":");
+  const nextRevision = before.entryCount + 1;
+  const entryKey = `${policy.version}:order:${orderId}:revision:${nextRevision}`;
   const metadata = JSON.stringify({
     phase: "A",
     measureOnly: true,
     reason: input.reason || (input.certified ? "certified_order_contribution" : "order_not_certified"),
     reinvestmentBps: policy.profitReinvestmentBps,
-    previousAccrualCents: currentAccrualCents,
+    previousAccrualCents: before.balanceCents,
     targetAccrualCents,
+    revision: nextRevision,
   });
 
-  await prisma.$executeRaw(Prisma.sql`
+  const inserted = await prisma.$executeRaw(Prisma.sql`
     INSERT INTO "SavingsFundEntry" (
       "id", "entryKey", "type", "orderId", "refundId", "amountCents", "currency",
       "sourceProfitCents", "policyVersion", "dryRun", "metadata", "createdAt"
@@ -176,19 +182,20 @@ export async function reconcileShadowSavingsFundOrder(input: {
     ON CONFLICT("entryKey") DO NOTHING
   `);
 
-  const afterAccrualCents = await shadowOrderBalance(orderId, policy.version);
-  if (afterAccrualCents !== targetAccrualCents) {
+  const after = await shadowOrderState(orderId, policy.version);
+  if (after.balanceCents !== targetAccrualCents) {
     throw new Error("SAVINGS_FUND_RECONCILIATION_CONCURRENT_CHANGE");
   }
 
   return {
-    changed: true,
+    changed: inserted === 1,
     policyVersion: policy.version,
     orderId,
     currency,
     targetAccrualCents,
-    previousAccrualCents: currentAccrualCents,
-    deltaCents,
+    previousAccrualCents: before.balanceCents,
+    deltaCents: inserted === 1 ? deltaCents : 0,
+    revision: after.entryCount,
     dryRun: true,
   } as const;
 }
