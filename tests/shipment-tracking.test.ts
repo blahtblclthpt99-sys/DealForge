@@ -106,8 +106,9 @@ test("internal procurement states collapse to safe customer fulfillment states",
   assert.equal(publicFulfillmentStatus("delivered"), "delivered");
 });
 
-test("owner shipment route preserves manual-only and financial boundaries", () => {
-  assert.match(adminShipmentRoute, /requireAdmin/);
+test("owner shipment route preserves owner-only, same-origin, manual-only, and financial boundaries", () => {
+  assert.match(adminShipmentRoute, /requireProcurementOwner/);
+  assert.match(adminShipmentRoute, /isSameOriginProcurementMutation\(request\)/);
   assert.match(adminShipmentRoute, /executionMode !== "manual_only"/);
   assert.match(adminShipmentRoute, /current\.order\.status !== "paid"/);
   assert.match(adminShipmentRoute, /supplierOrderReference/);
