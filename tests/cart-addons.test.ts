@@ -4,8 +4,6 @@ import test from "node:test";
 
 test("cart offers cheap add-ons before the rendered checkout action", async () => {
   const source = await readFile("src/components/cart-client.tsx", "utf8");
-  // Use the quoted rendered labels rather than a generic word search; comments
-  // and function names may legitimately mention checkout earlier in the file.
   const addonButton = source.lastIndexOf('"Find cheap add-ons"');
   const checkoutButton = source.lastIndexOf('"Checkout"');
 
@@ -16,17 +14,21 @@ test("cart offers cheap add-ons before the rendered checkout action", async () =
   assert.match(source, /addCartItem\(productId, 1\)/);
 });
 
-test("bundle suggestions are fail-closed and commercially validated", async () => {
+test("bundle suggestions are fail-closed and commercially validated in both catalog scopes", async () => {
   const source = await readFile("src/app/api/cart/addons/route.ts", "utf8");
 
   assert.match(source, /process\.env\.COMMERCE_ENABLED !== "true"/);
+  assert.match(source, /CERTIFICATION_REQUIRES_STRIPE_TEST_MODE/);
+  assert.match(source, /PRODUCT_NOT_IN_CERTIFICATION_CATALOG/);
   assert.match(source, /availability: "in_stock"/);
   assert.match(source, /evaluateCommerceGate/);
+  assert.match(source, /evaluateCertificationCommerceGate/);
   assert.match(source, /checkPersistedOfferBinding/);
   assert.match(source, /calculateCustomerFriendlyPrice/);
   assert.match(source, /HARD_ADDON_PRICE_CAP_CENTS/);
   assert.match(source, /ADDON_RATIO_BPS/);
-  assert.match(source, /id: \{ notIn: cartIds \}/);
+  assert.match(source, /notIn: cartIds/);
+  assert.match(source, /CERTIFICATION_CATALOG_PRODUCT_IDS/);
 });
 
 test("customer savings fund policy keeps phase A measure-only before real checkout release", async () => {
