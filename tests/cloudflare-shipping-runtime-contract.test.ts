@@ -2,19 +2,25 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-test("Cloudflare production runtime provisions the narrow shipping-country scope", async () => {
-  const source = await readFile("wrangler.jsonc", "utf8");
+type WranglerConfig = {
+  vars?: Record<string, unknown>;
+  secrets?: { required?: unknown[] };
+};
 
-  assert.match(source, /"CHECKOUT_ALLOWED_SHIPPING_COUNTRIES"\s*:\s*"US"/);
-  assert.doesNotMatch(source, /"CHECKOUT_ALLOWED_SHIPPING_COUNTRIES"\s*:\s*"\s*"/);
+async function readWranglerConfig() {
+  return JSON.parse(await readFile("wrangler.jsonc", "utf8")) as WranglerConfig;
+}
+
+test("Cloudflare production runtime provisions the narrow shipping-country scope", async () => {
+  const config = await readWranglerConfig();
+
+  assert.equal(config.vars?.CHECKOUT_ALLOWED_SHIPPING_COUNTRIES, "US");
 });
 
 test("shipping-country scope is a non-secret Worker variable", async () => {
-  const source = await readFile("wrangler.jsonc", "utf8");
-  const varsStart = source.indexOf('"vars"');
-  const secretStart = source.indexOf('"secrets"');
-  const countryStart = source.indexOf('"CHECKOUT_ALLOWED_SHIPPING_COUNTRIES"');
+  const config = await readWranglerConfig();
+  const requiredSecrets = config.secrets?.required ?? [];
 
-  assert.ok(varsStart >= 0 && countryStart > varsStart);
-  assert.ok(secretStart >= 0 && countryStart > secretStart);
+  assert.equal(typeof config.vars?.CHECKOUT_ALLOWED_SHIPPING_COUNTRIES, "string");
+  assert.equal(requiredSecrets.includes("CHECKOUT_ALLOWED_SHIPPING_COUNTRIES"), false);
 });
