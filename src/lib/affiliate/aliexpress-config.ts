@@ -7,7 +7,7 @@
  * OpenNext handles the request; reading here at call time prevents build-time or
  * isolate-initialization snapshots from suppressing affiliate attribution.
  */
-type AliExpressAffiliateEnv = {
+type AliExpressAffiliateEnv = Record<string, string | undefined> & {
   ALIEXPRESS_AFF_SHORT_KEY?: string;
   ALIEXPRESS_TRACKING_ID?: string;
   ALIEXPRESS_PUBLISHER_ID?: string;
