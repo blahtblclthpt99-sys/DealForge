@@ -4,7 +4,7 @@
  * Runtime URL generation resolves the tag lazily so the deployed request's
  * environment is authoritative rather than a build-time module snapshot.
  */
-type AmazonAffiliateEnv = {
+type AmazonAffiliateEnv = Record<string, string | undefined> & {
   AMAZON_ASSOCIATE_TAG?: string;
   AMAZON_PARTNER_TAG?: string;
 };
