@@ -51,12 +51,12 @@ test("production schema checker is read-only and verifies every replay-protectio
   assert.doesNotMatch(checker, /\b(CREATE|ALTER|DROP|TRUNCATE|INSERT|UPDATE|DELETE)\b/);
 });
 
-test("Cloudflare certification workflow is ephemeral, schema-gated, and refuses to overwrite real adapter credentials", async () => {
+test("Cloudflare certification is manual, serialized, ephemeral, and fail-closed", async () => {
   const workflow = await readFile(".github/workflows/inventory-adapter-certification.yml", "utf8");
 
   assert.match(workflow, /workflow_dispatch:/);
-  assert.match(workflow, /src\/lib\/inventory-adapter-auth\.ts/);
-  assert.match(workflow, /inventory_adapter_nonce_v1/);
+  assert.doesNotMatch(workflow, /\n  push:/);
+  assert.match(workflow, /group: dealforge-cloudflare-production/);
   assert.match(workflow, /DATABASE_URL: \$\{\{ secrets\.DATABASE_URL \}\}/);
   assert.match(workflow, /check-inventory-adapter-schema\.ts/);
   assert.match(workflow, /ADAPTER_AUTH_NOT_CONFIGURED/);
@@ -65,11 +65,26 @@ test("Cloudflare certification workflow is ephemeral, schema-gated, and refuses 
   assert.match(workflow, /randomBytes\(48\)/);
   assert.match(workflow, /wrangler secret put INVENTORY_ADAPTER_SECRETS_JSON --name dealforge/);
   assert.match(workflow, /scripts\/certify-inventory-adapter\.mjs/);
-  assert.match(workflow, /method POST|\-X POST/);
-  assert.match(workflow, /\-X DELETE/);
-  assert.match(workflow, /workers\/scripts\/dealforge\/secrets\/INVENTORY_ADAPTER_SECRETS_JSON/);
+  assert.match(workflow, /wrangler secret bulk --name dealforge/);
+  assert.match(workflow, /INVENTORY_ADAPTER_SECRETS_JSON\\?":null|INVENTORY_ADAPTER_SECRETS_JSON":null/);
   assert.match(workflow, /Prove adapters returned to disabled state/);
+  assert.doesNotMatch(workflow, /workers\/scripts\/dealforge\/secrets\/INVENTORY_ADAPTER_SECRETS_JSON/);
+  assert.doesNotMatch(workflow, /wrangler versions secret/);
   assert.doesNotMatch(workflow, /INVENTORY_ADAPTER_SECRETS_JSON:\s*\$\{\{\s*secrets\./);
+});
+
+test("one-time recovery waits for Cloudflare mutators then proves the adapter secret is absent", async () => {
+  const workflow = await readFile(".github/workflows/inventory-adapter-stranded-secret-cleanup-once.yml", "utf8");
+
+  assert.match(workflow, /cloudflare-production-deploy/);
+  assert.match(workflow, /cloudflare-stripe-secret-sync/);
+  assert.match(workflow, /deploy.*success/);
+  assert.match(workflow, /stripe.*success/);
+  assert.match(workflow, /wrangler secret list --name dealforge --format json/);
+  assert.match(workflow, /wrangler secret bulk --name dealforge/);
+  assert.match(workflow, /INVENTORY_ADAPTER_SECRETS_JSON/);
+  assert.match(workflow, /ADAPTER_AUTH_NOT_CONFIGURED/);
+  assert.match(workflow, /inventory-adapter-secret-cleanup/);
 });
 
 test("production Cloudflare deploy fails closed when adapter replay schema is missing", async () => {
