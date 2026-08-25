@@ -24,3 +24,19 @@ test("shipping-country scope is a non-secret Worker variable", async () => {
   assert.equal(typeof config.vars?.CHECKOUT_ALLOWED_SHIPPING_COUNTRIES, "string");
   assert.equal(requiredSecrets.includes("CHECKOUT_ALLOWED_SHIPPING_COUNTRIES"), false);
 });
+
+test("hosted Stripe gate reruns when shipping runtime or destination code changes", async () => {
+  const workflow = await readFile(".github/workflows/stripe-phase25-e2e-v6.yml", "utf8");
+
+  for (const path of [
+    "wrangler.jsonc",
+    "prisma/schema.postgres.prisma",
+    "src/lib/checkout-shipping.ts",
+    "src/lib/order-destination.ts",
+    "tests/cloudflare-shipping-runtime-contract.test.ts",
+    "tests/order-destination.test.ts",
+    "tests/order-destination-provenance.test.ts",
+  ]) {
+    assert.match(workflow, new RegExp(`- '${path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}'`));
+  }
+});
