@@ -16,6 +16,7 @@ export function ProductCard({ product, wishlisted = false, onToggleWishlist }: {
   const save = product.priceEstimated ? null : discountLabel(product.discountPercent);
   const qnty = formatQuantityLabel(product.quantity);
   const direct = product.purchaseMode === "direct" && product.commerceReady;
+  const verifiedInStock = direct && product.availabilityVerified && product.availability === "in_stock";
 
   async function toggleWish(e: React.MouseEvent) {
     e.preventDefault();
@@ -63,6 +64,11 @@ export function ProductCard({ product, wishlisted = false, onToggleWishlist }: {
       <div className="flex flex-1 flex-col gap-2 p-4">
         <p className="text-xs font-medium uppercase tracking-wide text-forest-muted">{product.brand}{qnty ? <span className="text-forest"> · {qnty}</span> : null}</p>
         <Link href={`/product/${product.slug}`} className="line-clamp-2 text-sm font-semibold leading-snug text-forest-ink hover:text-forest">{product.title}</Link>
+        {verifiedInStock ? (
+          <p className="text-[11px] font-semibold text-forest">In stock · Sold by DealForge</p>
+        ) : (
+          <p className="text-[11px] font-medium text-forest-muted">Check price &amp; availability at source</p>
+        )}
         <div className="mt-auto flex items-end justify-between gap-2 pt-2">
           <div>
             {product.price > 0 ? (
