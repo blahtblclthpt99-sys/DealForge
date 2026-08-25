@@ -20,20 +20,33 @@ test("supplier persistence keys are deterministic and identity-scoped", () => {
   assert.notEqual(offerA, offerOtherProduct);
 });
 
-test("persisted commercialization prevents stale supplier economics from replacing newer observations", async () => {
+test("supplier authorization only advances on a strictly newer verification", async () => {
   const source = await readFile("src/lib/supplier-commercialization.ts", "utf8");
   assert.match(source, /sourceVerifiedAt: \{ lt: sourceVerifiedAt \}/);
-  assert.match(source, /currentPriceVerifiedAt < priceVerifiedAt\.getTime\(\)/);
+  assert.match(source, /data: \{\s*sourceVerifiedAt,\s*verificationSource: "owner_manual",\s*active: true,\s*resaleAllowed: true,/s);
+  assert.match(source, /Existing authorization\/revocation state is deliberately preserved/);
+  assert.doesNotMatch(source, /update: \{\s*name: supplierName,\s*websiteUrl: websiteUrl \?\? undefined,\s*active: true/s);
+});
+
+test("persisted offer economics advance atomically and reject equal-timestamp conflicts", async () => {
+  const source = await readFile("src/lib/supplier-commercialization.ts", "utf8");
+  assert.match(source, /prisma\.supplierOffer\.updateMany/);
+  assert.match(source, /priceVerifiedAt: \{ lt: priceVerifiedAt \}/);
+  assert.match(source, /if \(advanced\.count === 0\)/);
+  assert.match(source, /readCurrentOffer\(initialOffer\.id\)/);
   assert.match(source, /SUPPLIER_OFFER_VERIFICATION_CONFLICT/);
   assert.match(source, /selectPersistedSupplierOffer/);
 });
 
-test("no eligible persisted supplier leaves product economics untouched", async () => {
-  const route = await readFile("src/app/api/admin/product-engine/route.ts", "utf8");
-  const blockedIndex = route.indexOf("NO_ELIGIBLE_SUPPLIER_OFFER");
-  const updateIndex = route.indexOf("prisma.product.update");
-  assert.ok(blockedIndex >= 0);
-  assert.ok(updateIndex > blockedIndex);
+test("no eligible persisted supplier immediately revokes the stale direct-commerce snapshot", async () => {
+  const service = await readFile("src/lib/supplier-commercialization.ts", "utf8");
+  const selectionIndex = service.indexOf("if (!selection.selected)");
+  const revokeIndex = service.indexOf("commerceEnabled: false", selectionIndex);
+  const returnIndex = service.indexOf("prepared: null", selectionIndex);
+  assert.ok(selectionIndex >= 0);
+  assert.ok(revokeIndex > selectionIndex);
+  assert.ok(returnIndex > revokeIndex);
+  assert.match(service, /availability: unavailableSnapshotAvailability\(selection\)/);
 });
 
 test("commercialization bridge has no procurement or global commerce authority", async () => {
