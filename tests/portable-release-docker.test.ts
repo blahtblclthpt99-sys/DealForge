@@ -26,3 +26,11 @@ test("portable production image generates the PostgreSQL Prisma client", async (
   assert.ok((source.match(/ENV PRISMA_DATABASE_PROVIDER=postgresql/g) || []).length >= 2);
   assert.match(source, /RUN npm run build/);
 });
+
+test("portable release validates Docker builds on relevant pull requests without publishing them", async () => {
+  const source = await readFile(".github/workflows/portable-release.yml", "utf8");
+  assert.match(source, /pull_request:/);
+  assert.match(source, /- 'Dockerfile'/);
+  assert.match(source, /if: github\.event_name != 'pull_request'/);
+  assert.match(source, /push: \$\{\{ github\.event_name != 'pull_request' \}\}/);
+});
