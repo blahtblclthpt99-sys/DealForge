@@ -180,7 +180,7 @@ test("multiple post-purchase exceptions project as separate recovery cases", () 
   assert.equal(cases.length, 2);
 });
 
-test("admin recovery route is bounded, admin-only, idempotent, and concurrency guarded", () => {
+test("admin recovery route is bounded, admin-only, idempotent, and row-lock serialized", () => {
   const source = fs.readFileSync(
     path.join(process.cwd(), "src/app/api/admin/procurement/[id]/recovery/route.ts"),
     "utf8",
@@ -189,8 +189,9 @@ test("admin recovery route is bounded, admin-only, idempotent, and concurrency g
   assert.match(source, /readLimitedJson\(request, 16 \* 1024\)/);
   assert.match(source, /RECOVERY_LOSS_REQUIRES_SUCCEEDED_REFUND/);
   assert.match(source, /RECOVERY_ACCOUNTING_EXCEEDS_SUPPLIER_COST/);
-  assert.match(source, /where: \{ id: intent\.id, updatedAt: intent\.updatedAt \}/);
-  assert.match(source, /RECOVERY_CONCURRENT_CHANGE/);
+  assert.match(source, /FOR UPDATE/);
+  assert.doesNotMatch(source, /data: \{ updatedAt:/);
+  assert.match(source, /RECOVERY_EVENT_HISTORY_LIMIT/);
   assert.match(source, /automaticRecoveryEnabled: false/);
   assert.doesNotMatch(source, /\bfetch\s*\(/);
 });
