@@ -139,7 +139,7 @@ jobs:
           code=$(curl --retry 3 --retry-all-errors --retry-delay 2 -sS -o checkout.json -w '%{http_code}' \
             -X POST 'https://www.deal-forge.sale/api/checkout' \
             -H 'content-type: application/json' \
-            --data "{\"checkoutKey\":\"${CHECKOUT_KEY}\",\"email\":\"${CERT_EMAIL}\",\"items\":[{\"productId\":\"cert_test_75c_20260822_v2\",\"quantity\":1}]}"
+            --data "{\"checkoutKey\":\"${CHECKOUT_KEY}\",\"email\":\"${CERT_EMAIL}\",\"items\":[{\"productId\":\"cert_catalog_home_main_20260825\",\"quantity\":1}]}"
           )
 
           state=failure
@@ -165,7 +165,7 @@ jobs:
           gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
             -f state=success \
             -f context=stripe-phase25-checkout-create \
-            -f description='Fresh 75-cent Stripe-hosted test Checkout created'
+            -f description='Fresh allowlisted Stripe-hosted test Checkout created'
 
       - name: Verify recorded financial certification
         run: |
