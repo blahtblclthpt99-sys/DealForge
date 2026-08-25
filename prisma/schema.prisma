@@ -320,17 +320,18 @@ model Order {
 }
 
 model OrderItem {
-  id              String   @id @default(cuid())
-  orderId         String
-  order           Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  productId       String
-  productSlug     String
-  title           String
-  quantity        Int
-  unitPriceCents  Int
-  lineTotalCents  Int
-  landedCostCents Int?
-  createdAt       DateTime @default(now())
+  id               String   @id @default(cuid())
+  orderId          String
+  order            Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId        String
+  productSlug      String
+  title            String
+  quantity         Int
+  unitPriceCents   Int
+  lineTotalCents   Int
+  landedCostCents  Int?
+  supplierSnapshot String   @default("{}")
+  createdAt        DateTime @default(now())
 
   @@index([orderId])
   @@index([productId])

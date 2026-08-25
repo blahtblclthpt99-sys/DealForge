@@ -331,6 +331,7 @@ model OrderItem {
   unitPriceCents   Int
   lineTotalCents   Int
   landedCostCents  Int?
+  supplierSnapshot String   @default("{}")
   createdAt        DateTime @default(now())
 
   @@index([orderId])

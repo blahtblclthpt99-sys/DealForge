@@ -2,8 +2,13 @@ import { randomBytes } from "node:crypto";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { readSession } from "@/lib/auth";
+import { checkCheckoutExposure } from "@/lib/checkout-exposure";
 import { prisma } from "@/lib/db";
 import { evaluateCommerceGate } from "@/lib/commerce-gate";
+import {
+  buildOrderSupplierSnapshot,
+  serializeOrderSupplierSnapshot,
+} from "@/lib/order-source-snapshot";
 import { checkPersistedOfferBinding } from "@/lib/persisted-offer-binding";
 import { readLimitedJson } from "@/lib/request-json";
 import { createStripeCheckoutSession } from "@/lib/stripe-commerce";
@@ -37,13 +42,22 @@ type OrderEconomicItem = {
   unitPriceCents: number;
   lineTotalCents: number;
   landedCostCents: number | null;
+  supplierSnapshot: string;
 };
 
 type CurrentEconomicItem = {
-  product: { id: string; landedCostCents: number | null };
+  product: {
+    id: string;
+    specifications: string;
+    landedCostCents: number | null;
+    currency: string;
+    availability: string;
+    priceVerifiedAt: Date | null;
+  };
   quantity: number;
   unitPriceCents: number;
   lineTotalCents: number;
+  supplierSnapshot: string;
 };
 
 function orderNumber() {
@@ -86,7 +100,8 @@ function sameOrderEconomics(existing: OrderEconomicItem[], current: CurrentEcono
         item.quantity === live.quantity &&
         item.unitPriceCents === live.unitPriceCents &&
         item.lineTotalCents === live.lineTotalCents &&
-        item.landedCostCents === live.product.landedCostCents,
+        item.landedCostCents === live.product.landedCostCents &&
+        item.supplierSnapshot === live.supplierSnapshot,
     );
   });
 }
@@ -214,8 +229,12 @@ export async function POST(request: Request) {
     }
 
     stage = "persisted_offer_binding";
+    const supplierSnapshotByProductId = new Map<string, string>();
     for (const product of products) {
-      if (certificationOnly && isInternalCertificationProduct(product.specifications) && stripeTestMode()) continue;
+      if (certificationOnly && isInternalCertificationProduct(product.specifications) && stripeTestMode()) {
+        supplierSnapshotByProductId.set(product.id, "{}");
+        continue;
+      }
       const binding = await checkPersistedOfferBinding({
         productId: product.id,
         currency: product.currency,
@@ -232,6 +251,13 @@ export async function POST(request: Request) {
         });
         return NextResponse.json({ error: "PRODUCT_SUPPLIER_BINDING_FAILED" }, { status: 409 });
       }
+
+      const snapshot = buildOrderSupplierSnapshot(product.specifications, product.currency);
+      if (!snapshot || snapshot.costBreakdown.landedCostCents !== product.landedCostCents) {
+        console.warn("checkout.order_supplier_snapshot.invalid", { productId: product.id });
+        return NextResponse.json({ error: "PRODUCT_SUPPLIER_BINDING_FAILED" }, { status: 409 });
+      }
+      supplierSnapshotByProductId.set(product.id, serializeOrderSupplierSnapshot(snapshot));
     }
 
     stage = "pricing";
@@ -254,11 +280,16 @@ export async function POST(request: Request) {
       if (!Number.isSafeInteger(lineTotalCents) || lineTotalCents <= 0) {
         throw new Error("ORDER_AMOUNT_INVALID");
       }
+      const supplierSnapshot = supplierSnapshotByProductId.get(product.id);
+      if (supplierSnapshot === undefined) {
+        throw new Error("SUPPLIER_SNAPSHOT_MISSING");
+      }
       return {
         product,
         quantity: item.quantity,
         unitPriceCents: product.sellingPriceCents,
         lineTotalCents,
+        supplierSnapshot,
       };
     });
 
@@ -276,6 +307,19 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "ORDER_AMOUNT_INVALID" }, { status: 409 });
     }
 
+    stage = "exposure_gate";
+    const exposure = checkCheckoutExposure(
+      pricedItems.map(({ product, quantity, unitPriceCents }) => ({
+        quantity,
+        unitPriceCents,
+        landedCostCents: product.landedCostCents,
+      })),
+    );
+    if (!exposure.eligible) {
+      console.warn("checkout.exposure_gate.blocked", { reason: exposure.reason });
+      return NextResponse.json({ error: "CHECKOUT_LIMIT_EXCEEDED" }, { status: 409 });
+    }
+
     stage = "order_create";
     const order =
       existing ||
@@ -290,15 +334,18 @@ export async function POST(request: Request) {
           subtotalCents,
           totalCents: subtotalCents,
           items: {
-            create: pricedItems.map(({ product, quantity, unitPriceCents, lineTotalCents }) => ({
-              productId: product.id,
-              productSlug: product.slug,
-              title: product.title,
-              quantity,
-              unitPriceCents,
-              lineTotalCents,
-              landedCostCents: product.landedCostCents,
-            })),
+            create: pricedItems.map(
+              ({ product, quantity, unitPriceCents, lineTotalCents, supplierSnapshot }) => ({
+                productId: product.id,
+                productSlug: product.slug,
+                title: product.title,
+                quantity,
+                unitPriceCents,
+                lineTotalCents,
+                landedCostCents: product.landedCostCents,
+                supplierSnapshot,
+              }),
+            ),
           },
         },
         include: { items: true },
@@ -313,6 +360,33 @@ export async function POST(request: Request) {
       !sameOrderEconomics(order.items, pricedItems)
     ) {
       return NextResponse.json({ error: "ORDER_PRICE_CHANGED_RESTART_CHECKOUT" }, { status: 409 });
+    }
+
+    stage = "pre_stripe_supplier_revalidation";
+    for (const item of pricedItems) {
+      const product = item.product;
+      if (certificationOnly && isInternalCertificationProduct(product.specifications) && stripeTestMode()) continue;
+      const binding = await checkPersistedOfferBinding({
+        productId: product.id,
+        currency: product.currency,
+        availability: product.availability,
+        landedCostCents: product.landedCostCents,
+        priceVerifiedAt: product.priceVerifiedAt,
+        specifications: product.specifications,
+      });
+      const refreshedSnapshot = buildOrderSupplierSnapshot(product.specifications, product.currency);
+      if (
+        !binding.allowed ||
+        !refreshedSnapshot ||
+        serializeOrderSupplierSnapshot(refreshedSnapshot) !== item.supplierSnapshot
+      ) {
+        console.warn("checkout.pre_stripe_supplier_revalidation.blocked", {
+          productId: product.id,
+          persistedOfferId: binding.persistedOfferId,
+          reasons: binding.reasons,
+        });
+        return NextResponse.json({ error: "ORDER_SOURCE_CHANGED_RESTART_CHECKOUT" }, { status: 409 });
+      }
     }
 
     stage = "stripe_session";
