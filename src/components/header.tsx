@@ -14,6 +14,7 @@ import {
   User,
   X,
 } from "lucide-react";
+import { CartLink } from "./cart-link";
 import { useTheme } from "./theme-provider";
 import { cn } from "@/lib/utils";
 
@@ -110,6 +111,7 @@ export function Header({
           >
             <Heart className="h-4 w-4" />
           </Link>
+          <CartLink compact />
           {user ? (
             <>
               {user.role === "admin" && (
@@ -177,6 +179,13 @@ export function Header({
                 {item.label}
               </Link>
             ))}
+            <Link
+              href="/cart"
+              onClick={() => setMenuPath(null)}
+              className="rounded-lg px-3 py-2 text-sm font-medium text-forest-ink hover:bg-forest/10"
+            >
+              Cart
+            </Link>
             {!user && (
               <>
                 <Link

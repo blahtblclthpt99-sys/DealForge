@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { readSession } from "@/lib/auth";
+import { calculateCustomerFriendlyPrice } from "@/lib/cart-pricing";
 import { checkCheckoutExposure } from "@/lib/checkout-exposure";
 import { prisma } from "@/lib/db";
 import { evaluateCommerceGate } from "@/lib/commerce-gate";
@@ -264,6 +265,7 @@ export async function POST(request: Request) {
     const productById = new Map(products.map((product) => [product.id, product]));
     const pricedItems = requestedItems.map((item) => {
       const product = productById.get(item.productId)!;
+      const certificationProduct = isInternalCertificationProduct(product.specifications) && stripeTestMode();
       if (isInternalCertificationProduct(product.specifications) && !stripeTestMode()) {
         throw new Error("CERTIFICATION_REQUIRES_TEST_MODE");
       }
@@ -276,7 +278,27 @@ export async function POST(request: Request) {
       ) {
         throw new Error(`PRODUCT_NOT_PURCHASABLE:${product.id}`);
       }
-      const lineTotalCents = product.sellingPriceCents * item.quantity;
+
+      let unitPriceCents = product.sellingPriceCents;
+      if (!certificationProduct) {
+        if (
+          !Number.isSafeInteger(product.landedCostCents) ||
+          !product.landedCostCents ||
+          product.landedCostCents <= 0
+        ) {
+          throw new Error(`PRODUCT_NOT_PURCHASABLE:${product.id}`);
+        }
+        const pricing = calculateCustomerFriendlyPrice({
+          landedCostCents: product.landedCostCents,
+          publishedPriceCents: product.sellingPriceCents,
+        });
+        if (!pricing.eligible) {
+          throw new Error("PRODUCT_PRICE_NO_LONGER_SAFE");
+        }
+        unitPriceCents = pricing.customerPriceCents;
+      }
+
+      const lineTotalCents = unitPriceCents * item.quantity;
       if (!Number.isSafeInteger(lineTotalCents) || lineTotalCents <= 0) {
         throw new Error("ORDER_AMOUNT_INVALID");
       }
@@ -287,7 +309,7 @@ export async function POST(request: Request) {
       return {
         product,
         quantity: item.quantity,
-        unitPriceCents: product.sellingPriceCents,
+        unitPriceCents,
         lineTotalCents,
         supplierSnapshot,
       };
@@ -431,6 +453,7 @@ export async function POST(request: Request) {
     const message = error instanceof Error ? error.message : "UNKNOWN";
     if (
       message.startsWith("PRODUCT_NOT_PURCHASABLE") ||
+      message === "PRODUCT_PRICE_NO_LONGER_SAFE" ||
       message === "QUANTITY_LIMIT_EXCEEDED" ||
       message === "CERTIFICATION_REQUIRES_TEST_MODE"
     ) {

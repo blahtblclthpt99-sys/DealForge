@@ -435,3 +435,26 @@ model Refund {
   @@index([orderId])
   @@index([status, createdAt])
 }
+
+// Phase A savings ledger. Application code treats this model as append-only;
+// PostgreSQL additionally enforces immutability with database triggers.
+model SavingsFundEntry {
+  id                String   @id @default(cuid())
+  entryKey          String   @unique
+  type              String
+  orderId           String?
+  refundId          String?
+  amountCents       Int
+  currency          String
+  sourceProfitCents Int?
+  policyVersion     String
+  dryRun            Boolean  @default(true)
+  metadata          String   @default("{}")
+  createdAt         DateTime @default(now())
+
+  @@index([currency, createdAt])
+  @@index([type, createdAt])
+  @@index([orderId, createdAt])
+  @@index([refundId, createdAt])
+  @@index([dryRun, createdAt])
+}

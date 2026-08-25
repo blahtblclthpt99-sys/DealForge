@@ -13,15 +13,37 @@ async function runtimeSourceFiles(root = "src"): Promise<string[]> {
   return files;
 }
 
-test("direct purchase button uses DealForge checkout while affiliate mode uses outbound route", async () => {
+test("direct purchase button confirms a cart price instead of skipping directly to Stripe", async () => {
   const source = await readFile("src/components/buy-button.tsx", "utf8");
 
   assert.match(source, /purchaseMode !== "direct"/);
   assert.match(source, /href=\{`\/go\/\$\{productId\}`\}/);
-  assert.match(source, /fetch\("\/api\/checkout"/);
-  assert.match(source, /items: \[\{ productId, quantity: 1 \}\]/);
-  assert.match(source, /window\.location\.assign\(payload\.checkoutUrl\)/);
-  assert.match(source, /Buy from DealForge/);
+  assert.match(source, /fetch\("\/api\/cart\/quote"/);
+  assert.match(source, /addCartItem\(productId, 1\)/);
+  assert.match(source, /Add to cart/);
+  assert.doesNotMatch(source, /fetch\("\/api\/checkout"/);
+  assert.doesNotMatch(source, /window\.location\.assign\(payload\.checkoutUrl\)/);
+});
+
+test("cart page owns checkout and sends only product identity, quantity, email, and checkout key", async () => {
+  const page = await readFile("src/app/cart/page.tsx", "utf8");
+  const cart = await readFile("src/components/cart-client.tsx", "utf8");
+  const header = await readFile("src/components/header.tsx", "utf8");
+
+  assert.match(page, /CartClient/);
+  assert.match(cart, /fetch\("\/api\/cart\/quote"/);
+  assert.match(cart, /fetch\("\/api\/checkout"/);
+  assert.match(cart, /checkoutKey: `cart:\$\{crypto\.randomUUID\(\)\}`/);
+  assert.match(cart, /Checkout/);
+  assert.match(cart, /Cart savings/);
+  assert.match(header, /CartLink/);
+});
+
+test("product cards expose a cart action for verified direct-commerce products", async () => {
+  const card = await readFile("src/components/product-card.tsx", "utf8");
+  assert.match(card, /product\.purchaseMode === "direct" && product\.commerceReady/);
+  assert.match(card, /QuickAddButton/);
+  assert.match(card, /Final price calculated in cart/);
 });
 
 test("product page separates verified direct sales from DealForge estimates", async () => {
@@ -31,7 +53,6 @@ test("product page separates verified direct sales from DealForge estimates", as
   assert.match(page, /product\.purchaseMode === "direct" && product\.commerceReady/);
   assert.match(page, /Sold by DealForge/);
   assert.match(page, /DealForge estimated price/);
-  assert.match(page, /Estimated DealForge selling price based on DealForge reserve, profit, and margin logic/);
   assert.match(page, /affiliateLabel="View source listing"/);
   assert.match(page, /Your payment is processed through DealForge secure checkout/);
   assert.match(card, /DealForge estimate/);
@@ -57,6 +78,7 @@ test("public product DTO calculates estimates but checkout authority remains sep
   assert.match(source, /priceSource: direct \? "dealforge" : priceEstimated \? "dealforge_estimate"/);
   assert.match(source, /purchaseMode: direct \? "direct" : "affiliate"/);
   assert.match(source, /if \(process\.env\.COMMERCE_ENABLED !== "true"\) return \{ allowed: false \}/);
-  assert.match(checkout, /sellingPriceCents/);
+  assert.match(checkout, /calculateCustomerFriendlyPrice/);
+  assert.match(checkout, /unitPriceCents/);
   assert.doesNotMatch(checkout, /dealForgeEstimatedPrice/);
 });
