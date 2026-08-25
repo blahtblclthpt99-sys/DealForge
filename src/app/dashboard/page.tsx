@@ -4,6 +4,7 @@ import {
   Bell,
   Clock,
   Heart,
+  Package,
   Search,
   Settings,
 } from "lucide-react";
@@ -13,6 +14,7 @@ import { prisma } from "@/lib/db";
 import { parseJson } from "@/lib/utils";
 
 const LINKS = [
+  { href: "/dashboard/orders", label: "Orders", icon: Package, desc: "History, status & tracking" },
   { href: "/dashboard/wishlist", label: "Wishlist", icon: Heart, desc: "Products you saved" },
   { href: "/dashboard/searches", label: "Saved searches", icon: Search, desc: "Jump back into filters" },
   { href: "/dashboard/recent", label: "Recently viewed", icon: Clock, desc: "Pick up where you left off" },
