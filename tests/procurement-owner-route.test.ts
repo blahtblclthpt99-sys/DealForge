@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 
 const routePath = new URL("../src/app/api/admin/procurement/[id]/route.ts", import.meta.url);
 const queuePath = new URL("../src/app/api/admin/procurement/route.ts", import.meta.url);
+const revalidationPath = new URL("../src/lib/procurement-source-revalidation.ts", import.meta.url);
 
 test("procurement owner actions require owner authorization and manual-only execution", async () => {
   const source = await readFile(routePath, "utf8");
@@ -20,6 +21,28 @@ test("procurement owner actions recheck paid financial state and blocked provena
   assert.match(source, /PROCUREMENT_ORDER_NOT_PAID/);
   assert.match(source, /blocked_source_integrity/);
   assert.match(source, /PROCUREMENT_SOURCE_INTEGRITY_BLOCKED/);
+});
+
+test("manual approval revalidates current persisted source before and inside the transaction", async () => {
+  const source = await readFile(routePath, "utf8");
+  const calls = source.match(/checkProcurementSourceRevalidation\(/g) || [];
+  assert.ok(calls.length >= 2);
+  assert.match(source, /PROCUREMENT_LIVE_SOURCE_REVALIDATION_FAILED/);
+  assert.match(source, /liveSourceRevalidated: true/);
+  assert.match(source, /persistedOfferId: approvalSourceRevalidation\.persistedOfferId/);
+  assert.match(source, /currentLandedCostCents: approvalSourceRevalidation\.currentLandedCostCents/);
+  assert.match(source, /Date\.now\(\),\s*tx/);
+});
+
+test("live procurement source revalidation is strict and decision-only", async () => {
+  const source = await readFile(revalidationPath, "utf8");
+  assert.match(source, /requireCurrentInventoryObservation: true/);
+  assert.match(source, /MAX_SOURCE_AGE_DAYS/);
+  assert.match(source, /MAX_PRICE_AGE_MINUTES/);
+  assert.match(source, /MIN_INVENTORY_CONFIDENCE_BPS/);
+  assert.match(source, /procurement_landed_cost_drift/);
+  assert.match(source, /observed_supplier_price_drift/);
+  assert.doesNotMatch(source, /commerceEnabled\s*[:=]\s*true|stripe|purchase/i);
 });
 
 test("manual purchase requires explicit confirmation plus variance and loss controls", async () => {
