@@ -109,8 +109,8 @@ test("inventory worker demotes on price drift without rewriting supplier economi
   assert.match(operations, /persistedItemCostCents/);
   assert.match(operations, /priceDrifted/);
   assert.doesNotMatch(operations, /itemCostCents:\s*latest\.observedPriceCents/);
-  assert.match(operations, /data:\s*{\s*commerceEnabled:\s*false,\s*availability,/s);
-  assert.doesNotMatch(operations, /data:\s*{\s*commerceEnabled:\s*true\b/s);
+  assert.match(operations, /data:\s*{\s*commerceEnabled:\s*false,\s*availability,/);
+  assert.doesNotMatch(operations, /data:\s*{\s*commerceEnabled:\s*true\b/);
   assert.match(operations, /commercePromoted:\s*false as const/);
 
   assert.match(store, /"observedPriceCents"/);
