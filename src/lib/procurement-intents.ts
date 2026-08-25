@@ -1,4 +1,5 @@
 import type { Prisma } from "@prisma/client";
+import { ORDER_DESTINATION_SOURCE } from "@/lib/order-destination";
 
 export const PROCUREMENT_EXECUTION_MODE = "manual_only" as const;
 export const PROCUREMENT_READY_STATUS = "awaiting_review" as const;
@@ -166,6 +167,21 @@ export async function ensureProcurementIntentsForPaidOrder(
       status: true,
       paidAt: true,
       currency: true,
+      stripeCheckoutSessionId: true,
+      destination: {
+        select: {
+          id: true,
+          source: true,
+          sourceEventId: true,
+          stripeCheckoutSessionId: true,
+          name: true,
+          line1: true,
+          city: true,
+          postalCode: true,
+          country: true,
+          capturedAt: true,
+        },
+      },
       items: {
         select: {
           id: true,
@@ -179,6 +195,24 @@ export async function ensureProcurementIntentsForPaidOrder(
   });
   if (!order || order.status !== "paid" || !order.paidAt) {
     throw new Error("PROCUREMENT_REQUIRES_VERIFIED_PAID_ORDER");
+  }
+
+  const destination = order.destination;
+  if (
+    !destination ||
+    destination.source !== ORDER_DESTINATION_SOURCE ||
+    !/^evt_[A-Za-z0-9_]+$/.test(destination.sourceEventId) ||
+    !order.stripeCheckoutSessionId ||
+    destination.stripeCheckoutSessionId !== order.stripeCheckoutSessionId ||
+    !nonEmptyString(destination.name) ||
+    !nonEmptyString(destination.line1) ||
+    !nonEmptyString(destination.city) ||
+    !nonEmptyString(destination.postalCode) ||
+    !/^[A-Z]{2}$/.test(destination.country) ||
+    !(destination.capturedAt instanceof Date) ||
+    !Number.isFinite(destination.capturedAt.getTime())
+  ) {
+    throw new Error("PROCUREMENT_REQUIRES_VERIFIED_ORDER_DESTINATION");
   }
 
   let readyCount = 0;
@@ -216,8 +250,8 @@ export async function ensureProcurementIntentsForPaidOrder(
 
     const eventType =
       seed.status === PROCUREMENT_READY_STATUS
-        ? "PAYMENT_VERIFIED_PROCUREMENT_INTENT_CREATED"
-        : "PAYMENT_VERIFIED_PROCUREMENT_INTENT_BLOCKED";
+        ? "PAYMENT_AND_DESTINATION_VERIFIED_PROCUREMENT_INTENT_CREATED"
+        : "PAYMENT_AND_DESTINATION_VERIFIED_PROCUREMENT_INTENT_BLOCKED";
     await tx.procurementEvent.upsert({
       where: { eventKey: `procurement-created:${item.id}` },
       create: {
@@ -228,6 +262,8 @@ export async function ensureProcurementIntentsForPaidOrder(
         detail: JSON.stringify({
           orderId: order.id,
           orderItemId: item.id,
+          destinationId: destination.id,
+          destinationCountry: destination.country,
           status: seed.status,
           blockedReason: seed.blockedReason,
           executionMode: seed.executionMode,
