@@ -8,8 +8,15 @@ import { computeRankScore } from "./ranking";
 import { parseJson } from "./utils";
 import { normalizeProductImage } from "./product-image";
 import { parseQuantityFromTitle } from "./quantity";
-import { evaluateCommerceGate } from "./commerce-gate";
+import { evaluateCertificationCommerceGate, evaluateCommerceGate } from "./commerce-gate";
 import { recommendCommercialPrice } from "./commercialization";
+import {
+  CERTIFICATION_CATALOG_PRODUCT_IDS,
+  certificationCatalogScopeKey,
+  isCertificationCatalogMode,
+  isCertificationCatalogProduct,
+  isCertificationTransactionMode,
+} from "./certification-catalog";
 import {
   AMAZON_METADATA_MAX_AGE_MS,
   AMAZON_PRICE_MAX_AGE_MS,
@@ -131,6 +138,8 @@ const PRIVATE_SPECIFICATION_KEYS = new Set([
   "supplierOfferV1",
   "commerceV1",
   "internalCertification",
+  "certificationCatalog",
+  "certificationRole",
   "productEngine",
   "sourceType",
   "needsEnrichment",
@@ -152,8 +161,6 @@ export function productClaimIntegrity(input: {
     };
   }
 
-  // Non-Amazon retailer claims are not implicitly trustworthy. A claim must
-  // carry an explicit provenance source and a recent verification timestamp.
   return {
     priceVerified: Boolean(
       input.priceSource?.trim()
@@ -166,7 +173,6 @@ export function productClaimIntegrity(input: {
   };
 }
 
-// Backward-compatible export for existing Amazon-specific tests/importers.
 export const amazonClaimIntegrity = productClaimIntegrity;
 
 function publicSpecifications(raw: string) {
@@ -184,24 +190,21 @@ function publicSpecifications(raw: string) {
 }
 
 function directCommerceDecision(p: ProductWithCategory) {
-  if (process.env.COMMERCE_ENABLED !== "true") return { allowed: false } as const;
-  return evaluateCommerceGate({
+  const certificationTransaction = isCertificationTransactionMode() && isCertificationCatalogProduct(p);
+  if (!certificationTransaction && process.env.COMMERCE_ENABLED !== "true") return { allowed: false } as const;
+  const input = {
     commerceEnabled: p.commerceEnabled,
     availability: p.availability,
     sellingPriceCents: p.sellingPriceCents,
     landedCostCents: p.landedCostCents,
     priceVerifiedAt: p.priceVerifiedAt,
     specifications: p.specifications,
-  });
+  };
+  return certificationTransaction
+    ? evaluateCertificationCommerceGate(input)
+    : evaluateCommerceGate(input);
 }
 
-/**
- * Storefront-only DealForge estimate. A historical catalog price is treated
- * conservatively as the estimated acquisition basis and passed through the
- * same reserve/profit/margin pricing model used by DealForge commercialization.
- * This value is never accepted by checkout; checkout uses only the persisted,
- * server-verified sellingPriceCents after the commerce gate passes.
- */
 function dealForgeEstimatedPrice(referencePrice: number) {
   const referenceCents = Math.round(referencePrice * 100);
   if (!Number.isSafeInteger(referenceCents) || referenceCents <= 0) return 0;
@@ -278,6 +281,14 @@ export type ProductQuery = {
 };
 
 export function publicCatalogWhere(): Prisma.ProductWhereInput {
+  if (isCertificationCatalogMode()) {
+    return {
+      AND: [
+        { id: { in: [...CERTIFICATION_CATALOG_PRODUCT_IDS] } },
+        { availability: { not: "out_of_stock" } },
+      ],
+    };
+  }
   return {
     AND: [
       { availability: { not: "out_of_stock" } },
@@ -328,11 +339,12 @@ function buildOrderBy(params: ProductQuery): Prisma.ProductOrderByWithRelationIn
 export async function queryProducts(params: ProductQuery) {
   const page = Math.max(1, params.page ?? 1);
   const limit = Math.min(48, Math.max(1, params.limit ?? 24));
-  const cacheKey = `products:v12:${JSON.stringify(params)}`;
+  const scope = certificationCatalogScopeKey();
+  const cacheKey = `products:v13:${scope}:${JSON.stringify(params)}`;
   const cached = await cacheGet<{ items: ProductDTO[]; total: number; page: number; hasMore: boolean }>(cacheKey);
   if (cached) return cached;
   const where = buildWhere(params); const orderBy = buildOrderBy(params); const skip = (page - 1) * limit;
-  const countKey = `products:count:v6:${JSON.stringify({ q: params.q, category: params.category, subcategory: params.subcategory, brand: params.brand, minPrice: params.minPrice, maxPrice: params.maxPrice, minRating: params.minRating, minDiscount: params.minDiscount, featured: params.featured, flash: params.flash })}`;
+  const countKey = `products:count:v7:${scope}:${JSON.stringify({ q: params.q, category: params.category, subcategory: params.subcategory, brand: params.brand, minPrice: params.minPrice, maxPrice: params.maxPrice, minRating: params.minRating, minDiscount: params.minDiscount, featured: params.featured, flash: params.flash })}`;
   const [cachedTotal, rows] = await Promise.all([cacheGet<number>(countKey), prisma.product.findMany({ where, select: productListSelect, orderBy, skip, take: limit })]);
   let total = cachedTotal;
   if (total == null) { total = await prisma.product.count({ where }); await cacheSet(countKey, total, 120); }
@@ -347,8 +359,15 @@ function internalCertificationRecord(product: Pick<ProductWithCategory, "id" | "
 }
 
 export async function getProductBySlug(slug: string) {
-  const product = await prisma.product.findUnique({ where: { slug }, select: productListSelect });
-  return product && !internalCertificationRecord(product) ? toProductDTO(product) : null;
+  const product = await prisma.product.findFirst({
+    where: { AND: [publicCatalogWhere(), { slug }] },
+    select: productListSelect,
+  });
+  if (!product) return null;
+  if (isCertificationCatalogMode()) {
+    return isCertificationCatalogProduct(product) ? toProductDTO(product) : null;
+  }
+  return !internalCertificationRecord(product) ? toProductDTO(product) : null;
 }
 
 export async function getSimilarProducts(product: ProductDTO, limit = 8) {
@@ -372,8 +391,10 @@ export async function getRelatedProducts(product: ProductDTO, limit = 8) {
 }
 
 export async function getCategories() {
-  const cached = await cacheGet<Awaited<ReturnType<typeof fetchCategories>>>("categories:public:v2");
-  if (cached) return cached; const data = await fetchCategories(); await cacheSet("categories:public:v2", data, 60); return data;
+  const scope = certificationCatalogScopeKey();
+  const cacheKey = `categories:public:v3:${scope}`;
+  const cached = await cacheGet<Awaited<ReturnType<typeof fetchCategories>>>(cacheKey);
+  if (cached) return cached; const data = await fetchCategories(); await cacheSet(cacheKey, data, 60); return data;
 }
 async function fetchCategories() {
   return prisma.category.findMany({
@@ -383,7 +404,8 @@ async function fetchCategories() {
 }
 export async function getTopBrands(limit = 200) {
   const boundedLimit = Math.min(200, Math.max(1, limit));
-  const cacheKey = `brands:public:v2:${boundedLimit}`; const cached = await cacheGet<string[]>(cacheKey); if (cached) return cached;
+  const scope = certificationCatalogScopeKey();
+  const cacheKey = `brands:public:v3:${scope}:${boundedLimit}`; const cached = await cacheGet<string[]>(cacheKey); if (cached) return cached;
   const grouped = await prisma.product.groupBy({ where: publicCatalogWhere(), by: ["brand"], _count: { brand: true }, orderBy: { _count: { brand: "desc" } }, take: boundedLimit });
   const brands = grouped.map((g) => g.brand).filter(Boolean).sort((a, b) => a.localeCompare(b)); await cacheSet(cacheKey, brands, 300); return brands;
 }

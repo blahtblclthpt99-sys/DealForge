@@ -121,19 +121,24 @@ test("profit and margin floors block unprofitable sales", () => {
   assert.match(result.reasons.join(","), /contribution_margin_below_floor/);
 });
 
-test("checkout route is wired to the fail-closed Phase 3 commercial gate", async () => {
+test("checkout route is wired to fail-closed commercial gates", async () => {
   const route = await readFile("src/app/api/checkout/route.ts", "utf8");
   assert.match(route, /evaluateCommerceGate/);
+  assert.match(route, /evaluateCertificationCommerceGate/);
   assert.match(route, /PRODUCT_COMMERCE_GATE_FAILED/);
 });
 
-test("checkout cannot reuse terminal orders and certification bypass is bound to the exact test product", async () => {
+test("checkout cannot reuse terminal orders and certification bypass is explicitly allowlisted", async () => {
   const route = await readFile("src/app/api/checkout/route.ts", "utf8");
   assert.match(route, /TERMINAL_CHECKOUT_STATUSES/);
   assert.match(route, /"refunded"/);
   assert.match(route, /"partially_refunded"/);
-  assert.match(route, /certificationAttempt &&/);
+  assert.match(route, /legacyCertificationAttempt/);
+  assert.match(route, /catalogCertificationAttempt/);
+  assert.match(route, /isCertificationCatalogId/);
+  assert.match(route, /isCertificationCatalogProduct/);
   assert.match(route, /CERTIFICATION_PRODUCT_ID/);
+  assert.match(route, /CERTIFICATION_PRODUCT_NOT_AUTHORIZED/);
 });
 
 test("migrated Product provenance fields are required by runtime safety paths", async () => {

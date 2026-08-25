@@ -36,6 +36,7 @@
     "catalog:refresh": "tsx scripts/attach-product-images.ts && npm run db:seed",
     "catalog:clothing": "tsx scripts/expand-clothing.ts",
     "catalog:refresh-prices": "tsx scripts/refresh-prices.ts",
+    "certification:install-catalog": "tsx scripts/install-certification-catalog.ts",
     "ebay:enable": "tsx scripts/enable-ebay.ts",
     "worker": "tsx src/workers/index.ts",
     "website:package": "powershell -ExecutionPolicy Bypass -File scripts/package-website.ps1",

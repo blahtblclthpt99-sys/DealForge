@@ -11,7 +11,7 @@ export const AUTOMATIC_LOSS_RESERVE_VERSION = "trailing-30d-certified-loss-v1";
 export const LOSS_RESERVE_WINDOW_DAYS = 30;
 export const LOSS_RESERVE_REFRESH_MS = 60 * 60 * 1000;
 export const LOSS_RESERVE_STALE_MAX_MS = 24 * 60 * 60 * 1000;
-export const LOSS_RESERVE_PRIOR_EXPOSURE_CENTS = 2_500_000; // $25,000 equivalent evidence prior.
+export const LOSS_RESERVE_PRIOR_EXPOSURE_CENTS = 2_500_000;
 export const LOSS_RESERVE_MAX_WINDOW_ORDERS = 1_000;
 
 type RefundFinancialDbRow = {
@@ -65,11 +65,6 @@ function safeBps(value: number, field: string) {
   return parsed;
 }
 
-/**
- * Shrinks the observed 30-day loss rate toward the current conservative baseline
- * until the window contains enough certified customer receipts to be credible.
- * This prevents one small early loss from immediately driving the reserve to 2%.
- */
 export function calculateSmoothedLossReserveBps(input: {
   baselineBps: number;
   certifiedNetReceiptsCents: number;
@@ -152,17 +147,9 @@ async function calculateTrailingSnapshot(
       taxCents: true,
       totalCents: true,
       currency: true,
-      payments: {
-        select: { status: true, amountCents: true, currency: true, meta: true },
-      },
+      payments: { select: { status: true, amountCents: true, currency: true, meta: true } },
       refunds: {
-        select: {
-          id: true,
-          idempotencyKey: true,
-          status: true,
-          amountCents: true,
-          currency: true,
-        },
+        select: { id: true, idempotencyKey: true, status: true, amountCents: true, currency: true },
       },
       items: {
         select: {
@@ -185,9 +172,7 @@ async function calculateTrailingSnapshot(
     },
   });
 
-  if (orders.length > LOSS_RESERVE_MAX_WINDOW_ORDERS) {
-    throw new Error("LOSS_RESERVE_WINDOW_ORDER_LIMIT_EXCEEDED");
-  }
+  if (orders.length > LOSS_RESERVE_MAX_WINDOW_ORDERS) throw new Error("LOSS_RESERVE_WINDOW_ORDER_LIMIT_EXCEEDED");
 
   const refundIds = orders.flatMap((order) => order.refunds.map((refund) => refund.id));
   const refundFinancialRows = refundIds.length
@@ -247,7 +232,6 @@ async function calculateTrailingSnapshot(
       incompleteOrderCount += 1;
       continue;
     }
-
     certifiedOrderCount += 1;
     certifiedNetReceiptsCents += profit.receipts.netCustomerReceiptsCents;
     if (contribution < 0) {
@@ -256,17 +240,11 @@ async function calculateTrailingSnapshot(
     }
   }
 
-  if (
-    !Number.isSafeInteger(certifiedNetReceiptsCents) ||
-    !Number.isSafeInteger(realizedLossCents)
-  ) throw new Error("LOSS_RESERVE_AGGREGATE_INVALID");
+  if (!Number.isSafeInteger(certifiedNetReceiptsCents) || !Number.isSafeInteger(realizedLossCents)) {
+    throw new Error("LOSS_RESERVE_AGGREGATE_INVALID");
+  }
 
-  const smoothed = calculateSmoothedLossReserveBps({
-    baselineBps,
-    certifiedNetReceiptsCents,
-    realizedLossCents,
-  });
-
+  const smoothed = calculateSmoothedLossReserveBps({ baselineBps, certifiedNetReceiptsCents, realizedLossCents });
   return {
     version: AUTOMATIC_LOSS_RESERVE_VERSION,
     currency,
@@ -307,15 +285,8 @@ export async function resolveOperationalCartPricingPolicy(
     const snapshot = await calculateTrailingSnapshot(currency, baseline.lossReserveBps, nowMs);
     await prisma.cacheEntry.upsert({
       where: { key: cacheKey(currency) },
-      create: {
-        key: cacheKey(currency),
-        value: JSON.stringify(snapshot),
-        expiresAt: new Date(nowMs + LOSS_RESERVE_REFRESH_MS),
-      },
-      update: {
-        value: JSON.stringify(snapshot),
-        expiresAt: new Date(nowMs + LOSS_RESERVE_REFRESH_MS),
-      },
+      create: { key: cacheKey(currency), value: JSON.stringify(snapshot), expiresAt: new Date(nowMs + LOSS_RESERVE_REFRESH_MS) },
+      update: { value: JSON.stringify(snapshot), expiresAt: new Date(nowMs + LOSS_RESERVE_REFRESH_MS) },
     });
     return {
       policy: { ...baseline, lossReserveBps: snapshot.lossReserveBps },

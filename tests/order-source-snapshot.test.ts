@@ -86,8 +86,9 @@ test("order schemas and additive production migration persist the supplier snaps
 test("checkout persists exact source economics and revalidates them before Stripe", async () => {
   const route = await readFile("src/app/api/checkout/route.ts", "utf8");
   assert.match(route, /buildOrderSupplierSnapshot/);
-  assert.match(route, /supplierSnapshotByProductId/);
-  assert.match(route, /supplierSnapshot,/);
+  assert.match(route, /supplierSnapshotByProductId\.set\(product\.id, serializeOrderSupplierSnapshot\(snapshot\)\)/);
+  assert.match(route, /const supplierSnapshot = supplierSnapshotByProductId\.get\(product\.id\)/);
+  assert.match(route, /supplierSnapshot \}\)\) \},/);
   assert.match(route, /item\.supplierSnapshot === live\.supplierSnapshot/);
   assert.match(route, /ORDER_SOURCE_CHANGED_RESTART_CHECKOUT/);
 
@@ -99,4 +100,5 @@ test("checkout persists exact source economics and revalidates them before Strip
   const revalidationBlock = route.slice(revalidate, stripe);
   assert.match(revalidationBlock, /checkPersistedOfferBinding/);
   assert.match(revalidationBlock, /buildOrderSupplierSnapshot/);
+  assert.match(revalidationBlock, /serializeOrderSupplierSnapshot\(refreshedSnapshot\) !== item\.supplierSnapshot/);
 });

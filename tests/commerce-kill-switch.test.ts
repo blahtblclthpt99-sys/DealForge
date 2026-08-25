@@ -21,9 +21,20 @@ test("operational lock blocks runtime commerce without becoming a destructive mo
   assert.match(monitor, /if \(safetyReasons\.length === 0\) continue/);
 });
 
-test("private Stripe certification bypass remains isolated in checkout", async () => {
+test("Stripe certification bypass remains test-mode-only and explicitly scoped", async () => {
   const checkout = await readFile("src/app/api/checkout/route.ts", "utf8");
-  assert.match(checkout, /certificationBypass = certificationOnly && stripeTestMode\(\)/);
+  const catalog = await readFile("src/lib/certification-catalog.ts", "utf8");
+
+  assert.match(checkout, /certificationBypass = certificationOnly && isStripeTestMode\(\)/);
   assert.match(checkout, /if \(!commerceEnabled\(\) && !certificationBypass\)/);
-  assert.match(checkout, /if \(certificationOnly && isInternalCertificationProduct\(product\.specifications\) && stripeTestMode\(\)\) continue/);
+  assert.match(checkout, /catalogCertificationOnly/);
+  assert.match(checkout, /legacyCertificationOnly/);
+  assert.match(checkout, /PRODUCT_NOT_IN_CERTIFICATION_CATALOG/);
+  assert.match(checkout, /CERTIFICATION_PRODUCT_NOT_AUTHORIZED/);
+  assert.match(checkout, /if \(certificationOnly && isStripeTestMode\(\)\) continue/);
+
+  assert.match(catalog, /CERTIFICATION_CATALOG_PRODUCT_IDS/);
+  assert.match(catalog, /isCertificationCatalogProduct/);
+  assert.match(catalog, /isLegacyStripeCertificationProduct/);
+  assert.match(catalog, /startsWith\("sk_test_"\)/);
 });

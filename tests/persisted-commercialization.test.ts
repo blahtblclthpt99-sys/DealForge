@@ -23,8 +23,8 @@ test("supplier persistence keys are deterministic and identity-scoped", () => {
 test("supplier authorization only advances on a strictly newer verification", async () => {
   const source = await readFile("src/lib/supplier-commercialization.ts", "utf8");
   assert.match(source, /sourceVerifiedAt: \{ lt: sourceVerifiedAt \}/);
-  assert.match(source, /data: \{\s*sourceVerifiedAt,\s*verificationSource: "owner_manual",\s*active: true,\s*resaleAllowed: true,/);
-  assert.match(source, /Existing authorization\/revocation state is deliberately preserved/);
+  assert.match(source, /data: \{ sourceVerifiedAt, verificationSource: "owner_manual", active: true, resaleAllowed: true \}/);
+  assert.match(source, /update: \{ name: supplierName, websiteUrl: websiteUrl \?\? undefined \}/);
   assert.doesNotMatch(source, /update: \{\s*name: supplierName,\s*websiteUrl: websiteUrl \?\? undefined,\s*active: true/);
 });
 
