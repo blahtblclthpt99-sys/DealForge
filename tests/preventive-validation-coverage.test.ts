@@ -7,6 +7,9 @@ test("maps canonical commerce and inventory failures to deterministic validators
   const entries = preventiveValidationCoverage();
   const byReason = new Map(entries.map((entry) => [entry.reason, entry]));
   assert.equal(byReason.get("source_verification_stale")?.status, "preflight");
+  assert.equal(byReason.get("supplier_source_provenance_missing_or_invalid")?.status, "preflight");
+  assert.equal(byReason.get("persisted_source_provenance_missing_or_invalid")?.status, "preflight");
+  assert.equal(byReason.get("persisted_source_provenance_drift")?.status, "preflight");
   assert.equal(byReason.get("supplier_cost_verification_stale")?.status, "preflight");
   assert.equal(byReason.get("product_price_verification_drift")?.status, "preflight");
   assert.equal(byReason.get("contribution_profit_below_floor")?.status, "preflight");
@@ -28,11 +31,13 @@ test("coverage summary reflects no remaining canonical runtime-only validator ga
   assert.ok(summary.unmapped >= 1);
 });
 
-test("coverage registry documents persisted supplier cost authority and inventory binding", () => {
+test("coverage registry documents persisted supplier cost, source provenance, and inventory binding", () => {
   const entries = preventiveValidationCoverage();
   const byReason = new Map(entries.map((entry) => [entry.reason, entry]));
   assert.match(byReason.get("supplier_cost_verification_stale")?.note ?? "", /supplierOfferV1\.priceVerifiedAt/);
   assert.match(byReason.get("product_price_verification_drift")?.note ?? "", /exactly match/);
+  assert.match(byReason.get("supplier_source_provenance_missing_or_invalid")?.validator ?? "", /evaluateSupplierSourceProvenance/);
+  assert.match(byReason.get("persisted_source_provenance_drift")?.source ?? "", /persisted-offer-binding/);
   assert.match(byReason.get("inventory_observation_stale")?.source ?? "", /inventory-evidence-binding/);
   assert.match(byReason.get("observed_supplier_price_drift")?.validator ?? "", /evaluateInventoryEvidenceBinding/);
 });
