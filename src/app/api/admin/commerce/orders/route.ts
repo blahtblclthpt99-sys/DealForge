@@ -36,7 +36,11 @@ export async function GET() {
   }
 
   const orders = await prisma.order.findMany({
-    where: { status: { in: ["paid", "partially_refunded", "refunded"] } },
+    where: {
+      status: {
+        in: ["paid", "partially_refunded", "refunded", "payment_disputed", "payment_dispute_lost"],
+      },
+    },
     orderBy: { createdAt: "desc" },
     take: 100,
     select: {
@@ -122,6 +126,7 @@ export async function GET() {
 
   const operations = orders.map((order) => {
     const operational = analyzeOrderOperations({
+      orderStatus: order.status,
       totalCents: order.totalCents,
       refunds: order.refunds,
       items: order.items.map((item) => ({
@@ -187,6 +192,9 @@ export async function GET() {
       else if (order.highestSeverity === "warning") acc.warningOrders += 1;
       else acc.cleanOrders += 1;
 
+      if (order.status === "payment_disputed") acc.activeDisputeOrders += 1;
+      if (order.status === "payment_dispute_lost") acc.lostDisputeOrders += 1;
+
       acc.grossCustomerReceiptsCents += order.profit.receipts.grossCustomerReceiptsCents;
       acc.succeededRefundCents += order.profit.receipts.succeededRefundCents;
       acc.pendingRefundCents += order.profit.receipts.pendingRefundCents;
@@ -222,6 +230,8 @@ export async function GET() {
       criticalOrders: 0,
       warningOrders: 0,
       cleanOrders: 0,
+      activeDisputeOrders: 0,
+      lostDisputeOrders: 0,
       reconciledOrders: 0,
       certifiedContributionOrderCount: 0,
       incompleteContributionOrderCount: 0,
@@ -258,8 +268,9 @@ export async function GET() {
           "known tax liability",
           "no pending or failed refunds",
           "closed valid recovery cases",
+          "no active, lost, or malformed payment disputes",
         ],
-        note: "Refund principal reduces customer receipts once; only verified Stripe refund-side fees increase payment-processing cost.",
+        note: "Refund principal reduces customer receipts once; unresolved or lost Stripe disputes prevent profit certification until dispute settlement is authoritatively reconciled.",
       },
       summary,
       orders: operations,
