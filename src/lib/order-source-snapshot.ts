@@ -27,7 +27,7 @@ export type OrderSupplierSnapshotV1 = {
   priceVerifiedAt: string;
   inventoryConfidenceBps: number;
   availability: string;
-  inventoryEvidence: OrderInventoryEvidenceV1 | null;
+  inventoryEvidence?: OrderInventoryEvidenceV1;
   currency: string;
   costBreakdown: {
     itemCostCents: number;
@@ -81,17 +81,11 @@ function parseInventoryEvidence(value: unknown, persistedOfferId: string): Order
   const provenanceHash = boundedString(evidence.provenanceHash, 128);
   const sourceHealth = boundedString(evidence.sourceHealth, 80);
   if (
-    evidence.version !== 1 ||
-    supplierOfferId !== persistedOfferId ||
-    !idempotencyKey ||
-    !availability ||
-    (quantity === null && evidence.quantity !== null) ||
-    inventoryConfidenceBps === null || inventoryConfidenceBps > 10_000 ||
-    (observedPriceCents === null && evidence.observedPriceCents !== null) ||
-    !observedAt || !expiresAt || Date.parse(expiresAt) <= Date.parse(observedAt) ||
-    !verificationMethod ||
-    !provenanceHash || !/^[a-f0-9]{64}$/i.test(provenanceHash) ||
-    !sourceHealth
+    evidence.version !== 1 || supplierOfferId !== persistedOfferId || !idempotencyKey || !availability ||
+    (quantity === null && evidence.quantity !== null) || inventoryConfidenceBps === null || inventoryConfidenceBps > 10_000 ||
+    (observedPriceCents === null && evidence.observedPriceCents !== null) || !observedAt || !expiresAt ||
+    Date.parse(expiresAt) <= Date.parse(observedAt) || !verificationMethod || !provenanceHash ||
+    !/^[a-f0-9]{64}$/i.test(provenanceHash) || !sourceHealth
   ) return null;
   return {
     version: 1,
@@ -109,10 +103,7 @@ function parseInventoryEvidence(value: unknown, persistedOfferId: string): Order
   };
 }
 
-export function buildOrderSupplierSnapshot(
-  specifications: string,
-  currency: string,
-): OrderSupplierSnapshotV1 | null {
+export function buildOrderSupplierSnapshot(specifications: string, currency: string): OrderSupplierSnapshotV1 | null {
   try {
     const root = JSON.parse(specifications) as Record<string, unknown>;
     const rawOffer = root.supplierOfferV1;
@@ -143,11 +134,10 @@ export function buildOrderSupplierSnapshot(
 
     if (
       !persistedSupplierId || !persistedOfferId || !persistedOfferKey || !supplierName || !sourceClass ||
-      !sourceVerifiedAt || !priceVerifiedAt || (offer.sourceUrl !== null && !sourceUrl) ||
-      offer.resaleAllowed !== true || inventoryConfidenceBps === null || inventoryConfidenceBps > 10_000 ||
-      !availability || !/^[a-z]{3}$/.test(normalizedCurrency) || itemCostCents === null ||
-      shippingCents === null || taxCents === null || supplierFeeCents === null || handlingCents === null ||
-      landedCostCents === null
+      !sourceVerifiedAt || !priceVerifiedAt || (offer.sourceUrl !== null && !sourceUrl) || offer.resaleAllowed !== true ||
+      inventoryConfidenceBps === null || inventoryConfidenceBps > 10_000 || !availability || !/^[a-z]{3}$/.test(normalizedCurrency) ||
+      itemCostCents === null || shippingCents === null || taxCents === null || supplierFeeCents === null ||
+      handlingCents === null || landedCostCents === null
     ) return null;
 
     const inventoryEvidence = parseInventoryEvidence(offer.inventoryEvidenceV1, persistedOfferId);
@@ -172,7 +162,7 @@ export function buildOrderSupplierSnapshot(
       priceVerifiedAt,
       inventoryConfidenceBps,
       availability,
-      inventoryEvidence,
+      ...(inventoryEvidence ? { inventoryEvidence } : {}),
       currency: normalizedCurrency,
       costBreakdown: { itemCostCents, shippingCents, taxCents, supplierFeeCents, handlingCents, landedCostCents },
     };
