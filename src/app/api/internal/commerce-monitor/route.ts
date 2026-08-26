@@ -1,6 +1,7 @@
 import { timingSafeEqual } from "node:crypto";
 import { NextResponse } from "next/server";
 import { pauseUnsafeCommerceProducts } from "@/lib/commerce-monitor";
+import { sweepInventoryFreshness } from "@/lib/inventory-operations";
 import { resolveMaintenanceToken } from "@/lib/maintenance-token";
 
 export const runtime = "nodejs";
@@ -29,9 +30,10 @@ export async function POST(request: Request) {
   }
 
   try {
-    const result = await pauseUnsafeCommerceProducts("cloudflare-cron");
+    const commerce = await pauseUnsafeCommerceProducts("cloudflare-cron");
+    const inventory = await sweepInventoryFreshness("cloudflare-cron", 250);
     return NextResponse.json(
-      { ok: true, ...result },
+      { ok: true, commerce, inventory },
       { headers: { "Cache-Control": "no-store" } },
     );
   } catch (error) {
