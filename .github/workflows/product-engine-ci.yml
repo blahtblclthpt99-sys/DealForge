@@ -101,7 +101,7 @@ jobs:
               RAISE EXCEPTION 'Audited legacy shape is missing the already-present nonce table';
             END IF;
           END $$;
-SQL
+          SQL
 
       - name: Selectively baseline only migrations already materialized in audited production shape
         shell: bash
@@ -140,7 +140,7 @@ SQL
               RAISE EXCEPTION 'Selective production migration reconciliation did not reach current schema';
             END IF;
           END $$;
-SQL
+          SQL
 
       - name: Prepare isolated application test database
         env:
