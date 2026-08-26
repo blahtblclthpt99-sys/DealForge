@@ -32,6 +32,11 @@ export type CommerceGateInput = {
   availability: string;
   sellingPriceCents: number | null;
   landedCostCents: number | null;
+  /**
+   * Product-level provenance mirror. Supplier-cost freshness is authoritative
+   * only from supplierOfferV1.priceVerifiedAt; when this mirror is present it
+   * must match exactly or the gate fails closed on provenance drift.
+   */
   priceVerifiedAt?: Date | null;
   specifications: string;
 };
@@ -194,13 +199,29 @@ export function evaluateCommerceGate(
     reasons.push("source_verification_stale");
   }
 
-  const columnPriceVerifiedAt = input.priceVerifiedAt?.getTime() ?? null;
+  // The persisted supplier-offer timestamp is the sole authority for supplier
+  // cost freshness. Product.priceVerifiedAt is only a provenance mirror and
+  // may never make stale/missing supplier evidence appear fresh.
   const persistedPriceVerifiedAt = parseTimestamp(policy.supplierPriceVerifiedAt);
-  const priceVerifiedAt = columnPriceVerifiedAt ?? persistedPriceVerifiedAt;
-  if (priceVerifiedAt === null || !Number.isFinite(priceVerifiedAt) || priceVerifiedAt > nowMs + 5 * 60_000) {
+  if (
+    persistedPriceVerifiedAt === null ||
+    !Number.isFinite(persistedPriceVerifiedAt) ||
+    persistedPriceVerifiedAt > nowMs + 5 * 60_000
+  ) {
     reasons.push("supplier_cost_verification_invalid");
-  } else if (nowMs - priceVerifiedAt > policy.maxPriceAgeMinutes * 60_000) {
+  } else if (nowMs - persistedPriceVerifiedAt > policy.maxPriceAgeMinutes * 60_000) {
     reasons.push("supplier_cost_verification_stale");
+  }
+
+  if (input.priceVerifiedAt) {
+    const productPriceVerifiedAt = input.priceVerifiedAt.getTime();
+    if (
+      !Number.isFinite(productPriceVerifiedAt) ||
+      persistedPriceVerifiedAt === null ||
+      productPriceVerifiedAt !== persistedPriceVerifiedAt
+    ) {
+      reasons.push("product_price_verification_drift");
+    }
   }
 
   if (policy.inventoryConfidenceBps < policy.minInventoryConfidenceBps) {

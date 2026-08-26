@@ -88,6 +88,29 @@ test("commercial gate fails closed when persisted supplier price timestamp is mi
   assert.match(result.reasons.join(","), /supplier_cost_verification_invalid/);
 });
 
+test("fresh product timestamp cannot mask stale persisted supplier cost evidence", () => {
+  const root = JSON.parse(specifications()) as Record<string, unknown>;
+  const offer = root.supplierOfferV1 as Record<string, unknown>;
+  offer.priceVerifiedAt = "2026-08-24T10:00:00Z";
+  const result = evaluateCommerceGate({
+    ...baseInput(),
+    priceVerifiedAt: new Date("2026-08-24T20:00:00Z"),
+    specifications: JSON.stringify(root),
+  }, NOW);
+  assert.equal(result.allowed, false);
+  assert.match(result.reasons.join(","), /supplier_cost_verification_stale/);
+  assert.match(result.reasons.join(","), /product_price_verification_drift/);
+});
+
+test("product price provenance mirror must match persisted supplier cost timestamp", () => {
+  const result = evaluateCommerceGate({
+    ...baseInput(),
+    priceVerifiedAt: new Date("2026-08-24T19:45:00Z"),
+  }, NOW);
+  assert.equal(result.allowed, false);
+  assert.match(result.reasons.join(","), /product_price_verification_drift/);
+});
+
 test("commercial gate fails closed when policy is absent", () => {
   const result = evaluateCommerceGate({ ...baseInput(), specifications: "{}" }, NOW);
   assert.equal(result.allowed, false);
@@ -104,8 +127,15 @@ test("affiliate-only or unverified resale sources cannot enter direct commerce",
   assert.match(notAllowed.reasons.join(","), /resale_not_verified/);
 });
 
-test("stale supplier cost and weak inventory confidence block checkout", () => {
-  const stale = evaluateCommerceGate({ ...baseInput(), priceVerifiedAt: new Date("2026-08-24T10:00:00Z") }, NOW);
+test("stale persisted supplier cost and weak inventory confidence block checkout", () => {
+  const root = JSON.parse(specifications()) as Record<string, unknown>;
+  const offer = root.supplierOfferV1 as Record<string, unknown>;
+  offer.priceVerifiedAt = "2026-08-24T10:00:00Z";
+  const stale = evaluateCommerceGate({
+    ...baseInput(),
+    priceVerifiedAt: new Date("2026-08-24T10:00:00Z"),
+    specifications: JSON.stringify(root),
+  }, NOW);
   assert.equal(stale.allowed, false);
   assert.match(stale.reasons.join(","), /supplier_cost_verification_stale/);
 
