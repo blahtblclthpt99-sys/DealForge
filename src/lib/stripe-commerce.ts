@@ -23,6 +23,17 @@ export type StripeCheckoutSession = {
   payment_method_types?: string[];
   client_reference_id?: string | null;
   metadata?: Record<string, string>;
+  amount_subtotal?: number | null;
+  amount_total?: number | null;
+  automatic_tax?: {
+    enabled?: boolean;
+    status?: string | null;
+  };
+  total_details?: {
+    amount_discount?: number;
+    amount_shipping?: number | null;
+    amount_tax?: number;
+  } | null;
 };
 
 export type StripeBalanceTransaction = {
@@ -254,6 +265,7 @@ export async function createStripeCheckoutSession(input: {
   successUrl: string;
   cancelUrl: string;
   cardOnly?: boolean;
+  automaticTax?: boolean;
 }) {
   const body = new URLSearchParams();
   body.set("mode", "payment");
@@ -275,6 +287,19 @@ export async function createStripeCheckoutSession(input: {
   body.set("metadata[order_number]", input.orderNumber);
   body.set("payment_intent_data[metadata][order_id]", input.orderId);
   body.set("payment_intent_data[metadata][order_number]", input.orderNumber);
+
+  // Automatic tax is opt-in and remains disabled for the deterministic card-only
+  // certification path. The signed mode marker lets the webhook distinguish a
+  // deliberate no-tax session from an automatic-tax session without trusting
+  // browser state.
+  const automaticTax =
+    input.automaticTax ??
+    (!input.cardOnly &&
+      resolveStripeRuntimeValue("STRIPE_AUTOMATIC_TAX_ENABLED") === "true");
+  const taxMode = automaticTax ? "automatic" : "disabled";
+  body.set("automatic_tax[enabled]", automaticTax ? "true" : "false");
+  body.set("metadata[dealforge_tax_mode]", taxMode);
+  body.set("payment_intent_data[metadata][dealforge_tax_mode]", taxMode);
 
   // The Checkout Session is the shipping-address authority. Browser checkout
   // payloads do not contain an address, and an empty country scope fails closed.
