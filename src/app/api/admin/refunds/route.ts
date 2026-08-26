@@ -229,6 +229,12 @@ export async function POST(request: Request) {
     });
 
     if (!stripeRefund.id) throw new Error("STRIPE_REFUND_ID_MISSING");
+    if (stripeRefund.amount !== parsed.data.amountCents) {
+      throw new Error("STRIPE_REFUND_AMOUNT_MISMATCH");
+    }
+    if (stripeRefund.currency.toLowerCase() !== order.currency.toLowerCase()) {
+      throw new Error("STRIPE_REFUND_CURRENCY_MISMATCH");
+    }
     const refund = await prisma.refund.create({
       data: {
         orderId: order.id,
