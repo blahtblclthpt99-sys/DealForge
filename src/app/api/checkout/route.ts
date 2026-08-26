@@ -34,7 +34,14 @@ import { resolvePublicAppOrigin } from "@/lib/url-security";
 export const runtime = "nodejs";
 
 const CERTIFICATION_PRODUCT_ID = LEGACY_STRIPE_CERTIFICATION_PRODUCT_ID;
-const TERMINAL_CHECKOUT_STATUSES = new Set(["paid", "refunded", "partially_refunded", "canceled"]);
+const TERMINAL_CHECKOUT_STATUSES = new Set([
+  "paid",
+  "refunded",
+  "partially_refunded",
+  "payment_disputed",
+  "payment_dispute_lost",
+  "canceled",
+]);
 const MAX_CHECKOUT_BODY_BYTES = 32 * 1024;
 
 const CheckoutSchema = z.object({
