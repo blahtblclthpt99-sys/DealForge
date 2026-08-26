@@ -125,13 +125,16 @@ export function readSupplierSourceProvenanceFromMetadata(metadata: string) {
 }
 
 export function bindSupplierSourceProvenanceToMetadata(metadata: string, provenance: SupplierSourceProvenanceV1) {
-  let root: Record<string, unknown> = {};
+  let parsed: unknown;
   try {
-    const parsed = JSON.parse(metadata) as unknown;
-    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) root = parsed as Record<string, unknown>;
+    parsed = JSON.parse(metadata);
   } catch {
-    root = {};
+    throw new Error("SUPPLIER_METADATA_INVALID");
   }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("SUPPLIER_METADATA_INVALID");
+  }
+  const root = parsed as Record<string, unknown>;
   root.sourceVerificationV1 = provenance;
   return JSON.stringify(root);
 }
