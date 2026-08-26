@@ -20,6 +20,10 @@ import {
   procurementSourceConfirmationMatches,
 } from "@/lib/procurement-source-lock";
 import { evaluateProcurementApprovalLease } from "@/lib/procurement-approval-lease";
+import {
+  deriveManualPurchaseExecutionEvidence,
+  manualPurchaseExecutionEventKey,
+} from "@/lib/procurement-purchase-evidence";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -322,6 +326,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       }
 
       let transactionEconomics: ReturnType<typeof validateManualPurchaseEconomics> | null = economics;
+      let executionEvidence: ReturnType<typeof deriveManualPurchaseExecutionEvidence> = null;
       if (parsed.data.action === "RECORD_MANUAL_PURCHASE") {
         const recheckedEconomics = validateManualPurchaseEconomics({
           actualTotalCostCents: parsed.data.actualTotalCostCents,
@@ -332,6 +337,16 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
         });
         if (!recheckedEconomics.ok) throw new Error("PROCUREMENT_PURCHASE_ECONOMICS_CHANGED");
         transactionEconomics = recheckedEconomics;
+        executionEvidence = deriveManualPurchaseExecutionEvidence({
+          sourceLock: currentSourceLock,
+          supplierOrderReference: parsed.data.supplierOrderReference,
+          quantity: current.quantity,
+          currency: current.currency,
+          actualTotalCostCents: parsed.data.actualTotalCostCents,
+          expectedTotalCostCents: current.expectedTotalCostCents,
+          lineRevenueCents: current.orderItem.lineTotalCents,
+        });
+        if (!executionEvidence) throw new Error("PROCUREMENT_PURCHASE_EVIDENCE_INVALID");
       }
 
       const now = new Date(transactionNowMs);
@@ -369,7 +384,10 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       const nonce = randomUUID();
       await tx.procurementEvent.create({
         data: {
-          eventKey: procurementEventKey(current.id, parsed.data.action, nonce),
+          eventKey:
+            parsed.data.action === "RECORD_MANUAL_PURCHASE" && executionEvidence
+              ? manualPurchaseExecutionEventKey(executionEvidence)
+              : procurementEventKey(current.id, parsed.data.action, nonce),
           procurementIntentId: current.id,
           type: parsed.data.action,
           actor: `owner:${auth.admin.id}`,
@@ -391,7 +409,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
                   approvalLease,
                 }
               : {}),
-            ...(parsed.data.action === "RECORD_MANUAL_PURCHASE" && currentSourceLock
+            ...(parsed.data.action === "RECORD_MANUAL_PURCHASE" && currentSourceLock && executionEvidence
               ? {
                   manualPurchaseConfirmed: true,
                   sourceLockConfirmed: true,
@@ -409,6 +427,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
                   projectedGrossMarginCents: transactionEconomics?.ok ? transactionEconomics.projectedGrossMarginCents : null,
                   acceptCostVariance: parsed.data.acceptCostVariance === true,
                   acceptLossRisk: parsed.data.acceptLossRisk === true,
+                  executionEvidence,
                 }
               : {}),
           }),
@@ -420,6 +439,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
         status: txTransition.next,
         performedAt: now.toISOString(),
         approvalLease,
+        ...(executionEvidence ? { executionEvidence } : {}),
         ...(currentSourceLock ? { lockedSource: currentSourceLock } : {}),
       };
     });
@@ -460,8 +480,13 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
             ? "PROCUREMENT_LIVE_SOURCE_REVALIDATION_FAILED"
             : message === "PROCUREMENT_SOURCE_LOCK_CHANGED"
               ? "PROCUREMENT_LOCKED_SOURCE_MISMATCH"
-              : "PROCUREMENT_STATE_CONFLICT";
+              : message === "PROCUREMENT_PURCHASE_EVIDENCE_INVALID"
+                ? "PROCUREMENT_PURCHASE_EVIDENCE_INVALID"
+                : "PROCUREMENT_STATE_CONFLICT";
       return noStore(NextResponse.json({ error: responseError }, { status: 409 }));
+    }
+    if (error && typeof error === "object" && "code" in error && error.code === "P2002") {
+      return noStore(NextResponse.json({ error: "PROCUREMENT_SUPPLIER_ORDER_REFERENCE_CONFLICT" }, { status: 409 }));
     }
     console.error("procurement.owner_action_failed", {
       procurementIntentId: intent.id,
