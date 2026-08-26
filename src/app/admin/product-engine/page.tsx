@@ -4,6 +4,7 @@ import { prisma } from "@/lib/db";
 import { productEngineDashboard } from "@/lib/product-engine";
 import { ProductEngineControls } from "@/components/product-engine-controls";
 import { CommercialPriceRecommender } from "@/components/commercial-price-recommender";
+import { CommerceQuarantineQueue } from "@/components/commerce-quarantine-queue";
 
 export const dynamic = "force-dynamic";
 
@@ -88,6 +89,8 @@ export default async function ProductEnginePage() {
           </article>
         ))}
       </section>
+
+      <CommerceQuarantineQueue />
 
       <CommercialPriceRecommender />
 
