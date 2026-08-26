@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 export const TRACKING_CARRIERS = ["ups", "usps", "fedex", "dhl", "other"] as const;
 export type TrackingCarrier = (typeof TRACKING_CARRIERS)[number];
 
@@ -11,15 +13,62 @@ export type ShipmentRecordedV1 = {
   shippedAt: string;
 };
 
+export type ShipmentRecordedV2 = {
+  version: 2;
+  packageId: string;
+  carrierCode: TrackingCarrier;
+  carrierName: string;
+  trackingNumber: string;
+  trackingUrl: string | null;
+  quantity: number;
+  shippedAt: string;
+};
+
+export type ShipmentRecorded = ShipmentRecordedV1 | ShipmentRecordedV2;
+
 export type DeliveryRecordedV1 = {
   version: 1;
   deliveredAt: string;
 };
 
+export type DeliveryRecordedV2 = {
+  version: 2;
+  packageId: string;
+  deliveredAt: string;
+};
+
+export type DeliveryRecorded = DeliveryRecordedV1 | DeliveryRecordedV2;
+
 type ProcurementJournalEvent = {
   type: string;
   detail: string;
   createdAt?: Date | string;
+};
+
+export type PublicShipmentPackage = {
+  packageId: string;
+  status: "shipped" | "delivered";
+  carrierName: string;
+  trackingNumber: string;
+  trackingUrl: string | null;
+  quantity: number;
+  shippedAt: string;
+  deliveredAt: string | null;
+};
+
+export type ShipmentJournalSummary = {
+  ok: true;
+  packages: PublicShipmentPackage[];
+  shippedQuantity: number;
+  deliveredQuantity: number;
+} | {
+  ok: false;
+  reason:
+    | "SHIPMENT_JOURNAL_INVALID"
+    | "SHIPMENT_PACKAGE_DUPLICATE"
+    | "DELIVERY_PACKAGE_UNKNOWN"
+    | "DELIVERY_PACKAGE_DUPLICATE"
+    | "DELIVERY_TIMESTAMP_INVALID";
 };
 
 const CARRIER_NAMES: Record<Exclude<TrackingCarrier, "other">, string> = {
@@ -78,23 +127,29 @@ export function buildOfficialTrackingUrl(
   }
 }
 
-export function createShipmentRecord(input: {
+export function shipmentPackageId(carrierCode: TrackingCarrier, trackingNumber: string) {
+  const digest = createHash("sha256")
+    .update(`${carrierCode}:${trackingNumber}`)
+    .digest("hex")
+    .slice(0, 24);
+  return `pkg_${digest}`;
+}
+
+function normalizedShipmentFields(input: {
   carrierCode: unknown;
   carrierName?: unknown;
   trackingNumber: unknown;
   quantity: unknown;
   shippedAt?: unknown;
-}): ShipmentRecordedV1 | null {
+}) {
   const carrier = resolveTrackingCarrier(input.carrierCode, input.carrierName);
   const trackingNumber = normalizeTrackingNumber(input.trackingNumber);
   if (!carrier || !trackingNumber || !Number.isSafeInteger(input.quantity) || (input.quantity as number) <= 0) {
     return null;
   }
-  const shippedAt =
-    input.shippedAt === undefined ? new Date().toISOString() : safeTimestamp(input.shippedAt);
+  const shippedAt = input.shippedAt === undefined ? new Date().toISOString() : safeTimestamp(input.shippedAt);
   if (!shippedAt) return null;
   return {
-    version: 1,
     carrierCode: carrier.carrierCode,
     carrierName: carrier.carrierName,
     trackingNumber,
@@ -104,54 +159,146 @@ export function createShipmentRecord(input: {
   };
 }
 
-export function parseShipmentEventDetail(raw: string): ShipmentRecordedV1 | null {
+export function createShipmentRecord(input: {
+  carrierCode: unknown;
+  carrierName?: unknown;
+  trackingNumber: unknown;
+  quantity: unknown;
+  shippedAt?: unknown;
+}): ShipmentRecordedV2 | null {
+  const normalized = normalizedShipmentFields(input);
+  if (!normalized) return null;
+  return {
+    version: 2,
+    packageId: shipmentPackageId(normalized.carrierCode, normalized.trackingNumber),
+    ...normalized,
+  };
+}
+
+export function parseShipmentEventDetail(raw: string): ShipmentRecorded | null {
   try {
     const parsed = JSON.parse(raw) as Record<string, unknown>;
     const shipment = parsed.shipment;
     if (!shipment || typeof shipment !== "object" || Array.isArray(shipment)) return null;
     const value = shipment as Record<string, unknown>;
-    const record = createShipmentRecord({
+    const normalized = normalizedShipmentFields({
       carrierCode: value.carrierCode,
       carrierName: value.carrierName,
       trackingNumber: value.trackingNumber,
       quantity: value.quantity,
       shippedAt: value.shippedAt,
     });
-    if (!record || value.version !== 1 || value.trackingUrl !== record.trackingUrl) return null;
-    return record;
+    if (!normalized || value.trackingUrl !== normalized.trackingUrl) return null;
+    if (value.version === 1) {
+      return { version: 1, ...normalized };
+    }
+    const packageId = shipmentPackageId(normalized.carrierCode, normalized.trackingNumber);
+    if (value.version !== 2 || value.packageId !== packageId) return null;
+    return { version: 2, packageId, ...normalized };
   } catch {
     return null;
   }
 }
 
-export function parseDeliveryEventDetail(raw: string): DeliveryRecordedV1 | null {
+export function createDeliveryRecord(input: {
+  packageId: unknown;
+  deliveredAt?: unknown;
+}): DeliveryRecordedV2 | null {
+  if (typeof input.packageId !== "string" || !/^pkg_[a-f0-9]{24}$/.test(input.packageId)) return null;
+  const deliveredAt = input.deliveredAt === undefined ? new Date().toISOString() : safeTimestamp(input.deliveredAt);
+  if (!deliveredAt) return null;
+  return { version: 2, packageId: input.packageId, deliveredAt };
+}
+
+export function parseDeliveryEventDetail(raw: string): DeliveryRecorded | null {
   try {
     const parsed = JSON.parse(raw) as Record<string, unknown>;
     const delivery = parsed.delivery;
     if (!delivery || typeof delivery !== "object" || Array.isArray(delivery)) return null;
     const value = delivery as Record<string, unknown>;
     const deliveredAt = safeTimestamp(value.deliveredAt);
-    if (value.version !== 1 || !deliveredAt) return null;
-    return { version: 1, deliveredAt };
+    if (!deliveredAt) return null;
+    if (value.version === 1) return { version: 1, deliveredAt };
+    if (value.version !== 2 || typeof value.packageId !== "string" || !/^pkg_[a-f0-9]{24}$/.test(value.packageId)) {
+      return null;
+    }
+    return { version: 2, packageId: value.packageId, deliveredAt };
   } catch {
     return null;
   }
 }
 
+function packageIdForShipment(shipment: ShipmentRecorded) {
+  return shipment.version === 2
+    ? shipment.packageId
+    : shipmentPackageId(shipment.carrierCode, shipment.trackingNumber);
+}
+
+export function summarizeShipmentJournal(events: ProcurementJournalEvent[]): ShipmentJournalSummary {
+  const packages = new Map<string, PublicShipmentPackage>();
+  let shippedQuantity = 0;
+  let deliveredQuantity = 0;
+
+  for (const event of events) {
+    if (event.type === "RECORD_SHIPMENT") {
+      const shipment = parseShipmentEventDetail(event.detail);
+      if (!shipment) return { ok: false, reason: "SHIPMENT_JOURNAL_INVALID" };
+      const packageId = packageIdForShipment(shipment);
+      if (packages.has(packageId)) return { ok: false, reason: "SHIPMENT_PACKAGE_DUPLICATE" };
+      packages.set(packageId, {
+        packageId,
+        status: "shipped",
+        carrierName: shipment.carrierName,
+        trackingNumber: shipment.trackingNumber,
+        trackingUrl: shipment.trackingUrl,
+        quantity: shipment.quantity,
+        shippedAt: shipment.shippedAt,
+        deliveredAt: null,
+      });
+      shippedQuantity += shipment.quantity;
+      continue;
+    }
+
+    if (event.type !== "MARK_DELIVERED") continue;
+    const delivery = parseDeliveryEventDetail(event.detail);
+    if (!delivery) return { ok: false, reason: "SHIPMENT_JOURNAL_INVALID" };
+
+    let packageId: string | null = delivery.version === 2 ? delivery.packageId : null;
+    if (!packageId) {
+      const undelivered = [...packages.values()].filter((entry) => !entry.deliveredAt);
+      if (undelivered.length !== 1) return { ok: false, reason: "DELIVERY_PACKAGE_UNKNOWN" };
+      packageId = undelivered[0].packageId;
+    }
+
+    const shipment = packages.get(packageId);
+    if (!shipment) return { ok: false, reason: "DELIVERY_PACKAGE_UNKNOWN" };
+    if (shipment.deliveredAt) return { ok: false, reason: "DELIVERY_PACKAGE_DUPLICATE" };
+    if (Date.parse(delivery.deliveredAt) < Date.parse(shipment.shippedAt)) {
+      return { ok: false, reason: "DELIVERY_TIMESTAMP_INVALID" };
+    }
+    shipment.status = "delivered";
+    shipment.deliveredAt = delivery.deliveredAt;
+    deliveredQuantity += shipment.quantity;
+  }
+
+  return { ok: true, packages: [...packages.values()], shippedQuantity, deliveredQuantity };
+}
+
+export function projectPublicShipments(events: ProcurementJournalEvent[]) {
+  const summary = summarizeShipmentJournal(events);
+  return summary.ok ? summary.packages : [];
+}
+
 export function projectPublicShipment(events: ProcurementJournalEvent[]) {
-  const shipmentEvent = events.find((event) => event.type === "RECORD_SHIPMENT");
-  if (!shipmentEvent) return null;
-  const shipment = parseShipmentEventDetail(shipmentEvent.detail);
+  const shipment = projectPublicShipments(events)[0];
   if (!shipment) return null;
-  const deliveryEvent = events.find((event) => event.type === "MARK_DELIVERED");
-  const delivery = deliveryEvent ? parseDeliveryEventDetail(deliveryEvent.detail) : null;
   return {
-    status: delivery ? ("delivered" as const) : ("shipped" as const),
+    status: shipment.status,
     carrierName: shipment.carrierName,
     trackingNumber: shipment.trackingNumber,
     trackingUrl: shipment.trackingUrl,
     shippedAt: shipment.shippedAt,
-    deliveredAt: delivery?.deliveredAt ?? null,
+    deliveredAt: shipment.deliveredAt,
   };
 }
 
