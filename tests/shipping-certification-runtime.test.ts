@@ -34,3 +34,17 @@ test("hosted shipping certification requires Stripe Checkout to actually complet
   assert.match(source, /if \(isStripeCheckoutHost\(finalUrl\.hostname\)\)/);
   assert.match(source, /Hosted shipping checkout completed/);
 });
+
+test("hosted shipping certification opts out of optional Link enrollment", async () => {
+  const source = await readFile("scripts/complete-hosted-shipping-checkout.ts", "utf8");
+  assert.match(source, /save my information for faster checkout/i);
+  assert.match(source, /optOutOfOptionalLinkEnrollment\(page\)/);
+  assert.match(source, /\.uncheck\(\{ force: true \}\)/);
+  assert.match(source, /SHIPPING_CERT_LINK_OPT_OUT_FAILED/);
+  assert.match(source, /dismissAddressAutocomplete\(page\)/);
+  assert.match(source, /page\.keyboard\.press\("Escape"\)/);
+
+  const optOut = source.indexOf("await optOutOfOptionalLinkEnrollment(page)");
+  const submit = source.indexOf("await submit.click()");
+  assert.ok(optOut >= 0 && submit > optOut, "Link opt-out must occur before payment submission");
+});
