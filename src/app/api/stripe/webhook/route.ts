@@ -9,11 +9,13 @@ import {
   isExactWebhookReplay,
   payloadSha256,
   retrieveStripeBalanceTransaction,
+  stripeAutomaticTaxEnabled,
   stripeWebhookSecret,
   verifyStripeSignature,
   type StripeBalanceTransaction,
   type StripeEvent,
 } from "@/lib/stripe-commerce";
+import { resolveStripeCheckoutTaxAuthority } from "@/lib/stripe-tax-authority";
 import {
   mergeStripeFeeMeta,
   STRIPE_FEE_WEBHOOK_SOURCE,
@@ -119,6 +121,29 @@ async function resolveOrderId(
     return order?.id || null;
   }
   return null;
+}
+
+async function reconcileCheckoutTaxAuthority(
+  tx: Prisma.TransactionClient,
+  orderId: string,
+  object: Record<string, unknown>,
+) {
+  const order = await tx.order.findUnique({ where: { id: orderId } });
+  if (!order) throw new Error("WEBHOOK_ORDER_NOT_FOUND");
+
+  const totals = resolveStripeCheckoutTaxAuthority(order, object);
+  if (!totals.automaticTaxEnabled) return order;
+
+  // A verified Checkout event is the only path allowed to replace provisional
+  // pre-tax totals. Merchandise subtotal and configured shipping remain locked;
+  // only Stripe's completed automatic-tax amount and resulting grand total move.
+  return tx.order.update({
+    where: { id: orderId },
+    data: {
+      taxCents: totals.taxCents,
+      totalCents: totals.totalCents,
+    },
+  });
 }
 
 async function assertPaymentMatchesOrder(
@@ -417,6 +442,7 @@ async function processStripeEvent(
         sourceEventId: event.id,
         object,
       });
+      await reconcileCheckoutTaxAuthority(tx, orderId, object);
       if (asString(object.payment_status) === "paid") {
         await markPaymentSucceeded(tx, orderId, object);
         await ensureProcurementIntentsForPaidOrder(tx, orderId);
@@ -429,15 +455,18 @@ async function processStripeEvent(
         sourceEventId: event.id,
         object,
       });
+      await reconcileCheckoutTaxAuthority(tx, orderId, object);
       await markPaymentSucceeded(tx, orderId, object);
       await ensureProcurementIntentsForPaidOrder(tx, orderId);
       break;
     case "payment_intent.succeeded":
       if (!orderId) throw new Error("WEBHOOK_ORDER_ID_MISSING");
-      // PaymentIntent events are authoritative for payment state, but they do
-      // not carry the Checkout fulfillment destination. Never release
-      // procurement from this event alone.
-      await markPaymentSucceeded(tx, orderId, object);
+      // When automatic tax is enabled, PaymentIntent does not carry the tax
+      // breakdown needed to update the order safely. Checkout Session remains
+      // authoritative and will mark payment paid after tax reconciliation.
+      if (!stripeAutomaticTaxEnabled()) {
+        await markPaymentSucceeded(tx, orderId, object);
+      }
       break;
     case "checkout.session.async_payment_failed":
     case "payment_intent.payment_failed":
