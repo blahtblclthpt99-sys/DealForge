@@ -1,4 +1,9 @@
 import { inventoryEvidenceBindingRequired } from "./inventory-evidence-binding";
+import {
+  parseSupplierSourceProvenance,
+  supplierSourceProvenanceBindingRequired,
+  type SupplierSourceProvenanceV1,
+} from "./supplier-source-provenance";
 
 const MAX_INVENTORY_FUTURE_SKEW_MS = 5 * 60_000;
 
@@ -26,6 +31,7 @@ export type OrderSupplierSnapshotV1 = {
   sourceClass: string;
   sourceUrl: string | null;
   sourceVerifiedAt: string;
+  sourceVerification?: SupplierSourceProvenanceV1;
   priceVerifiedAt: string;
   inventoryConfidenceBps: number;
   availability: string;
@@ -66,6 +72,15 @@ function safePositiveInteger(value: unknown) {
 function nullableNonNegativeInteger(value: unknown) {
   if (value === null) return null;
   return safeNonNegativeInteger(value);
+}
+
+function sourceOrigin(value: string | null) {
+  if (!value) return null;
+  try {
+    return new URL(value).origin;
+  } catch {
+    return null;
+  }
 }
 
 function parseInventoryEvidence(value: unknown, persistedOfferId: string): OrderInventoryEvidenceV1 | null {
@@ -146,6 +161,17 @@ export function buildOrderSupplierSnapshot(
       handlingCents === null || landedCostCents === null
     ) return null;
 
+    const sourceVerification = parseSupplierSourceProvenance(offer.sourceVerificationV1);
+    const sourceVerificationRequired = supplierSourceProvenanceBindingRequired();
+    if (sourceVerificationRequired && !sourceVerification) return null;
+    if (sourceVerification) {
+      if (sourceVerification.supplierName !== supplierName) return null;
+      if (sourceVerification.sourceClass !== sourceClass) return null;
+      if (sourceVerification.verifiedAt !== sourceVerifiedAt) return null;
+      if (sourceVerification.resaleAllowed !== true) return null;
+      if (sourceOrigin(sourceUrl) !== sourceVerification.sourceUrl) return null;
+    }
+
     const inventoryEvidence = parseInventoryEvidence(offer.inventoryEvidenceV1, persistedOfferId);
     const evidenceRequired = inventoryEvidenceBindingRequired();
     if (evidenceRequired && !inventoryEvidence) return null;
@@ -171,6 +197,7 @@ export function buildOrderSupplierSnapshot(
       sourceClass,
       sourceUrl,
       sourceVerifiedAt,
+      ...(sourceVerification ? { sourceVerification } : {}),
       priceVerifiedAt,
       inventoryConfidenceBps,
       availability,
