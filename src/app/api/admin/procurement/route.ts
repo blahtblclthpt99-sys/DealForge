@@ -1,7 +1,11 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { listRecoveryCases } from "@/lib/recovery-reconciliation";
-import { projectPublicShipment } from "@/lib/shipment-tracking";
+import {
+  projectPublicShipment,
+  projectPublicShipments,
+  summarizeShipmentJournal,
+} from "@/lib/shipment-tracking";
 import { requireProcurementOwner } from "@/lib/procurement-authorization";
 import { deriveProcurementSourceLock } from "@/lib/procurement-source-lock";
 import { evaluateProcurementApprovalLease } from "@/lib/procurement-approval-lease";
@@ -115,9 +119,11 @@ export async function GET() {
     const grossMarginCents = actual !== null ? revenue - actual : null;
     const grossMarginBps =
       grossMarginCents !== null && revenue > 0 ? Math.round((grossMarginCents / revenue) * 10_000) : null;
-    const shipmentEvents = safeIntent.events.filter(
-      (event) => event.type === "RECORD_SHIPMENT" || event.type === "MARK_DELIVERED",
-    );
+    const shipmentEvents = safeIntent.events
+      .filter((event) => event.type === "RECORD_SHIPMENT" || event.type === "MARK_DELIVERED")
+      .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+    const shipmentJournal = summarizeShipmentJournal(shipmentEvents);
+    const shipments = projectPublicShipments(shipmentEvents, safeIntent.quantity);
     const recoveryCases = listRecoveryCases({
       events: safeIntent.events,
       refunds: safeIntent.order.refunds,
@@ -138,7 +144,24 @@ export async function GET() {
       ...safeIntent,
       lockedSource,
       approvalLease,
-      shipment: projectPublicShipment(shipmentEvents),
+      shipment: projectPublicShipment(shipmentEvents, safeIntent.quantity),
+      shipments,
+      fulfillment: shipmentJournal.ok && shipmentJournal.shippedQuantity <= safeIntent.quantity
+        ? {
+            journalValid: true,
+            orderedQuantity: safeIntent.quantity,
+            shippedQuantity: shipmentJournal.shippedQuantity,
+            deliveredQuantity: shipmentJournal.deliveredQuantity,
+            remainingToShip: Math.max(0, safeIntent.quantity - shipmentJournal.shippedQuantity),
+          }
+        : {
+            journalValid: false,
+            orderedQuantity: safeIntent.quantity,
+            shippedQuantity: null,
+            deliveredQuantity: null,
+            remainingToShip: null,
+            reason: shipmentJournal.ok ? "SHIPMENT_QUANTITY_EXCEEDS_ORDER" : shipmentJournal.reason,
+          },
       recovery: {
         caseCount: recoveryCases.length,
         openCaseCount: recoveryCases.filter((item) => item.ok && !item.closed).length,
