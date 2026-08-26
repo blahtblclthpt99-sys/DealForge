@@ -141,7 +141,10 @@ export function ProcurementIntegrityConsole() {
   }, []);
 
   useEffect(() => {
-    void loadIntents();
+    const timer = window.setTimeout(() => {
+      void loadIntents();
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [loadIntents]);
 
   async function resolveBlocker() {
