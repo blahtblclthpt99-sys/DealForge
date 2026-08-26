@@ -163,7 +163,8 @@ export function buildOrderSupplierSnapshot(
 
     const sourceVerification = parseSupplierSourceProvenance(offer.sourceVerificationV1);
     const sourceVerificationRequired = supplierSourceProvenanceBindingRequired();
-    if (sourceVerificationRequired && !sourceVerification) return null;
+    const sourceVerificationPresent = offer.sourceVerificationV1 !== undefined;
+    if ((sourceVerificationRequired || sourceVerificationPresent) && !sourceVerification) return null;
     if (sourceVerification) {
       if (sourceVerification.supplierName !== supplierName) return null;
       if (sourceVerification.sourceClass !== sourceClass) return null;
