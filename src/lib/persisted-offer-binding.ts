@@ -11,6 +11,13 @@ import {
   evaluateSupplierOffer,
   type SupplierOfferCandidate,
 } from "./supplier-offers";
+import {
+  evaluateSupplierSourceProvenance,
+  parseSupplierSourceProvenance,
+  sameSupplierSourceProvenance,
+  supplierSourceProvenanceBindingRequired,
+  type SupplierSourceProvenanceV1,
+} from "./supplier-source-provenance";
 
 export type PersistedOfferBindingInput = {
   productId: string;
@@ -43,8 +50,11 @@ export type LivePersistedOffer = {
     name: string;
     active: boolean;
     sourceClass: string;
+    websiteUrl: string | null;
     resaleAllowed: boolean;
     sourceVerifiedAt: Date | null;
+    verificationSource: string | null;
+    metadata: string;
   };
 };
 
@@ -61,6 +71,7 @@ type PersistedOfferSnapshot = {
   sourceClass: string;
   sourceUrl: string | null;
   sourceVerifiedAt: string;
+  sourceVerification: SupplierSourceProvenanceV1 | null;
   priceVerifiedAt: string;
   inventoryConfidenceBps: number;
   availability: string;
@@ -94,6 +105,7 @@ function parseSnapshot(specifications: string): PersistedOfferSnapshot | null {
     const persistedOfferKey = safeString(offer.persistedOfferKey, 256);
     const sourceClass = safeString(offer.sourceClass, 80);
     const sourceVerifiedAt = safeTimestamp(offer.sourceVerifiedAt);
+    const sourceVerification = parseSupplierSourceProvenance(offer.sourceVerificationV1);
     const priceVerifiedAt = safeTimestamp(offer.priceVerifiedAt);
     const sourceUrl = offer.sourceUrl === null ? null : safeString(offer.sourceUrl, 2000);
     const inventoryConfidenceBps = offer.inventoryConfidenceBps;
@@ -126,6 +138,7 @@ function parseSnapshot(specifications: string): PersistedOfferSnapshot | null {
       sourceClass,
       sourceUrl,
       sourceVerifiedAt,
+      sourceVerification,
       priceVerifiedAt,
       inventoryConfidenceBps: inventoryConfidenceBps as number,
       availability,
@@ -187,6 +200,29 @@ export function evaluatePersistedOfferBinding(
   }
   if (liveOffer.currency.trim().toLowerCase() !== input.currency.trim().toLowerCase()) {
     reasons.push("persisted_currency_drift");
+  }
+
+  const sourceProvenanceRequired = supplierSourceProvenanceBindingRequired();
+  if (sourceProvenanceRequired && !snapshot.sourceVerification) {
+    reasons.push("persisted_source_provenance_missing_or_invalid");
+  }
+  const liveSourceProvenance = evaluateSupplierSourceProvenance(liveOffer.supplier.metadata, {
+    supplierName: liveOffer.supplier.name,
+    sourceClass: liveOffer.supplier.sourceClass,
+    sourceUrl: liveOffer.supplier.websiteUrl,
+    resaleAllowed: liveOffer.supplier.resaleAllowed,
+    sourceVerifiedAt: liveOffer.supplier.sourceVerifiedAt,
+    verificationSource: liveOffer.supplier.verificationSource,
+  });
+  if (sourceProvenanceRequired || snapshot.sourceVerification) {
+    reasons.push(...liveSourceProvenance.reasons.map((reason) => `live_${reason}`));
+  }
+  if (
+    snapshot.sourceVerification &&
+    liveSourceProvenance.provenance &&
+    !sameSupplierSourceProvenance(snapshot.sourceVerification, liveSourceProvenance.provenance)
+  ) {
+    reasons.push("persisted_source_provenance_drift");
   }
 
   const candidate: SupplierOfferCandidate = {
@@ -265,8 +301,9 @@ export function evaluatePersistedOfferBinding(
 /**
  * Read-only checkout safety gate. The Product snapshot remains useful for audit,
  * but customer money cannot rely on it alone: the exact normalized supplier
- * offer referenced by the snapshot must still exist, retain a current inventory
- * observation with non-conflicting observed price evidence, and remain eligible now.
+ * offer referenced by the snapshot must still exist, retain the same supplier
+ * verification provenance, retain a current inventory observation with non-conflicting
+ * observed price evidence, and remain eligible now.
  */
 export async function checkPersistedOfferBinding(
   input: PersistedOfferBindingInput,
@@ -301,8 +338,11 @@ export async function checkPersistedOfferBinding(
           name: true,
           active: true,
           sourceClass: true,
+          websiteUrl: true,
           resaleAllowed: true,
           sourceVerifiedAt: true,
+          verificationSource: true,
+          metadata: true,
         },
       },
     },
