@@ -1,5 +1,7 @@
 import { inventoryEvidenceBindingRequired } from "./inventory-evidence-binding";
 
+const MAX_INVENTORY_FUTURE_SKEW_MS = 5 * 60_000;
+
 export type OrderInventoryEvidenceV1 = {
   version: 1;
   supplierOfferId: string;
@@ -103,7 +105,11 @@ function parseInventoryEvidence(value: unknown, persistedOfferId: string): Order
   };
 }
 
-export function buildOrderSupplierSnapshot(specifications: string, currency: string): OrderSupplierSnapshotV1 | null {
+export function buildOrderSupplierSnapshot(
+  specifications: string,
+  currency: string,
+  nowMs = Date.now(),
+): OrderSupplierSnapshotV1 | null {
   try {
     const root = JSON.parse(specifications) as Record<string, unknown>;
     const rawOffer = root.supplierOfferV1;
@@ -141,10 +147,16 @@ export function buildOrderSupplierSnapshot(specifications: string, currency: str
     ) return null;
 
     const inventoryEvidence = parseInventoryEvidence(offer.inventoryEvidenceV1, persistedOfferId);
-    if (inventoryEvidenceBindingRequired() && !inventoryEvidence) return null;
+    const evidenceRequired = inventoryEvidenceBindingRequired();
+    if (evidenceRequired && !inventoryEvidence) return null;
     if (inventoryEvidence) {
       if (inventoryEvidence.availability !== availability || inventoryEvidence.inventoryConfidenceBps !== inventoryConfidenceBps) return null;
       if (inventoryEvidence.observedPriceCents !== null && inventoryEvidence.observedPriceCents !== itemCostCents) return null;
+      if (evidenceRequired) {
+        const observedAtMs = Date.parse(inventoryEvidence.observedAt);
+        const expiresAtMs = Date.parse(inventoryEvidence.expiresAt);
+        if (observedAtMs > nowMs + MAX_INVENTORY_FUTURE_SKEW_MS || nowMs >= expiresAtMs) return null;
+      }
     }
 
     const recomputedLandedCost = itemCostCents + shippingCents + taxCents + supplierFeeCents + handlingCents;
