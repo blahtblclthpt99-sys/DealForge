@@ -3,6 +3,7 @@ import { prisma } from "@/lib/db";
 import { listRecoveryCases } from "@/lib/recovery-reconciliation";
 import { projectPublicShipment } from "@/lib/shipment-tracking";
 import { requireProcurementOwner } from "@/lib/procurement-authorization";
+import { deriveProcurementSourceLock } from "@/lib/procurement-source-lock";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -54,6 +55,7 @@ export async function GET() {
       orderItemId: true,
       status: true,
       executionMode: true,
+      supplierSnapshot: true,
       quantity: true,
       expectedUnitCostCents: true,
       expectedTotalCostCents: true,
@@ -119,9 +121,16 @@ export async function GET() {
       actualTotalCostCents: intent.actualTotalCostCents,
       intentQuantity: intent.quantity,
     });
+    const lockedSource = deriveProcurementSourceLock(
+      intent.supplierSnapshot,
+      intent.expectedUnitCostCents,
+      intent.currency,
+    );
+    const { supplierSnapshot: _supplierSnapshot, ...safeIntent } = intent;
 
     return {
-      ...intent,
+      ...safeIntent,
+      lockedSource,
       shipment: projectPublicShipment(shipmentEvents),
       recovery: {
         caseCount: recoveryCases.length,
