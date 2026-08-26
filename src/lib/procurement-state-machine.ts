@@ -27,7 +27,7 @@ const allowedFrom: Record<ProcurementAction, readonly ProcurementStatus[]> = {
   PLACE_HOLD: ["awaiting_review", "approved_manual"],
   RESUME_REVIEW: ["hold"],
   RECORD_MANUAL_PURCHASE: ["approved_manual"],
-  RECORD_SHIPMENT: ["supplier_ordered_manual"],
+  RECORD_SHIPMENT: ["supplier_ordered_manual", "shipped"],
   MARK_DELIVERED: ["shipped"],
   CANCEL: ["awaiting_review", "approved_manual", "hold"],
 };
