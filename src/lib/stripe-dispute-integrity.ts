@@ -69,7 +69,7 @@ function isChargeId(value: unknown): value is string {
 }
 
 function isEventId(value: unknown): value is string {
-  return typeof value === "string" && /^evt_[A-Za-z0-9]+$/.test(value);
+  return typeof value === "string" && /^evt_[A-Za-z0-9_]+$/.test(value);
 }
 
 function isDisputeEventType(value: unknown): value is StripeDisputeEventType {
@@ -246,7 +246,11 @@ export function mergeStripeDisputeMeta(input: {
       return { ok: false, reason: "STRIPE_DISPUTE_TERMINAL_STATE_CONFLICT" };
     }
 
-    if (input.eventCreated < existing.eventCreated) {
+    const staleNonterminalSameSecond =
+      input.eventCreated === existing.eventCreated &&
+      existing.status !== dispute.status &&
+      !isTerminalStatus(dispute.status);
+    if (input.eventCreated < existing.eventCreated || staleNonterminalSameSecond) {
       return {
         ok: true,
         meta: input.currentMeta,
