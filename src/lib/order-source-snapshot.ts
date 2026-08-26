@@ -1,3 +1,5 @@
+import { inventoryEvidenceBindingRequired } from "./inventory-evidence-binding";
+
 export type OrderInventoryEvidenceV1 = {
   version: 1;
   supplierOfferId: string;
@@ -25,7 +27,7 @@ export type OrderSupplierSnapshotV1 = {
   priceVerifiedAt: string;
   inventoryConfidenceBps: number;
   availability: string;
-  inventoryEvidence: OrderInventoryEvidenceV1;
+  inventoryEvidence: OrderInventoryEvidenceV1 | null;
   currency: string;
   costBreakdown: {
     itemCostCents: number;
@@ -83,9 +85,9 @@ function parseInventoryEvidence(value: unknown, persistedOfferId: string): Order
     supplierOfferId !== persistedOfferId ||
     !idempotencyKey ||
     !availability ||
-    quantity === null && evidence.quantity !== null ||
+    (quantity === null && evidence.quantity !== null) ||
     inventoryConfidenceBps === null || inventoryConfidenceBps > 10_000 ||
-    observedPriceCents === null && evidence.observedPriceCents !== null ||
+    (observedPriceCents === null && evidence.observedPriceCents !== null) ||
     !observedAt || !expiresAt || Date.parse(expiresAt) <= Date.parse(observedAt) ||
     !verificationMethod ||
     !provenanceHash || !/^[a-f0-9]{64}$/i.test(provenanceHash) ||
@@ -107,11 +109,6 @@ function parseInventoryEvidence(value: unknown, persistedOfferId: string): Order
   };
 }
 
-/**
- * Produces the immutable supplier snapshot stored on an OrderItem before a
- * Stripe Checkout Session is created. The source Product metadata remains
- * mutable; paid-order sourcing must not depend on that mutable metadata later.
- */
 export function buildOrderSupplierSnapshot(
   specifications: string,
   currency: string,
@@ -145,39 +142,23 @@ export function buildOrderSupplierSnapshot(
     const landedCostCents = safePositiveInteger(costs.landedCostCents);
 
     if (
-      !persistedSupplierId ||
-      !persistedOfferId ||
-      !persistedOfferKey ||
-      !supplierName ||
-      !sourceClass ||
-      !sourceVerifiedAt ||
-      !priceVerifiedAt ||
-      (offer.sourceUrl !== null && !sourceUrl) ||
-      offer.resaleAllowed !== true ||
-      inventoryConfidenceBps === null ||
-      inventoryConfidenceBps > 10_000 ||
-      !availability ||
-      !/^[a-z]{3}$/.test(normalizedCurrency) ||
-      itemCostCents === null ||
-      shippingCents === null ||
-      taxCents === null ||
-      supplierFeeCents === null ||
-      handlingCents === null ||
+      !persistedSupplierId || !persistedOfferId || !persistedOfferKey || !supplierName || !sourceClass ||
+      !sourceVerifiedAt || !priceVerifiedAt || (offer.sourceUrl !== null && !sourceUrl) ||
+      offer.resaleAllowed !== true || inventoryConfidenceBps === null || inventoryConfidenceBps > 10_000 ||
+      !availability || !/^[a-z]{3}$/.test(normalizedCurrency) || itemCostCents === null ||
+      shippingCents === null || taxCents === null || supplierFeeCents === null || handlingCents === null ||
       landedCostCents === null
-    ) {
-      return null;
-    }
+    ) return null;
 
     const inventoryEvidence = parseInventoryEvidence(offer.inventoryEvidenceV1, persistedOfferId);
-    if (!inventoryEvidence) return null;
-    if (inventoryEvidence.availability !== availability || inventoryEvidence.inventoryConfidenceBps !== inventoryConfidenceBps) return null;
-    if (inventoryEvidence.observedPriceCents !== null && inventoryEvidence.observedPriceCents !== itemCostCents) return null;
-
-    const recomputedLandedCost =
-      itemCostCents + shippingCents + taxCents + supplierFeeCents + handlingCents;
-    if (!Number.isSafeInteger(recomputedLandedCost) || recomputedLandedCost !== landedCostCents) {
-      return null;
+    if (inventoryEvidenceBindingRequired() && !inventoryEvidence) return null;
+    if (inventoryEvidence) {
+      if (inventoryEvidence.availability !== availability || inventoryEvidence.inventoryConfidenceBps !== inventoryConfidenceBps) return null;
+      if (inventoryEvidence.observedPriceCents !== null && inventoryEvidence.observedPriceCents !== itemCostCents) return null;
     }
+
+    const recomputedLandedCost = itemCostCents + shippingCents + taxCents + supplierFeeCents + handlingCents;
+    if (!Number.isSafeInteger(recomputedLandedCost) || recomputedLandedCost !== landedCostCents) return null;
 
     return {
       version: 1,
@@ -193,14 +174,7 @@ export function buildOrderSupplierSnapshot(
       availability,
       inventoryEvidence,
       currency: normalizedCurrency,
-      costBreakdown: {
-        itemCostCents,
-        shippingCents,
-        taxCents,
-        supplierFeeCents,
-        handlingCents,
-        landedCostCents,
-      },
+      costBreakdown: { itemCostCents, shippingCents, taxCents, supplierFeeCents, handlingCents, landedCostCents },
     };
   } catch {
     return null;
