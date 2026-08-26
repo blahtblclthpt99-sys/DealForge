@@ -33,6 +33,37 @@ async function fillOptional(page: Page, selectors: string[], value: string) {
   if (locator) await locator.fill(value);
 }
 
+async function dismissAddressAutocomplete(page: Page) {
+  await page.keyboard.press("Escape").catch(() => undefined);
+  await page.waitForTimeout(150);
+}
+
+async function optOutOfOptionalLinkEnrollment(page: Page) {
+  const candidates = [
+    page.getByRole("checkbox", { name: /save my information for faster checkout/i }).first(),
+    page.getByLabel(/save my information for faster checkout/i).first(),
+  ];
+
+  for (const checkbox of candidates) {
+    if (!(await checkbox.count())) continue;
+    try {
+      if (!(await checkbox.isVisible({ timeout: 750 }))) continue;
+      if (await checkbox.isChecked()) {
+        await checkbox.uncheck({ force: true });
+        await page.waitForTimeout(250);
+      }
+      if (await checkbox.isChecked()) {
+        throw new Error("SHIPPING_CERT_LINK_OPT_OUT_FAILED");
+      }
+      return;
+    } catch (error) {
+      if (error instanceof Error && error.message === "SHIPPING_CERT_LINK_OPT_OUT_FAILED") {
+        throw error;
+      }
+    }
+  }
+}
+
 function isStripeCheckoutHost(hostname: string) {
   return hostname === "checkout.stripe.com" || hostname.endsWith(".checkout.stripe.com");
 }
@@ -58,6 +89,7 @@ async function main() {
 
     await fillRequired(page, ["#shippingName", 'input[name="shippingName"]', 'input[autocomplete="shipping name"]'], address.name, "shipping-name");
     await fillRequired(page, ["#shippingAddressLine1", 'input[name="shippingAddressLine1"]', 'input[autocomplete="shipping address-line1"]'], address.line1, "shipping-line1");
+    await dismissAddressAutocomplete(page);
     await fillRequired(page, ["#shippingLocality", 'input[name="shippingLocality"]', 'input[autocomplete="shipping address-level2"]'], address.city, "shipping-city");
     await fillRequired(page, ["#shippingPostalCode", 'input[name="shippingPostalCode"]', 'input[autocomplete="shipping postal-code"]'], address.postalCode, "shipping-postal-code");
 
@@ -75,6 +107,12 @@ async function main() {
     await fillOptional(page, ["#billingPostalCode", 'input[name="billingPostalCode"]'], address.postalCode);
     const billingState = await visible(page, ["#billingAdministrativeArea", 'select[name="billingAdministrativeArea"]']);
     if (billingState) await billingState.selectOption(address.state);
+
+    // Stripe can surface an optional Link enrollment checkbox. Certification must
+    // not depend on a real SMS-capable phone number or create a Link enrollment;
+    // the payment itself remains a normal Stripe test-card Checkout payment.
+    await optOutOfOptionalLinkEnrollment(page);
+    await dismissAddressAutocomplete(page);
 
     const submit = page.locator('button[type="submit"]').last();
     if (!(await submit.count()) || !(await submit.isVisible())) throw new Error("SHIPPING_CERT_SUBMIT_NOT_FOUND");
