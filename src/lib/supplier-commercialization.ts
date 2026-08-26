@@ -15,6 +15,14 @@ import {
 } from "./inventory-evidence-binding";
 import { resolveOperationalCartPricingPolicy } from "./loss-reserve-policy";
 import { isDirectResaleSourceClass } from "./source-policy";
+import {
+  bindSupplierSourceProvenanceToMetadata,
+  bindSupplierSourceProvenanceToSpecifications,
+  buildSupplierSourceProvenance,
+  evaluateSupplierSourceProvenance,
+  readSupplierSourceProvenanceFromMetadata,
+  sameSupplierSourceProvenance,
+} from "./supplier-source-provenance";
 import { selectPersistedSupplierOffer } from "./supplier-store";
 import type { SupplierSelectionResult } from "./supplier-offers";
 
@@ -176,6 +184,21 @@ function taxInput(input: PersistedCommercializationInput) {
   };
 }
 
+function selectionBlockedBySourceProvenance(
+  selection: SupplierSelectionResult,
+  selectedSupplierId: string,
+  reasons: string[],
+): SupplierSelectionResult {
+  return {
+    selected: null,
+    evaluated: selection.evaluated.map((entry) =>
+      entry.offer.supplierId === selectedSupplierId
+        ? { ...entry, eligible: false, reasons: [...new Set([...entry.reasons, ...reasons])] }
+        : entry,
+    ),
+  };
+}
+
 export async function persistSelectAndPrepareCommercialization(
   input: PersistedCommercializationInput,
   nowMs = Date.now(),
@@ -217,6 +240,13 @@ export async function persistSelectAndPrepareCommercialization(
   const supplierKey = supplierPersistenceKey(supplierName, input.sourceClass);
   const offerKey = supplierOfferPersistenceKey(productId, supplierKey, snapshot.sourceUrl);
   const websiteUrl = snapshot.sourceUrl ? new URL(snapshot.sourceUrl).origin : null;
+  const submittedSourceProvenance = buildSupplierSourceProvenance({
+    supplierName,
+    sourceClass: input.sourceClass,
+    sourceUrl: websiteUrl,
+    resaleAllowed: true,
+    sourceVerifiedAt: sourceVerifiedAt.toISOString(),
+  });
 
   const supplier = await prisma.supplier.upsert({
     where: { key: supplierKey },
@@ -228,16 +258,40 @@ export async function persistSelectAndPrepareCommercialization(
       active: true,
       resaleAllowed: true,
       sourceVerifiedAt,
-      verificationSource: "owner_manual",
+      verificationSource: submittedSourceProvenance.verificationMethod,
+      metadata: bindSupplierSourceProvenanceToMetadata("{}", submittedSourceProvenance),
     },
     update: { name: supplierName, websiteUrl: websiteUrl ?? undefined },
   });
   if (supplier.sourceClass !== input.sourceClass) throw new Error("SUPPLIER_KEY_CONFLICT");
 
-  await prisma.supplier.updateMany({
-    where: { id: supplier.id, OR: [{ sourceVerifiedAt: null }, { sourceVerifiedAt: { lt: sourceVerifiedAt } }] },
-    data: { sourceVerifiedAt, verificationSource: "owner_manual", active: true, resaleAllowed: true },
-  });
+  const supplierVerifiedAtMs = supplier.sourceVerifiedAt?.getTime() ?? null;
+  const submittedVerifiedAtMs = sourceVerifiedAt.getTime();
+  const existingSourceProvenance = readSupplierSourceProvenanceFromMetadata(supplier.metadata);
+  if (
+    supplierVerifiedAtMs === submittedVerifiedAtMs &&
+    existingSourceProvenance &&
+    !sameSupplierSourceProvenance(existingSourceProvenance, submittedSourceProvenance)
+  ) {
+    throw new Error("SUPPLIER_SOURCE_VERIFICATION_CONFLICT");
+  }
+
+  if (supplierVerifiedAtMs === null || supplierVerifiedAtMs <= submittedVerifiedAtMs) {
+    const nextMetadata = bindSupplierSourceProvenanceToMetadata(supplier.metadata, submittedSourceProvenance);
+    await prisma.supplier.updateMany({
+      where: {
+        id: supplier.id,
+        OR: [{ sourceVerifiedAt: null }, { sourceVerifiedAt: { lt: sourceVerifiedAt } }, { sourceVerifiedAt }],
+      },
+      data: {
+        sourceVerifiedAt,
+        verificationSource: submittedSourceProvenance.verificationMethod,
+        metadata: nextMetadata,
+        active: true,
+        resaleAllowed: true,
+      },
+    });
+  }
 
   const initialOffer = await prisma.supplierOffer.upsert({
     where: { offerKey },
@@ -297,7 +351,7 @@ export async function persistSelectAndPrepareCommercialization(
     }
   }
 
-  const selection = await selectPersistedSupplierOffer(
+  let selection = await selectPersistedSupplierOffer(
     productId,
     {
       currency,
@@ -331,6 +385,44 @@ export async function persistSelectAndPrepareCommercialization(
     selected.availability !== "in_stock"
   ) throw new Error("PERSISTED_SUPPLIER_SELECTION_INVALID");
 
+  const selectedSupplierState = await prisma.supplier.findUnique({
+    where: { id: selected.supplierId },
+    select: {
+      name: true,
+      sourceClass: true,
+      websiteUrl: true,
+      resaleAllowed: true,
+      sourceVerifiedAt: true,
+      verificationSource: true,
+      metadata: true,
+    },
+  });
+  const sourceProvenanceDecision = selectedSupplierState
+    ? evaluateSupplierSourceProvenance(selectedSupplierState.metadata, {
+        supplierName: selectedSupplierState.name,
+        sourceClass: selectedSupplierState.sourceClass,
+        sourceUrl: selectedSupplierState.websiteUrl,
+        resaleAllowed: selectedSupplierState.resaleAllowed,
+        sourceVerifiedAt: selectedSupplierState.sourceVerifiedAt,
+        verificationSource: selectedSupplierState.verificationSource,
+      })
+    : { allowed: false, reasons: ["supplier_source_provenance_missing_or_invalid"], provenance: null };
+
+  if (!sourceProvenanceDecision.allowed || !sourceProvenanceDecision.provenance) {
+    selection = selectionBlockedBySourceProvenance(selection, selected.supplierId, sourceProvenanceDecision.reasons);
+    await prisma.product.update({
+      where: { id: productId },
+      data: { commerceEnabled: false, availability: "unknown" },
+    });
+    return {
+      submittedSupplierId: supplier.id,
+      submittedOfferId: initialOffer.id,
+      submittedOfferKey: offerKey,
+      selection,
+      prepared: null,
+    };
+  }
+
   const prepared = prepareCommercialization(
     input.existingSpecifications,
     {
@@ -356,6 +448,10 @@ export async function persistSelectAndPrepareCommercialization(
   );
 
   let specifications = annotatePersistedSelection(prepared.specifications, selected);
+  specifications = bindSupplierSourceProvenanceToSpecifications(
+    specifications,
+    sourceProvenanceDecision.provenance,
+  );
   if (inventoryEvidenceBindingRequired()) {
     const inventory = await resolveCurrentInventoryEvidence(selected.id, selected.itemCostCents, nowMs);
     if (!inventory.allowed || !inventory.evidence) {
