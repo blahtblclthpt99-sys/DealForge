@@ -18,3 +18,10 @@ for (const path of [
     assert.ok(result.code.includes("main"));
   });
 }
+
+test("shipping verifier uses DealForge's adapter-aware database factory", async () => {
+  const source = await readFile("scripts/verify-shipping-certification.ts", "utf8");
+  assert.match(source, /import \{ getPrisma \} from "\.\.\/src\/lib\/db"/);
+  assert.match(source, /const prisma = getPrisma\(\)/);
+  assert.doesNotMatch(source, /new PrismaClient\(/);
+});
