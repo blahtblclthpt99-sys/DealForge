@@ -321,16 +321,17 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
         }
       }
 
-      let transactionEconomics = economics;
+      let transactionEconomics: ReturnType<typeof validateManualPurchaseEconomics> | null = economics;
       if (parsed.data.action === "RECORD_MANUAL_PURCHASE") {
-        transactionEconomics = validateManualPurchaseEconomics({
+        const recheckedEconomics = validateManualPurchaseEconomics({
           actualTotalCostCents: parsed.data.actualTotalCostCents,
           expectedTotalCostCents: current.expectedTotalCostCents,
           lineRevenueCents: current.orderItem.lineTotalCents,
           acceptCostVariance: parsed.data.acceptCostVariance === true,
           acceptLossRisk: parsed.data.acceptLossRisk === true,
         });
-        if (!transactionEconomics.ok) throw new Error("PROCUREMENT_PURCHASE_ECONOMICS_CHANGED");
+        if (!recheckedEconomics.ok) throw new Error("PROCUREMENT_PURCHASE_ECONOMICS_CHANGED");
+        transactionEconomics = recheckedEconomics;
       }
 
       const now = new Date(transactionNowMs);
