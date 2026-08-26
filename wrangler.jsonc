@@ -28,7 +28,8 @@
     "CLOUDFLARE_WORKERS": "1",
     "NEXT_PUBLIC_APP_URL": "https://www.deal-forge.sale",
     "NEXT_PUBLIC_APP_NAME": "DealForge",
-    "CHECKOUT_ALLOWED_SHIPPING_COUNTRIES": "US"
+    "CHECKOUT_ALLOWED_SHIPPING_COUNTRIES": "US",
+    "SHIPPING_ADDRESS_CAPTURE_CERTIFIED": "true"
   },
   "observability": {
     "enabled": true
