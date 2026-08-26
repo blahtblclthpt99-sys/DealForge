@@ -35,6 +35,7 @@ function timestamp(value: Date | string) {
 }
 
 export function analyzeOrderOperations(input: {
+  orderStatus?: string;
   totalCents: number;
   items: OrderLineView[];
   refunds: RefundView[];
@@ -49,6 +50,12 @@ export function analyzeOrderOperations(input: {
     .filter((refund) => refund.status === "pending")
     .reduce((sum, refund) => sum + refund.amountCents, 0);
   const retainedRevenueCents = Math.max(0, input.totalCents - succeededRefundCents);
+
+  if (input.orderStatus === "payment_disputed") {
+    exceptions.push({ code: "PAYMENT_DISPUTE_ACTIVE", severity: "critical" });
+  } else if (input.orderStatus === "payment_dispute_lost") {
+    exceptions.push({ code: "PAYMENT_DISPUTE_LOST", severity: "critical" });
+  }
 
   let expectedSupplierCostCents = 0;
   let knownActualSupplierCostCents = 0;
