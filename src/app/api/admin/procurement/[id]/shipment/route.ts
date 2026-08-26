@@ -8,9 +8,9 @@ import {
   transitionProcurement,
 } from "@/lib/procurement-state-machine";
 import { reconcileManualPurchaseProjection } from "@/lib/procurement-purchase-reconciliation";
+import { reconcileShipmentJournal } from "@/lib/shipment-journal-integrity";
 import {
   createShipmentRecord,
-  parseShipmentEventDetail,
   TRACKING_CARRIERS,
 } from "@/lib/shipment-tracking";
 import { readLimitedJson } from "@/lib/request-json";
@@ -138,6 +138,10 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       if (!purchaseReconciliation.ok) {
         throw new Error("PROCUREMENT_PURCHASE_RECONCILIATION_REQUIRED");
       }
+      if (!purchaseReconciliation.evidence?.purchaseEvidenceHash) {
+        throw new Error("PROCUREMENT_PURCHASE_RECONCILIATION_REQUIRED");
+      }
+      const purchaseEvidenceHash = purchaseReconciliation.evidence.purchaseEvidenceHash;
 
       const transition = transitionProcurement(current.status, parsed.data.action);
       if (!transition.ok) throw new Error("PROCUREMENT_TRANSITION_INVALID");
@@ -180,7 +184,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
               previousStatus: current.status,
               nextStatus: transition.next,
               shipment,
-              purchaseEvidenceHash: purchaseReconciliation.evidence?.purchaseEvidenceHash || null,
+              purchaseEvidenceHash: purchaseEvidenceHash,
               note: parsed.data.note || null,
               automaticSupplierPurchasingEnabled: false,
             }),
@@ -189,10 +193,18 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
         return { status: transition.next, shipment };
       }
 
-      const shipmentEvent = current.events.find((event) => event.type === "RECORD_SHIPMENT");
-      if (!shipmentEvent) throw new Error("DELIVERY_REQUIRES_SHIPMENT");
-      const shipment = parseShipmentEventDetail(shipmentEvent.detail);
-      if (!shipment) throw new Error("SHIPMENT_JOURNAL_INVALID");
+      const shipmentReconciliation = reconcileShipmentJournal({
+        events: current.events
+          .filter((event) => event.type === "RECORD_SHIPMENT")
+          .map((event) => ({ eventKey: event.eventKey, detail: event.detail })),
+        expectedPurchaseEvidenceHash: purchaseEvidenceHash,
+        expectedQuantity: current.quantity,
+      });
+      if (!shipmentReconciliation.ok || !shipmentReconciliation.shipment) {
+        throw new Error("SHIPMENT_JOURNAL_RECONCILIATION_REQUIRED");
+      }
+      const shipment = shipmentReconciliation.shipment;
+
       if (current.events.some((event) => event.type === "MARK_DELIVERED")) {
         throw new Error("DELIVERY_ALREADY_RECORDED");
       }
@@ -218,7 +230,8 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
             previousStatus: current.status,
             nextStatus: transition.next,
             delivery,
-            purchaseEvidenceHash: purchaseReconciliation.evidence?.purchaseEvidenceHash || null,
+            shipmentEventKey: current.events.find((event) => event.type === "RECORD_SHIPMENT")?.eventKey || null,
+            purchaseEvidenceHash: purchaseEvidenceHash,
             note: parsed.data.note || null,
             automaticSupplierPurchasingEnabled: false,
           }),
