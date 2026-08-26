@@ -1,5 +1,4 @@
 import { isBroadCatalogCommerceEnabled } from "./commerce-switch";
-import { evaluateProductTaxClassification } from "./product-tax-classification";
 import { isDirectResaleSourceClass } from "./source-policy";
 
 const RESERVE_KEYS = [
@@ -161,7 +160,6 @@ export function evaluateCommerceGate(
 ): CommerceGateDecision {
   const reasons: string[] = [];
   const policy = parsePolicy(input.specifications);
-  const taxDecision = evaluateProductTaxClassification(input.specifications, nowMs);
 
   if (
     process.env.NODE_ENV === "production" &&
@@ -174,7 +172,6 @@ export function evaluateCommerceGate(
   if (input.availability !== "in_stock") reasons.push("inventory_not_in_stock");
   if (!isSafePositiveInteger(input.sellingPriceCents)) reasons.push("selling_price_invalid");
   if (!isSafePositiveInteger(input.landedCostCents)) reasons.push("landed_cost_invalid");
-  if (!taxDecision.allowed) reasons.push(...taxDecision.reasons);
   if (!policy) {
     reasons.push("commercial_policy_missing_or_invalid");
     return {
