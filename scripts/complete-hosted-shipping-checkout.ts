@@ -33,6 +33,10 @@ async function fillOptional(page: Page, selectors: string[], value: string) {
   if (locator) await locator.fill(value);
 }
 
+function isStripeCheckoutHost(hostname: string) {
+  return hostname === "checkout.stripe.com" || hostname.endsWith(".checkout.stripe.com");
+}
+
 async function main() {
   const checkoutPath = process.env.CHECKOUT_ARTIFACT ?? "checkout.json";
   const checkout = JSON.parse(await readFile(checkoutPath, "utf8")) as {
@@ -76,21 +80,31 @@ async function main() {
     if (!(await submit.count()) || !(await submit.isVisible())) throw new Error("SHIPPING_CERT_SUBMIT_NOT_FOUND");
     await submit.click();
 
-    await page.waitForURL(url => !url.hostname.endsWith("stripe.com"), { timeout: 90_000 }).catch(() => undefined);
-    await page.waitForTimeout(3000);
+    try {
+      await page.waitForURL(url => !isStripeCheckoutHost(url.hostname), { timeout: 90_000 });
+    } catch {
+      const body = (await page.locator("body").innerText().catch(() => "")).toLowerCase();
+      if (body.includes("your card was declined") || body.includes("payment failed")) {
+        throw new Error("SHIPPING_CERT_PAYMENT_FAILED");
+      }
+      throw new Error(`SHIPPING_CERT_CHECKOUT_DID_NOT_COMPLETE:${new URL(page.url()).hostname}`);
+    }
 
-    const body = (await page.locator("body").innerText().catch(() => "")).toLowerCase();
-    if (body.includes("your card was declined") || body.includes("payment failed")) throw new Error("SHIPPING_CERT_PAYMENT_FAILED");
+    await page.waitForTimeout(3000);
+    const finalUrl = new URL(page.url());
+    if (isStripeCheckoutHost(finalUrl.hostname)) {
+      throw new Error(`SHIPPING_CERT_CHECKOUT_DID_NOT_COMPLETE:${finalUrl.hostname}`);
+    }
 
     await writeFile("shipping-checkout-completion.json", JSON.stringify({
       orderNumber: checkout.orderNumber,
       certificationMode: "stripe_test",
       completedAt: new Date().toISOString(),
-      finalHost: new URL(page.url()).hostname,
+      finalHost: finalUrl.hostname,
       expectedDestination: address,
     }, null, 2));
 
-    console.log(`Hosted shipping checkout submitted for ${checkout.orderNumber}`);
+    console.log(`Hosted shipping checkout completed for ${checkout.orderNumber}`);
   } catch (error) {
     await page.screenshot({ path: "shipping-checkout-failure.png", fullPage: true }).catch(() => undefined);
     throw error;
