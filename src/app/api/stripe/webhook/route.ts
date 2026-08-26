@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
+import {
+  assertAuthoritativeDestinationReady,
+  persistAuthoritativeCheckoutDestination,
+} from "@/lib/order-destination";
 import { ensureProcurementIntentsForPaidOrder } from "@/lib/procurement-intents";
 import {
   assertStripeEventMode,
@@ -155,6 +159,12 @@ async function markPaymentSucceeded(
   if (order.stripePaymentIntentId && order.stripePaymentIntentId !== intentId) {
     throw new Error("WEBHOOK_PAYMENT_INTENT_MISMATCH");
   }
+
+  // A physical-goods payment may become procurement-authoritative only after
+  // Stripe Checkout has supplied and persisted its signed shipping destination.
+  // PaymentIntent events can precede Checkout Session events; failing here rolls
+  // back the event claim so Stripe can retry after the destination arrives.
+  await assertAuthoritativeDestinationReady(tx, orderId);
 
   await tx.payment.upsert({
     where: { providerPaymentId: intentId },
@@ -412,12 +422,25 @@ async function processStripeEvent(
 
   switch (event.type) {
     case "checkout.session.completed":
+      if (!orderId) throw new Error("WEBHOOK_ORDER_ID_MISSING");
+      await persistAuthoritativeCheckoutDestination(tx, {
+        orderId,
+        eventId: event.id,
+        object,
+      });
       if (asString(object.payment_status) === "paid") {
-        if (!orderId) throw new Error("WEBHOOK_ORDER_ID_MISSING");
         await markPaymentSucceeded(tx, orderId, object);
       }
       break;
     case "checkout.session.async_payment_succeeded":
+      if (!orderId) throw new Error("WEBHOOK_ORDER_ID_MISSING");
+      await persistAuthoritativeCheckoutDestination(tx, {
+        orderId,
+        eventId: event.id,
+        object,
+      });
+      await markPaymentSucceeded(tx, orderId, object);
+      break;
     case "payment_intent.succeeded":
       if (!orderId) throw new Error("WEBHOOK_ORDER_ID_MISSING");
       await markPaymentSucceeded(tx, orderId, object);
