@@ -4,6 +4,7 @@ import { parseCheckoutShippingCountries } from "@/lib/checkout-shipping";
 
 const STRIPE_API = "https://api.stripe.com/v1";
 const DEFAULT_WEBHOOK_TOLERANCE_SECONDS = 300;
+const DEFAULT_PHYSICAL_GOODS_TAX_CODE = "txcd_99999999";
 
 type ProcessEnvLike = Record<string, string | undefined>;
 type CloudflareEnvLike = Record<string, unknown>;
@@ -128,14 +129,26 @@ export function stripeAutomaticTaxEnabled() {
   return resolveStripeRuntimeValue("STRIPE_AUTOMATIC_TAX_ENABLED") === "true";
 }
 
+export function stripeDefaultProductTaxCode() {
+  const configured = resolveStripeRuntimeValue("STRIPE_DEFAULT_PRODUCT_TAX_CODE");
+  const value = configured || DEFAULT_PHYSICAL_GOODS_TAX_CODE;
+  if (!/^txcd_[A-Za-z0-9]+$/.test(value)) throw new Error("STRIPE_PRODUCT_TAX_CODE_INVALID");
+  return value;
+}
+
+export function stripePriceTaxBehavior() {
+  const configured = resolveStripeRuntimeValue("STRIPE_PRICE_TAX_BEHAVIOR").toLowerCase();
+  const value = configured || "exclusive";
+  if (value !== "exclusive" && value !== "inclusive") {
+    throw new Error("STRIPE_PRICE_TAX_BEHAVIOR_INVALID");
+  }
+  return value;
+}
+
 export function expectedStripeLivemode(secretKey = resolveStripeRuntimeValue("STRIPE_SECRET_KEY")) {
   if (secretKey.startsWith("sk_live_")) return true;
   if (secretKey.startsWith("sk_test_")) return false;
 
-  // Webhook verification must not falsely report "not configured" merely
-  // because the Stripe API key is not present in the same runtime boundary.
-  // A single mode-specific webhook secret is sufficient to establish expected
-  // event mode. If both are present, fail closed rather than guessing.
   const liveWebhookSecret = resolveStripeRuntimeValue("STRIPE_WEBHOOK_SECRET_LIVE");
   const testWebhookSecret = resolveStripeRuntimeValue("STRIPE_WEBHOOK_SECRET_TEST");
   if (liveWebhookSecret && !testWebhookSecret) return true;
@@ -270,17 +283,9 @@ export async function createStripeCheckoutSession(input: {
 }) {
   const body = new URLSearchParams();
   body.set("mode", "payment");
-  // DealForge is the merchant for physical-goods transactions. Stripe Managed
-  // Payments is a separate merchant-of-record product intended for eligible
-  // digital goods and must not be implicitly enabled for DealForge orders.
   body.set("managed_payments[enabled]", "false");
-  // Tax remains runtime-gated. Setting the parameter explicitly makes a
-  // deployed certification environment deterministic while preserving the
-  // production false default until tax certification is complete.
-  body.set("automatic_tax[enabled]", stripeAutomaticTaxEnabled() ? "true" : "false");
-  // Certification sessions intentionally render card directly so the end-to-end
-  // payment gate can exercise the canonical card path deterministically. Normal
-  // production sessions keep Stripe's configured payment-method set.
+  const automaticTaxEnabled = stripeAutomaticTaxEnabled();
+  body.set("automatic_tax[enabled]", automaticTaxEnabled ? "true" : "false");
   if (input.cardOnly) {
     body.append("payment_method_types[]", "card");
   }
@@ -293,8 +298,6 @@ export async function createStripeCheckoutSession(input: {
   body.set("payment_intent_data[metadata][order_id]", input.orderId);
   body.set("payment_intent_data[metadata][order_number]", input.orderNumber);
 
-  // The Checkout Session is the shipping-address authority. Browser checkout
-  // payloads do not contain an address, and an empty country scope fails closed.
   const allowedShippingCountries = parseCheckoutShippingCountries(
     resolveStripeRuntimeValue("CHECKOUT_ALLOWED_SHIPPING_COUNTRIES"),
   );
@@ -305,6 +308,8 @@ export async function createStripeCheckoutSession(input: {
     body.append("shipping_address_collection[allowed_countries][]", country);
   }
 
+  const automaticTaxCode = automaticTaxEnabled ? stripeDefaultProductTaxCode() : null;
+  const automaticTaxBehavior = automaticTaxEnabled ? stripePriceTaxBehavior() : null;
   input.lines.forEach((line, index) => {
     assertPositiveCents(line.unitAmountCents, "unit_amount");
     if (!Number.isSafeInteger(line.quantity) || line.quantity < 1 || line.quantity > 25) {
@@ -313,6 +318,10 @@ export async function createStripeCheckoutSession(input: {
     body.set(`line_items[${index}][price_data][currency]`, input.currency.toLowerCase());
     body.set(`line_items[${index}][price_data][unit_amount]`, String(line.unitAmountCents));
     body.set(`line_items[${index}][price_data][product_data][name]`, line.name.slice(0, 250));
+    if (automaticTaxCode && automaticTaxBehavior) {
+      body.set(`line_items[${index}][price_data][product_data][tax_code]`, automaticTaxCode);
+      body.set(`line_items[${index}][price_data][tax_behavior]`, automaticTaxBehavior);
+    }
     if (line.description) {
       body.set(
         `line_items[${index}][price_data][product_data][description]`,
