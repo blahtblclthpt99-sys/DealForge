@@ -11,6 +11,7 @@ export const MIN_MARGIN_BPS = 0;
 export const MIN_INVENTORY_CONFIDENCE_BPS = 8000;
 export const MAX_SOURCE_AGE_DAYS = 30;
 export const MAX_PRICE_AGE_MINUTES = 180;
+export const DEFAULT_TAX_CLASSIFICATION_MAX_AGE_DAYS = 365;
 
 type CostInput = {
   itemCostCents: number;
@@ -18,8 +19,6 @@ type CostInput = {
   taxCents: number;
   supplierFeeCents: number;
   handlingCents: number;
-  // Backward-compatible API name. In V2 this is only an explicitly attributable
-  // per-order acquisition cost, not a generic risk or overhead reserve.
   acquisitionReserveCents: number;
 };
 
@@ -33,6 +32,11 @@ export type CommercializationInput = CostInput & {
   sellingPriceCents: number;
   inventoryConfidenceBps: number;
   availability: "in_stock" | "out_of_stock" | "unknown";
+  taxClassification: string;
+  stripeTaxCode: string;
+  taxVerifiedAt: string;
+  taxVerificationSource: string;
+  taxMaxAgeDays?: number;
 };
 
 type CanonicalReserves = {
@@ -92,6 +96,26 @@ function timestamp(value: string, field: string, nowMs: number) {
   return new Date(ms);
 }
 
+function boundedTaxMaxAgeDays(value: number | undefined) {
+  const resolved = value ?? DEFAULT_TAX_CLASSIFICATION_MAX_AGE_DAYS;
+  if (!Number.isSafeInteger(resolved) || resolved < 1 || resolved > 3650) {
+    throw new Error("TAX_MAX_AGE_DAYS_INVALID");
+  }
+  return resolved;
+}
+
+function taxText(value: string, field: string, max: number) {
+  const cleaned = value.trim().replace(/\s+/g, " ");
+  if (!cleaned || cleaned.length > max) throw new Error(`${field.toUpperCase()}_INVALID`);
+  return cleaned;
+}
+
+function stripeTaxCode(value: string) {
+  const cleaned = value.trim();
+  if (!/^txcd_[A-Za-z0-9]+$/.test(cleaned)) throw new Error("STRIPE_TAX_CODE_INVALID");
+  return cleaned;
+}
+
 function sourceUrl(value: string | null | undefined) {
   if (!value) return null;
   const url = new URL(value);
@@ -142,7 +166,6 @@ export function buildReserves(
   nonNegative(acquisitionReserveCents, "acquisition_reserve_cents");
   return {
     paymentCents: percentageCost(sellingPriceCents, policy.paymentRateBps) + policy.paymentFixedCents,
-    // Legacy commerceV1 carrier for the single pooled loss reserve.
     returnsCents: percentageCost(sellingPriceCents, policy.lossReserveBps),
     chargebackCents: 0,
     fraudCents: 0,
@@ -224,14 +247,29 @@ export function prepareCommercialization(
   const verifiedSourceUrl = sourceUrl(input.sourceUrl);
   const sourceVerifiedAt = timestamp(input.sourceVerifiedAt, "source_verified_at", nowMs);
   const priceVerifiedAt = timestamp(input.priceVerifiedAt, "price_verified_at", nowMs);
+  const taxVerifiedAt = timestamp(input.taxVerifiedAt, "tax_verified_at", nowMs);
+  const taxMaxAgeDays = boundedTaxMaxAgeDays(input.taxMaxAgeDays);
+  if (nowMs - taxVerifiedAt.getTime() > taxMaxAgeDays * 86_400_000) {
+    throw new Error("TAX_CLASSIFICATION_STALE");
+  }
+  const taxClassification = taxText(input.taxClassification, "tax_classification", 160);
+  const verifiedStripeTaxCode = stripeTaxCode(input.stripeTaxCode);
+  const taxVerificationSource = taxText(input.taxVerificationSource, "tax_verification_source", 160);
+
   const c = costs(input);
   const sellingPriceCents = positive(input.sellingPriceCents, "selling_price_cents");
   const inventoryConfidenceBps = bps(input.inventoryConfidenceBps, "inventory_confidence_bps");
   const reserves = buildReserves(sellingPriceCents, c.acquisitionReserveCents, pricingPolicy);
-  // Profit tiers are deliberately anchored to true landed cost only.
   const minimumProfitCents = minimumSafeProfitCents(c.landedCostCents);
 
   const root = parseSpecifications(existingSpecifications);
+  root.taxV1 = {
+    stripeTaxCode: verifiedStripeTaxCode,
+    classification: taxClassification,
+    verifiedAt: taxVerifiedAt.toISOString(),
+    verificationSource: taxVerificationSource,
+    maxAgeDays: taxMaxAgeDays,
+  };
   root.supplierOfferV1 = {
     supplierName,
     sourceClass: input.sourceClass,

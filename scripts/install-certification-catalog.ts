@@ -137,6 +137,11 @@ function certificationSpecifications(fixture: Fixture, now: Date) {
       sellingPriceCents: fixture.sellingPriceCents,
       inventoryConfidenceBps: 10_000,
       availability: "in_stock",
+      taxClassification: "DealForge certification tangible fixture",
+      stripeTaxCode: "txcd_99999999",
+      taxVerifiedAt: now.toISOString(),
+      taxVerificationSource: "dealforge_certification_fixture",
+      taxMaxAgeDays: 365,
     },
     now.getTime(),
   );
@@ -213,8 +218,6 @@ async function main() {
     } as const;
 
     if (current) {
-      // Recognized internal fixtures may be refreshed so source/price freshness
-      // does not silently expire during a later certification run.
       await prisma.product.update({ where: { id: fixture.id }, data: canonicalData });
     } else {
       await prisma.product.create({
