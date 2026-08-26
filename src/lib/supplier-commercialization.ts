@@ -22,6 +22,7 @@ import {
   evaluateSupplierSourceProvenance,
   readSupplierSourceProvenanceFromMetadata,
   sameSupplierSourceProvenance,
+  type SupplierSourceProvenanceV1,
 } from "./supplier-source-provenance";
 import { selectPersistedSupplierOffer } from "./supplier-store";
 import type { SupplierSelectionResult } from "./supplier-offers";
@@ -84,6 +85,19 @@ function sha256(value: string) {
 
 function normalizedSupplierName(value: string) {
   return value.trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+function sourceOrigin(value: string | null | undefined) {
+  if (!value) return null;
+  try {
+    return new URL(value).origin;
+  } catch {
+    return null;
+  }
+}
+
+function offerMatchesSourceProvenance(sourceUrl: string | null | undefined, provenance: SupplierSourceProvenanceV1) {
+  return sourceOrigin(sourceUrl) === provenance.sourceUrl;
 }
 
 export function supplierPersistenceKey(name: string, sourceClass: string) {
@@ -174,6 +188,23 @@ async function readCurrentOffer(id: string) {
   });
 }
 
+async function readCurrentSupplier(id: string) {
+  return prisma.supplier.findUnique({
+    where: { id },
+    select: {
+      id: true,
+      name: true,
+      sourceClass: true,
+      websiteUrl: true,
+      active: true,
+      resaleAllowed: true,
+      sourceVerifiedAt: true,
+      verificationSource: true,
+      metadata: true,
+    },
+  });
+}
+
 function taxInput(input: PersistedCommercializationInput) {
   return {
     taxClassification: input.taxClassification,
@@ -239,7 +270,7 @@ export async function persistSelectAndPrepareCommercialization(
   const supplierName = input.supplierName.trim().replace(/\s+/g, " ");
   const supplierKey = supplierPersistenceKey(supplierName, input.sourceClass);
   const offerKey = supplierOfferPersistenceKey(productId, supplierKey, snapshot.sourceUrl);
-  const websiteUrl = snapshot.sourceUrl ? new URL(snapshot.sourceUrl).origin : null;
+  const websiteUrl = sourceOrigin(snapshot.sourceUrl);
   const submittedSourceProvenance = buildSupplierSourceProvenance({
     supplierName,
     sourceClass: input.sourceClass,
@@ -261,7 +292,7 @@ export async function persistSelectAndPrepareCommercialization(
       verificationSource: submittedSourceProvenance.verificationMethod,
       metadata: bindSupplierSourceProvenanceToMetadata("{}", submittedSourceProvenance),
     },
-    update: { name: supplierName, websiteUrl: websiteUrl ?? undefined },
+    update: {},
   });
   if (supplier.sourceClass !== input.sourceClass) throw new Error("SUPPLIER_KEY_CONFLICT");
 
@@ -278,12 +309,19 @@ export async function persistSelectAndPrepareCommercialization(
 
   if (supplierVerifiedAtMs === null || supplierVerifiedAtMs <= submittedVerifiedAtMs) {
     const nextMetadata = bindSupplierSourceProvenanceToMetadata(supplier.metadata, submittedSourceProvenance);
-    await prisma.supplier.updateMany({
+    const advanced = await prisma.supplier.updateMany({
       where: {
         id: supplier.id,
-        OR: [{ sourceVerifiedAt: null }, { sourceVerifiedAt: { lt: sourceVerifiedAt } }, { sourceVerifiedAt }],
+        metadata: supplier.metadata,
+        OR: [
+          { sourceVerifiedAt: null },
+          { sourceVerifiedAt: { lt: sourceVerifiedAt } },
+          { sourceVerifiedAt: { equals: sourceVerifiedAt } },
+        ],
       },
       data: {
+        name: supplierName,
+        websiteUrl,
         sourceVerifiedAt,
         verificationSource: submittedSourceProvenance.verificationMethod,
         metadata: nextMetadata,
@@ -291,6 +329,21 @@ export async function persistSelectAndPrepareCommercialization(
         resaleAllowed: true,
       },
     });
+    if (advanced.count === 0) {
+      const winner = await readCurrentSupplier(supplier.id);
+      if (!winner) throw new Error("SUPPLIER_SOURCE_UPDATE_RACE");
+      const winnerVerifiedAtMs = winner.sourceVerifiedAt?.getTime() ?? null;
+      const winnerProvenance = readSupplierSourceProvenanceFromMetadata(winner.metadata);
+      if (
+        winnerVerifiedAtMs === submittedVerifiedAtMs &&
+        (!winnerProvenance || !sameSupplierSourceProvenance(winnerProvenance, submittedSourceProvenance))
+      ) {
+        throw new Error("SUPPLIER_SOURCE_VERIFICATION_CONFLICT");
+      }
+      if (winnerVerifiedAtMs === null || winnerVerifiedAtMs < submittedVerifiedAtMs) {
+        throw new Error("SUPPLIER_SOURCE_UPDATE_RACE");
+      }
+    }
   }
 
   const initialOffer = await prisma.supplierOffer.upsert({
@@ -385,18 +438,7 @@ export async function persistSelectAndPrepareCommercialization(
     selected.availability !== "in_stock"
   ) throw new Error("PERSISTED_SUPPLIER_SELECTION_INVALID");
 
-  const selectedSupplierState = await prisma.supplier.findUnique({
-    where: { id: selected.supplierId },
-    select: {
-      name: true,
-      sourceClass: true,
-      websiteUrl: true,
-      resaleAllowed: true,
-      sourceVerifiedAt: true,
-      verificationSource: true,
-      metadata: true,
-    },
-  });
+  const selectedSupplierState = await readCurrentSupplier(selected.supplierId);
   const sourceProvenanceDecision = selectedSupplierState
     ? evaluateSupplierSourceProvenance(selectedSupplierState.metadata, {
         supplierName: selectedSupplierState.name,
@@ -408,8 +450,16 @@ export async function persistSelectAndPrepareCommercialization(
       })
     : { allowed: false, reasons: ["supplier_source_provenance_missing_or_invalid"], provenance: null };
 
-  if (!sourceProvenanceDecision.allowed || !sourceProvenanceDecision.provenance) {
-    selection = selectionBlockedBySourceProvenance(selection, selected.supplierId, sourceProvenanceDecision.reasons);
+  const sourceProvenanceReasons = [...sourceProvenanceDecision.reasons];
+  if (
+    sourceProvenanceDecision.provenance &&
+    !offerMatchesSourceProvenance(selected.sourceUrl, sourceProvenanceDecision.provenance)
+  ) {
+    sourceProvenanceReasons.push("supplier_source_provenance_offer_origin_drift");
+  }
+
+  if (!sourceProvenanceDecision.allowed || !sourceProvenanceDecision.provenance || sourceProvenanceReasons.length > 0) {
+    selection = selectionBlockedBySourceProvenance(selection, selected.supplierId, sourceProvenanceReasons);
     await prisma.product.update({
       where: { id: productId },
       data: { commerceEnabled: false, availability: "unknown" },
