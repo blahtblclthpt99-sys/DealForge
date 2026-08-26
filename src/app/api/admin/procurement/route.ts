@@ -4,6 +4,7 @@ import { listRecoveryCases } from "@/lib/recovery-reconciliation";
 import { projectPublicShipment } from "@/lib/shipment-tracking";
 import { requireProcurementOwner } from "@/lib/procurement-authorization";
 import { deriveProcurementSourceLock } from "@/lib/procurement-source-lock";
+import { evaluateProcurementApprovalLease } from "@/lib/procurement-approval-lease";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -104,6 +105,7 @@ export async function GET() {
     },
   });
 
+  const nowMs = Date.now();
   const reconciled = intents.map((intent) => {
     const { supplierSnapshot, ...safeIntent } = intent;
     const expected = safeIntent.expectedTotalCostCents;
@@ -127,10 +129,15 @@ export async function GET() {
       safeIntent.expectedUnitCostCents,
       safeIntent.currency,
     );
+    const approvalLease =
+      safeIntent.status === "approved_manual"
+        ? evaluateProcurementApprovalLease(safeIntent.approvedAt, nowMs)
+        : null;
 
     return {
       ...safeIntent,
       lockedSource,
+      approvalLease,
       shipment: projectPublicShipment(shipmentEvents),
       recovery: {
         caseCount: recoveryCases.length,
