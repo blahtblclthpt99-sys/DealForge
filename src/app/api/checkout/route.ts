@@ -23,6 +23,10 @@ import {
   serializeOrderSupplierSnapshot,
 } from "@/lib/order-source-snapshot";
 import { checkPersistedOfferBinding } from "@/lib/persisted-offer-binding";
+import {
+  bindTaxClassificationToSourceSnapshot,
+  evaluateProductTaxClassification,
+} from "@/lib/product-tax-classification";
 import { readLimitedJson } from "@/lib/request-json";
 import { createStripeCheckoutSession } from "@/lib/stripe-commerce";
 import { resolvePublicAppOrigin } from "@/lib/url-security";
@@ -152,8 +156,18 @@ export async function POST(request: Request) {
 
     stage = "persisted_offer_binding";
     const supplierSnapshotByProductId = new Map<string, string>();
+    const taxCodeByProductId = new Map<string, string | null>();
     for (const product of products) {
-      if (certificationOnly && isStripeTestMode()) { supplierSnapshotByProductId.set(product.id, "{}"); continue; }
+      if (certificationOnly && isStripeTestMode()) {
+        supplierSnapshotByProductId.set(product.id, "{}");
+        taxCodeByProductId.set(product.id, null);
+        continue;
+      }
+      const taxDecision = evaluateProductTaxClassification(product.specifications);
+      if (!taxDecision.allowed || !taxDecision.classification) {
+        console.warn("checkout.tax_classification.blocked", { productId: product.id, reasons: taxDecision.reasons });
+        return NextResponse.json({ error: "PRODUCT_TAX_CLASSIFICATION_FAILED" }, { status: 409 });
+      }
       const binding = await checkPersistedOfferBinding({ productId: product.id, currency: product.currency, availability: product.availability, landedCostCents: product.landedCostCents, priceVerifiedAt: product.priceVerifiedAt, specifications: product.specifications });
       if (!binding.allowed) {
         console.warn("checkout.persisted_offer_binding.blocked", { productId: product.id, persistedOfferId: binding.persistedOfferId, reasons: binding.reasons });
@@ -161,7 +175,14 @@ export async function POST(request: Request) {
       }
       const snapshot = buildOrderSupplierSnapshot(product.specifications, product.currency);
       if (!snapshot || snapshot.costBreakdown.landedCostCents !== product.landedCostCents) return NextResponse.json({ error: "PRODUCT_SUPPLIER_BINDING_FAILED" }, { status: 409 });
-      supplierSnapshotByProductId.set(product.id, serializeOrderSupplierSnapshot(snapshot));
+      supplierSnapshotByProductId.set(
+        product.id,
+        bindTaxClassificationToSourceSnapshot(
+          serializeOrderSupplierSnapshot(snapshot),
+          taxDecision.classification,
+        ),
+      );
+      taxCodeByProductId.set(product.id, taxDecision.classification.stripeTaxCode);
     }
 
     stage = "pricing";
@@ -220,9 +241,17 @@ export async function POST(request: Request) {
     for (const item of pricedItems) {
       const product = item.product;
       if (certificationOnly && isStripeTestMode()) continue;
+      const taxDecision = evaluateProductTaxClassification(product.specifications);
       const binding = await checkPersistedOfferBinding({ productId: product.id, currency: product.currency, availability: product.availability, landedCostCents: product.landedCostCents, priceVerifiedAt: product.priceVerifiedAt, specifications: product.specifications });
       const refreshedSnapshot = buildOrderSupplierSnapshot(product.specifications, product.currency);
-      if (!binding.allowed || !refreshedSnapshot || serializeOrderSupplierSnapshot(refreshedSnapshot) !== item.supplierSnapshot) {
+      if (!taxDecision.allowed || !taxDecision.classification || !binding.allowed || !refreshedSnapshot) {
+        return NextResponse.json({ error: "ORDER_SOURCE_CHANGED_RESTART_CHECKOUT" }, { status: 409 });
+      }
+      const refreshedBoundSnapshot = bindTaxClassificationToSourceSnapshot(
+        serializeOrderSupplierSnapshot(refreshedSnapshot),
+        taxDecision.classification,
+      );
+      if (refreshedBoundSnapshot !== item.supplierSnapshot) {
         return NextResponse.json({ error: "ORDER_SOURCE_CHANGED_RESTART_CHECKOUT" }, { status: 409 });
       }
     }
@@ -231,7 +260,12 @@ export async function POST(request: Request) {
     const base = resolvePublicAppOrigin(request.url);
     const stripeSession = await createStripeCheckoutSession({
       orderId: order.id, orderNumber: order.orderNumber, customerEmail: order.email, currency: order.currency,
-      lines: order.items.map((item) => ({ name: item.title, unitAmountCents: item.unitPriceCents, quantity: item.quantity })),
+      lines: order.items.map((item) => ({
+        name: item.title,
+        unitAmountCents: item.unitPriceCents,
+        quantity: item.quantity,
+        taxCode: taxCodeByProductId.get(item.productId) || undefined,
+      })),
       successUrl: `${base}/checkout/success?order=${encodeURIComponent(order.orderNumber)}`,
       cancelUrl: `${base}/checkout/cancel?order=${encodeURIComponent(order.orderNumber)}`,
       cardOnly: certificationOnly && isStripeTestMode(),

@@ -83,10 +83,12 @@ test("order schemas and additive production migration persist the supplier snaps
   assert.match(migration, /ADD COLUMN "supplierSnapshot" TEXT NOT NULL DEFAULT '\{\}'/);
 });
 
-test("checkout persists exact source economics and revalidates them before Stripe", async () => {
+test("checkout persists exact source economics and tax classification, then revalidates both before Stripe", async () => {
   const route = await readFile("src/app/api/checkout/route.ts", "utf8");
   assert.match(route, /buildOrderSupplierSnapshot/);
-  assert.match(route, /supplierSnapshotByProductId\.set\(product\.id, serializeOrderSupplierSnapshot\(snapshot\)\)/);
+  assert.match(route, /serializeOrderSupplierSnapshot\(snapshot\)/);
+  assert.match(route, /bindTaxClassificationToSourceSnapshot/);
+  assert.match(route, /supplierSnapshotByProductId\.set\(/);
   assert.match(route, /const supplierSnapshot = supplierSnapshotByProductId\.get\(product\.id\)/);
   assert.match(route, /supplierSnapshot \}\)\) \},/);
   assert.match(route, /item\.supplierSnapshot === live\.supplierSnapshot/);
@@ -99,6 +101,9 @@ test("checkout persists exact source economics and revalidates them before Strip
 
   const revalidationBlock = route.slice(revalidate, stripe);
   assert.match(revalidationBlock, /checkPersistedOfferBinding/);
+  assert.match(revalidationBlock, /evaluateProductTaxClassification/);
   assert.match(revalidationBlock, /buildOrderSupplierSnapshot/);
-  assert.match(revalidationBlock, /serializeOrderSupplierSnapshot\(refreshedSnapshot\) !== item\.supplierSnapshot/);
+  assert.match(revalidationBlock, /serializeOrderSupplierSnapshot\(refreshedSnapshot\)/);
+  assert.match(revalidationBlock, /bindTaxClassificationToSourceSnapshot/);
+  assert.match(revalidationBlock, /refreshedBoundSnapshot !== item\.supplierSnapshot/);
 });
