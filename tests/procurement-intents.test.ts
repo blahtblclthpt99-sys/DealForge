@@ -134,15 +134,16 @@ test("Prisma schemas and migration enforce one durable intent per order line", a
   assert.doesNotMatch(migration, /INSERT INTO "ProcurementIntent"/);
 });
 
-test("verified Stripe payment creates procurement intents atomically after local paid state", async () => {
+test("verified Stripe payment creates procurement intents atomically only after paid financial state", async () => {
   const webhook = await readFile("src/app/api/stripe/webhook/route.ts", "utf8");
   assert.match(webhook, /ensureProcurementIntentsForPaidOrder/);
+  assert.match(webhook, /deriveFinancialOrderStatus/);
 
-  const paidUpdate = webhook.indexOf('status: "paid"');
+  const paidGate = webhook.indexOf('if (financial.status === "paid")');
   const journal = webhook.indexOf("await ensureProcurementIntentsForPaidOrder(tx, orderId)");
   const transaction = webhook.indexOf("prisma.$transaction");
-  assert.ok(paidUpdate >= 0, "missing verified paid state update");
-  assert.ok(journal > paidUpdate, "procurement intent creation must follow local paid-state update");
+  assert.ok(paidGate >= 0, "missing verified paid financial-state gate");
+  assert.ok(journal > paidGate, "procurement intent creation must follow paid financial-state verification");
   assert.ok(transaction > journal, "webhook handler must preserve its encompassing Prisma transaction");
 
   const library = await readFile("src/lib/procurement-intents.ts", "utf8");
