@@ -32,6 +32,11 @@ export type PersistedCommercializationInput = {
   inventoryConfidenceBps: number;
   acquisitionReserveCents: number;
   availability: "in_stock" | "out_of_stock" | "unknown";
+  taxClassification: string;
+  stripeTaxCode: string;
+  taxVerifiedAt: string;
+  taxVerificationSource: string;
+  taxMaxAgeDays?: number;
 };
 
 export type PersistedCommercializationResult = {
@@ -156,6 +161,16 @@ async function readCurrentOffer(id: string) {
   });
 }
 
+function taxInput(input: PersistedCommercializationInput) {
+  return {
+    taxClassification: input.taxClassification,
+    stripeTaxCode: input.stripeTaxCode,
+    taxVerifiedAt: input.taxVerifiedAt,
+    taxVerificationSource: input.taxVerificationSource,
+    taxMaxAgeDays: input.taxMaxAgeDays,
+  };
+}
+
 export async function persistSelectAndPrepareCommercialization(
   input: PersistedCommercializationInput,
   nowMs = Date.now(),
@@ -185,6 +200,7 @@ export async function persistSelectAndPrepareCommercialization(
       inventoryConfidenceBps: input.inventoryConfidenceBps,
       acquisitionReserveCents: input.acquisitionReserveCents,
       availability: input.availability,
+      ...taxInput(input),
     },
     nowMs,
     pricingPolicy,
@@ -328,6 +344,7 @@ export async function persistSelectAndPrepareCommercialization(
       inventoryConfidenceBps: selected.inventoryConfidenceBps,
       acquisitionReserveCents: input.acquisitionReserveCents,
       availability: "in_stock",
+      ...taxInput(input),
     },
     nowMs,
     pricingPolicy,
