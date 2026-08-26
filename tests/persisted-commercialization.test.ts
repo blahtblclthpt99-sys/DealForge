@@ -20,16 +20,19 @@ test("supplier persistence keys are deterministic and identity-scoped", () => {
   assert.notEqual(offerA, offerOtherProduct);
 });
 
-test("supplier authorization never accepts conflicting equal-timestamp provenance", async () => {
+test("supplier authorization never accepts conflicting equal-timestamp provenance or stale origin mutation", async () => {
   const source = await readFile("src/lib/supplier-commercialization.ts", "utf8");
   assert.match(source, /sourceVerifiedAt: \{ lt: sourceVerifiedAt \}/);
+  assert.match(source, /sourceVerifiedAt: \{ equals: sourceVerifiedAt \}/);
   assert.match(source, /buildSupplierSourceProvenance/);
   assert.match(source, /sameSupplierSourceProvenance/);
   assert.match(source, /SUPPLIER_SOURCE_VERIFICATION_CONFLICT/);
+  assert.match(source, /SUPPLIER_SOURCE_UPDATE_RACE/);
   assert.match(source, /verificationSource: submittedSourceProvenance\.verificationMethod/);
   assert.match(source, /metadata: bindSupplierSourceProvenanceToMetadata/);
-  assert.match(source, /update: \{ name: supplierName, websiteUrl: websiteUrl \?\? undefined \}/);
-  assert.doesNotMatch(source, /update: \{\s*name: supplierName,\s*websiteUrl: websiteUrl \?\? undefined,\s*active: true/);
+  assert.match(source, /update: \{\}/);
+  assert.match(source, /metadata: supplier\.metadata/);
+  assert.match(source, /name: supplierName,\s*websiteUrl,\s*sourceVerifiedAt,/);
 });
 
 test("persisted offer economics advance atomically and reject equal-timestamp conflicts", async () => {
@@ -53,11 +56,12 @@ test("no eligible persisted supplier immediately revokes the stale direct-commer
   assert.match(service, /availability: unavailableSnapshotAvailability\(selection\)/);
 });
 
-test("invalid selected supplier provenance keeps commerce disabled", async () => {
+test("invalid selected supplier provenance or mismatched offer origin keeps commerce disabled", async () => {
   const service = await readFile("src/lib/supplier-commercialization.ts", "utf8");
   assert.match(service, /evaluateSupplierSourceProvenance/);
   assert.match(service, /selectionBlockedBySourceProvenance/);
   assert.match(service, /sourceProvenanceDecision\.allowed/);
+  assert.match(service, /supplier_source_provenance_offer_origin_drift/);
   assert.match(service, /data: \{ commerceEnabled: false, availability: "unknown" \}/);
 });
 
