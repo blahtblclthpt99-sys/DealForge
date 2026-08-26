@@ -63,6 +63,85 @@ jobs:
         run: npx prisma migrate deploy --schema=prisma/schema.postgres.prisma
       - name: Verify upgraded schema is usable after migration
         run: npx prisma db push --schema=prisma/schema.postgres.prisma --skip-generate
+
+      - name: Reset database for audited production-shape migration test
+        run: psql -h localhost -U dealforge -d dealforge_ci -v ON_ERROR_STOP=1 -c 'DROP SCHEMA public CASCADE; CREATE SCHEMA public;'
+      - name: Recreate audited legacy production shape without Prisma ledger
+        shell: bash
+        run: |
+          set -euo pipefail
+          migrations=(
+            20260822000000_dealforge_baseline
+            20260822102000_product_engine_safe_intake
+            20260822152000_stripe_financial_gate
+            20260824232000_supplier_persistence_v1
+            20260825015500_order_item_supplier_snapshot
+            20260825021000_procurement_intent_journal_v1
+            20260825053000_refund_financial_reconciliation_v1
+            20260825120000_customer_savings_fund_phase_a
+            20260825143000_production_schema_reconciliation_v1
+            20260825163500_inventory_adapter_nonce_v1
+          )
+          for migration in "${migrations[@]}"; do
+            echo "Applying audited legacy schema object set: ${migration}"
+            psql -h localhost -U dealforge -d dealforge_ci -v ON_ERROR_STOP=1 \
+              -f "prisma/migrations/${migration}/migration.sql"
+          done
+
+          psql -h localhost -U dealforge -d dealforge_ci -v ON_ERROR_STOP=1 <<'SQL'
+          DO $$
+          BEGIN
+            IF to_regclass('public."InventoryObservation"') IS NOT NULL
+              OR to_regclass('public."InventoryRecheckJob"') IS NOT NULL
+              OR to_regclass('public."InventoryAdapterRateWindow"') IS NOT NULL
+              OR to_regclass('public."OrderDestination"') IS NOT NULL THEN
+              RAISE EXCEPTION 'Audited legacy shape unexpectedly contains a pending migration object';
+            END IF;
+            IF to_regclass('public."InventoryAdapterNonce"') IS NULL THEN
+              RAISE EXCEPTION 'Audited legacy shape is missing the already-present nonce table';
+            END IF;
+          END $$;
+SQL
+
+      - name: Selectively baseline only migrations already materialized in audited production shape
+        shell: bash
+        run: |
+          set -euo pipefail
+          migrations=(
+            20260822000000_dealforge_baseline
+            20260822102000_product_engine_safe_intake
+            20260822152000_stripe_financial_gate
+            20260824232000_supplier_persistence_v1
+            20260825015500_order_item_supplier_snapshot
+            20260825021000_procurement_intent_journal_v1
+            20260825053000_refund_financial_reconciliation_v1
+            20260825120000_customer_savings_fund_phase_a
+            20260825143000_production_schema_reconciliation_v1
+            20260825163500_inventory_adapter_nonce_v1
+          )
+          for migration in "${migrations[@]}"; do
+            npx prisma migrate resolve --applied "$migration" --schema=prisma/schema.postgres.prisma
+          done
+      - name: Fill selective migration gaps in audited production shape
+        run: npx prisma migrate deploy --schema=prisma/schema.postgres.prisma
+      - name: Verify selective production-shape migration result
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx prisma migrate status --schema=prisma/schema.postgres.prisma
+          psql -h localhost -U dealforge -d dealforge_ci -v ON_ERROR_STOP=1 <<'SQL'
+          DO $$
+          BEGIN
+            IF to_regclass('public."InventoryObservation"') IS NULL
+              OR to_regclass('public."InventoryRecheckJob"') IS NULL
+              OR to_regclass('public."InventoryAdapterNonce"') IS NULL
+              OR to_regclass('public."InventoryAdapterRateWindow"') IS NULL
+              OR to_regclass('public."OrderDestination"') IS NULL THEN
+              RAISE EXCEPTION 'Selective production migration reconciliation did not reach current schema';
+            END IF;
+          END $$;
+SQL
+
       - name: Prepare isolated application test database
         env:
           DATABASE_URL: file:./ci-test.db
