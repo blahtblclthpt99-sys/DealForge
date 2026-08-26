@@ -5,10 +5,9 @@ const checkoutPath = process.env.CHECKOUT_ARTIFACT ?? "checkout.json";
 const checkout = JSON.parse(await readFile(checkoutPath, "utf8")) as {
   checkoutUrl?: string;
   orderNumber?: string;
-  stripeMode?: string;
 };
 
-if (checkout.stripeMode !== "test") throw new Error("SHIPPING_CERT_REQUIRES_STRIPE_TEST_MODE");
+if (process.env.SHIPPING_CERT_STRIPE_MODE !== "test") throw new Error("SHIPPING_CERT_REQUIRES_VERIFIED_STRIPE_TEST_MODE");
 if (!checkout.checkoutUrl?.startsWith("https://checkout.stripe.com/")) throw new Error("SHIPPING_CERT_CHECKOUT_URL_INVALID");
 if (!checkout.orderNumber) throw new Error("SHIPPING_CERT_ORDER_NUMBER_MISSING");
 
@@ -84,6 +83,7 @@ try {
 
   await writeFile("shipping-checkout-completion.json", JSON.stringify({
     orderNumber: checkout.orderNumber,
+    certificationMode: "stripe_test",
     completedAt: new Date().toISOString(),
     finalHost: new URL(page.url()).hostname,
     expectedDestination: address,

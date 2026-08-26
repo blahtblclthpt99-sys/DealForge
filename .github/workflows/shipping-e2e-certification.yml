@@ -82,12 +82,14 @@ jobs:
           set -euo pipefail
           [[ -n "$DATABASE_URL" ]] || { echo '::error::Production DATABASE_URL unavailable'; exit 1; }
           [[ "$STRIPE_SECRET_KEY" == sk_test_* ]] || { echo '::error::Shipping certification requires Stripe test mode'; exit 1; }
+          echo 'SHIPPING_CERT_STRIPE_MODE=test' >> "$GITHUB_ENV"
           npx prisma generate --schema=prisma/schema.postgres.prisma
           npx tsx scripts/install-certification-catalog.ts
 
       - name: Create fresh Stripe-hosted Checkout
         run: |
           set -euo pipefail
+          [[ "${SHIPPING_CERT_STRIPE_MODE:-}" == 'test' ]] || { echo '::error::Verified Stripe test-mode marker missing'; exit 1; }
           code=$(curl --retry 3 --retry-all-errors --retry-delay 2 -sS -o checkout.json -w '%{http_code}' \
             -X POST 'https://www.deal-forge.sale/api/checkout' \
             -H 'content-type: application/json' \
@@ -97,7 +99,6 @@ jobs:
           node - <<'NODE'
           const fs = require('fs');
           const body = JSON.parse(fs.readFileSync('checkout.json', 'utf8'));
-          if (body.stripeMode !== 'test') throw new Error('Stripe mode is not test');
           if (!body.checkoutUrl?.startsWith('https://checkout.stripe.com/')) throw new Error('Invalid Stripe Checkout URL');
           if (!body.orderNumber) throw new Error('Missing order number');
           console.log(`Created shipping certification order ${body.orderNumber}`);
@@ -112,6 +113,7 @@ jobs:
         run: |
           set -euo pipefail
           [[ -n "$DATABASE_URL" ]] || { echo '::error::Production DATABASE_URL unavailable'; exit 1; }
+          [[ "${SHIPPING_CERT_STRIPE_MODE:-}" == 'test' ]] || { echo '::error::Verified Stripe test-mode marker missing'; exit 1; }
           npx prisma generate --schema=prisma/schema.postgres.prisma
           npx tsx scripts/verify-shipping-certification.ts
 
