@@ -90,6 +90,15 @@ function safeTimestamp(value: unknown) {
   return Number.isFinite(timestamp) ? value : null;
 }
 
+function sourceOrigin(value: string | null | undefined) {
+  if (!value) return null;
+  try {
+    return new URL(value).origin;
+  } catch {
+    return null;
+  }
+}
+
 function parseSnapshot(specifications: string): PersistedOfferSnapshot | null {
   try {
     const root = JSON.parse(specifications) as Record<string, unknown>;
@@ -206,6 +215,13 @@ export function evaluatePersistedOfferBinding(
   if (sourceProvenanceRequired && !snapshot.sourceVerification) {
     reasons.push("persisted_source_provenance_missing_or_invalid");
   }
+  if (
+    snapshot.sourceVerification &&
+    sourceOrigin(snapshot.sourceUrl) !== snapshot.sourceVerification.sourceUrl
+  ) {
+    reasons.push("persisted_source_provenance_offer_origin_drift");
+  }
+
   const liveSourceProvenance = evaluateSupplierSourceProvenance(liveOffer.supplier.metadata, {
     supplierName: liveOffer.supplier.name,
     sourceClass: liveOffer.supplier.sourceClass,
@@ -216,6 +232,12 @@ export function evaluatePersistedOfferBinding(
   });
   if (sourceProvenanceRequired || snapshot.sourceVerification) {
     reasons.push(...liveSourceProvenance.reasons.map((reason) => `live_${reason}`));
+  }
+  if (
+    liveSourceProvenance.provenance &&
+    sourceOrigin(liveOffer.sourceUrl) !== liveSourceProvenance.provenance.sourceUrl
+  ) {
+    reasons.push("live_supplier_source_provenance_offer_origin_drift");
   }
   if (
     snapshot.sourceVerification &&
@@ -302,8 +324,8 @@ export function evaluatePersistedOfferBinding(
  * Read-only checkout safety gate. The Product snapshot remains useful for audit,
  * but customer money cannot rely on it alone: the exact normalized supplier
  * offer referenced by the snapshot must still exist, retain the same supplier
- * verification provenance, retain a current inventory observation with non-conflicting
- * observed price evidence, and remain eligible now.
+ * verification provenance and verified origin, retain a current inventory observation
+ * with non-conflicting observed price evidence, and remain eligible now.
  */
 export async function checkPersistedOfferBinding(
   input: PersistedOfferBindingInput,
