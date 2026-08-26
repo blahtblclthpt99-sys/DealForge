@@ -58,8 +58,11 @@ const liveOfferSelect = {
       name: true,
       active: true,
       sourceClass: true,
+      websiteUrl: true,
       resaleAllowed: true,
       sourceVerifiedAt: true,
+      verificationSource: true,
+      metadata: true,
     },
   },
 } as const;
