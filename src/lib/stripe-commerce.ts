@@ -23,6 +23,15 @@ export type StripeCheckoutSession = {
   payment_method_types?: string[];
   client_reference_id?: string | null;
   metadata?: Record<string, string>;
+  amount_subtotal?: number;
+  amount_total?: number;
+  currency?: string | null;
+  automatic_tax?: { enabled?: boolean; status?: string | null } | null;
+  total_details?: {
+    amount_discount?: number;
+    amount_shipping?: number;
+    amount_tax?: number;
+  } | null;
 };
 
 export type StripeBalanceTransaction = {
@@ -113,6 +122,10 @@ function stripeSecretKey() {
   const key = resolveStripeRuntimeValue("STRIPE_SECRET_KEY");
   if (!key) throw new Error("STRIPE_SECRET_KEY_MISSING");
   return key;
+}
+
+export function stripeAutomaticTaxEnabled() {
+  return resolveStripeRuntimeValue("STRIPE_AUTOMATIC_TAX_ENABLED") === "true";
 }
 
 export function expectedStripeLivemode(secretKey = resolveStripeRuntimeValue("STRIPE_SECRET_KEY")) {
@@ -261,6 +274,10 @@ export async function createStripeCheckoutSession(input: {
   // Payments is a separate merchant-of-record product intended for eligible
   // digital goods and must not be implicitly enabled for DealForge orders.
   body.set("managed_payments[enabled]", "false");
+  // Tax remains runtime-gated. Setting the parameter explicitly makes a
+  // deployed certification environment deterministic while preserving the
+  // production false default until tax certification is complete.
+  body.set("automatic_tax[enabled]", stripeAutomaticTaxEnabled() ? "true" : "false");
   // Certification sessions intentionally render card directly so the end-to-end
   // payment gate can exercise the canonical card path deterministically. Normal
   // production sessions keep Stripe's configured payment-method set.
