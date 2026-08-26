@@ -135,7 +135,10 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
           .filter((event) => event.type === "RECORD_MANUAL_PURCHASE")
           .map((event) => ({ eventKey: event.eventKey, detail: event.detail })),
       });
-      if (!purchaseReconciliation.ok || !purchaseReconciliation.evidence?.purchaseEvidenceHash) {
+      if (!purchaseReconciliation.ok) {
+        throw new Error("PROCUREMENT_PURCHASE_RECONCILIATION_REQUIRED");
+      }
+      if (!purchaseReconciliation.evidence?.purchaseEvidenceHash) {
         throw new Error("PROCUREMENT_PURCHASE_RECONCILIATION_REQUIRED");
       }
       const purchaseEvidenceHash = purchaseReconciliation.evidence.purchaseEvidenceHash;
@@ -181,7 +184,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
               previousStatus: current.status,
               nextStatus: transition.next,
               shipment,
-              purchaseEvidenceHash,
+              purchaseEvidenceHash: purchaseEvidenceHash,
               note: parsed.data.note || null,
               automaticSupplierPurchasingEnabled: false,
             }),
@@ -228,7 +231,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
             nextStatus: transition.next,
             delivery,
             shipmentEventKey: current.events.find((event) => event.type === "RECORD_SHIPMENT")?.eventKey || null,
-            purchaseEvidenceHash,
+            purchaseEvidenceHash: purchaseEvidenceHash,
             note: parsed.data.note || null,
             automaticSupplierPurchasingEnabled: false,
           }),
