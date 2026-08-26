@@ -138,13 +138,22 @@ export function parseDeliveryEventDetail(raw: string): DeliveryRecordedV1 | null
   }
 }
 
-export function projectPublicShipment(events: ProcurementJournalEvent[]) {
+export function projectPublicShipment(
+  events: ProcurementJournalEvent[],
+  expectedQuantity?: number,
+) {
   const shipmentEvents = events.filter((event) => event.type === "RECORD_SHIPMENT");
   const deliveryEvents = events.filter((event) => event.type === "MARK_DELIVERED");
   if (shipmentEvents.length !== 1 || deliveryEvents.length > 1) return null;
 
   const shipment = parseShipmentEventDetail(shipmentEvents[0].detail);
   if (!shipment) return null;
+  if (
+    expectedQuantity !== undefined &&
+    (!Number.isSafeInteger(expectedQuantity) || expectedQuantity <= 0 || shipment.quantity !== expectedQuantity)
+  ) {
+    return null;
+  }
 
   let delivery: DeliveryRecordedV1 | null = null;
   if (deliveryEvents.length === 1) {
