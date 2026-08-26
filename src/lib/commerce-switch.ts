@@ -6,6 +6,7 @@ type CommerceSwitchEnv = {
   NODE_ENV?: string;
   STRIPE_AUTOMATIC_TAX_ENABLED?: string;
   TAX_COMPLIANCE_CERTIFIED?: string;
+  STRIPE_LIVE_TAX_READINESS_CERTIFIED?: string;
   SHIPPING_ADDRESS_CAPTURE_CERTIFIED?: string;
   CHECKOUT_ALLOWED_SHIPPING_COUNTRIES?: string;
 };
@@ -28,6 +29,7 @@ export type BroadCatalogCommerceActivationInput = {
   stripeLivemode: boolean | null;
   stripeAutomaticTaxEnabled: boolean;
   taxComplianceCertified: boolean;
+  stripeLiveTaxReadinessCertified: boolean;
   shippingAddressCaptureCertified: boolean;
   shippingCountriesConfigured: boolean;
 };
@@ -36,10 +38,11 @@ export type BroadCatalogCommerceActivationInput = {
  * Pure activation policy used for deterministic release-gate testing.
  * Production broad-catalog commerce is never eligible on Stripe test mode or
  * when Stripe mode cannot be proven. Production additionally requires explicit
- * tax-compliance, automatic-tax, and fulfillable shipping-destination gates.
- * Missing or misspelled configuration therefore fails closed. Non-production
- * environments can continue using test-mode Stripe without pretending that
- * production tax or fulfillment readiness exists.
+ * tax-compliance, live Stripe Tax registration-readiness, automatic-tax, and
+ * fulfillable shipping-destination gates. Missing or misspelled configuration
+ * therefore fails closed. Non-production environments can continue using
+ * test-mode Stripe without pretending that production tax or fulfillment
+ * readiness exists.
  */
 export function evaluateBroadCatalogCommerceActivation(
   input: BroadCatalogCommerceActivationInput,
@@ -47,7 +50,11 @@ export function evaluateBroadCatalogCommerceActivation(
   if (input.locked || !input.commerceEnabled) return false;
   if (input.production) {
     if (input.stripeLivemode !== true) return false;
-    if (!input.stripeAutomaticTaxEnabled || !input.taxComplianceCertified) return false;
+    if (
+      !input.stripeAutomaticTaxEnabled ||
+      !input.taxComplianceCertified ||
+      !input.stripeLiveTaxReadinessCertified
+    ) return false;
     if (!input.shippingAddressCaptureCertified || !input.shippingCountriesConfigured) return false;
   }
   return true;
@@ -76,6 +83,7 @@ export function isBroadCatalogCommerceEnabled(env?: CommerceSwitchEnv) {
     NODE_ENV: process.env.NODE_ENV,
     STRIPE_AUTOMATIC_TAX_ENABLED: process.env.STRIPE_AUTOMATIC_TAX_ENABLED,
     TAX_COMPLIANCE_CERTIFIED: process.env.TAX_COMPLIANCE_CERTIFIED,
+    STRIPE_LIVE_TAX_READINESS_CERTIFIED: process.env.STRIPE_LIVE_TAX_READINESS_CERTIFIED,
     SHIPPING_ADDRESS_CAPTURE_CERTIFIED: process.env.SHIPPING_ADDRESS_CAPTURE_CERTIFIED,
     CHECKOUT_ALLOWED_SHIPPING_COUNTRIES: process.env.CHECKOUT_ALLOWED_SHIPPING_COUNTRIES,
   };
@@ -95,6 +103,7 @@ export function isBroadCatalogCommerceEnabled(env?: CommerceSwitchEnv) {
     stripeLivemode: authoritativeStripeLivemode(production),
     stripeAutomaticTaxEnabled: source.STRIPE_AUTOMATIC_TAX_ENABLED === "true",
     taxComplianceCertified: source.TAX_COMPLIANCE_CERTIFIED === "true",
+    stripeLiveTaxReadinessCertified: source.STRIPE_LIVE_TAX_READINESS_CERTIFIED === "true",
     shippingAddressCaptureCertified: source.SHIPPING_ADDRESS_CAPTURE_CERTIFIED === "true",
     shippingCountriesConfigured: shippingCountriesConfigured(
       source.CHECKOUT_ALLOWED_SHIPPING_COUNTRIES,

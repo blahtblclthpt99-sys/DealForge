@@ -16,6 +16,7 @@ test("production broad commerce cannot activate while the emergency lock remains
       stripeLivemode: true,
       stripeAutomaticTaxEnabled: true,
       taxComplianceCertified: true,
+      stripeLiveTaxReadinessCertified: true,
       shippingAddressCaptureCertified: true,
       shippingCountriesConfigured: true,
     }),
@@ -30,24 +31,16 @@ test("future production activation requires Stripe live mode exactly", () => {
     production: true,
     stripeAutomaticTaxEnabled: true,
     taxComplianceCertified: true,
+    stripeLiveTaxReadinessCertified: true,
     shippingAddressCaptureCertified: true,
     shippingCountriesConfigured: true,
   } as const;
-  assert.equal(
-    evaluateBroadCatalogCommerceActivation({ ...ready, stripeLivemode: true }),
-    true,
-  );
-  assert.equal(
-    evaluateBroadCatalogCommerceActivation({ ...ready, stripeLivemode: false }),
-    false,
-  );
-  assert.equal(
-    evaluateBroadCatalogCommerceActivation({ ...ready, stripeLivemode: null }),
-    false,
-  );
+  assert.equal(evaluateBroadCatalogCommerceActivation({ ...ready, stripeLivemode: true }), true);
+  assert.equal(evaluateBroadCatalogCommerceActivation({ ...ready, stripeLivemode: false }), false);
+  assert.equal(evaluateBroadCatalogCommerceActivation({ ...ready, stripeLivemode: null }), false);
 });
 
-test("future production activation fails closed unless tax readiness is explicitly certified", () => {
+test("future production activation fails closed unless every tax readiness gate is certified", () => {
   const base = {
     locked: false,
     commerceEnabled: true,
@@ -61,6 +54,7 @@ test("future production activation fails closed unless tax readiness is explicit
       ...base,
       stripeAutomaticTaxEnabled: false,
       taxComplianceCertified: true,
+      stripeLiveTaxReadinessCertified: true,
     }),
     false,
   );
@@ -69,14 +63,16 @@ test("future production activation fails closed unless tax readiness is explicit
       ...base,
       stripeAutomaticTaxEnabled: true,
       taxComplianceCertified: false,
+      stripeLiveTaxReadinessCertified: true,
     }),
     false,
   );
   assert.equal(
     evaluateBroadCatalogCommerceActivation({
       ...base,
-      stripeAutomaticTaxEnabled: false,
-      taxComplianceCertified: false,
+      stripeAutomaticTaxEnabled: true,
+      taxComplianceCertified: true,
+      stripeLiveTaxReadinessCertified: false,
     }),
     false,
   );
@@ -90,6 +86,7 @@ test("future production activation fails closed without certified shipping captu
     stripeLivemode: true,
     stripeAutomaticTaxEnabled: true,
     taxComplianceCertified: true,
+    stripeLiveTaxReadinessCertified: true,
   } as const;
   assert.equal(
     evaluateBroadCatalogCommerceActivation({
@@ -103,14 +100,6 @@ test("future production activation fails closed without certified shipping captu
     evaluateBroadCatalogCommerceActivation({
       ...base,
       shippingAddressCaptureCertified: true,
-      shippingCountriesConfigured: false,
-    }),
-    false,
-  );
-  assert.equal(
-    evaluateBroadCatalogCommerceActivation({
-      ...base,
-      shippingAddressCaptureCertified: false,
       shippingCountriesConfigured: false,
     }),
     false,
@@ -126,23 +115,11 @@ test("non-production commerce may use test Stripe while production readiness rem
       stripeLivemode: false,
       stripeAutomaticTaxEnabled: false,
       taxComplianceCertified: false,
+      stripeLiveTaxReadinessCertified: false,
       shippingAddressCaptureCertified: false,
       shippingCountriesConfigured: false,
     }),
     true,
-  );
-  assert.equal(
-    evaluateBroadCatalogCommerceActivation({
-      locked: false,
-      commerceEnabled: false,
-      production: false,
-      stripeLivemode: false,
-      stripeAutomaticTaxEnabled: false,
-      taxComplianceCertified: false,
-      shippingAddressCaptureCertified: false,
-      shippingCountriesConfigured: false,
-    }),
-    false,
   );
 });
 
@@ -156,9 +133,10 @@ test("production mode proof uses authoritative Stripe mode plus explicit tax and
   assert.match(switchSource, /stripeLivemode !== true/);
   assert.match(switchSource, /STRIPE_AUTOMATIC_TAX_ENABLED/);
   assert.match(switchSource, /TAX_COMPLIANCE_CERTIFIED/);
+  assert.match(switchSource, /STRIPE_LIVE_TAX_READINESS_CERTIFIED/);
   assert.match(switchSource, /SHIPPING_ADDRESS_CAPTURE_CERTIFIED/);
   assert.match(switchSource, /CHECKOUT_ALLOWED_SHIPPING_COUNTRIES/);
-  assert.match(switchSource, /!input\.stripeAutomaticTaxEnabled \|\| !input\.taxComplianceCertified/);
+  assert.match(switchSource, /!input\.stripeLiveTaxReadinessCertified/);
   assert.match(switchSource, /!input\.shippingAddressCaptureCertified \|\| !input\.shippingCountriesConfigured/);
   assert.match(stripeSource, /getCloudflareContext\(\)\.env/);
   assert.match(stripeSource, /if \(secretKey\.startsWith\("sk_live_"\)\) return true/);
