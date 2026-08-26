@@ -67,12 +67,20 @@ export default async function AdminPage() {
             Operations dashboard
           </h1>
           <p className="mt-2 text-forest-muted">
-            Affiliate stats, imports, cache, users, and product database controls.
+            Affiliate stats, imports, cache, users, product controls, and owner commerce operations.
           </p>
         </div>
-        <Link href="/" className="text-sm text-forest hover:underline">
-          View storefront
-        </Link>
+        <div className="flex flex-wrap gap-3 text-sm">
+          <Link href="/admin/product-engine" className="text-forest hover:underline">
+            Product Engine
+          </Link>
+          <Link href="/admin/procurement" className="text-forest hover:underline">
+            Procurement integrity
+          </Link>
+          <Link href="/" className="text-forest hover:underline">
+            View storefront
+          </Link>
+        </div>
       </div>
 
       <div className="mt-8 grid grid-cols-2 gap-3 md:grid-cols-5">
