@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { ProcurementFulfillmentConsole } from "@/components/procurement-fulfillment-console";
 import { ProcurementIntegrityConsole } from "@/components/procurement-integrity-console";
 import { readSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
@@ -25,10 +26,10 @@ export default async function ProcurementIntegrityPage() {
         <div>
           <p className="text-sm font-medium uppercase tracking-wide text-forest">Owner tools</p>
           <h1 className="mt-1 font-display text-3xl font-semibold text-forest-ink sm:text-4xl">
-            Procurement integrity
+            Procurement integrity & fulfillment
           </h1>
           <p className="mt-2 max-w-3xl text-sm text-forest-muted">
-            Inspect quarantined manual supplier purchases against immutable execution evidence and clear only fully reconciled integrity blockers through an explicit audited owner action.
+            Record manual package fulfillment, inspect quarantined supplier purchases against immutable execution evidence, and clear only fully reconciled integrity blockers through explicit audited owner actions.
           </p>
         </div>
         <div className="flex gap-3 text-sm">
@@ -41,6 +42,7 @@ export default async function ProcurementIntegrityPage() {
         </div>
       </div>
 
+      <ProcurementFulfillmentConsole />
       <ProcurementIntegrityConsole />
     </main>
   );
