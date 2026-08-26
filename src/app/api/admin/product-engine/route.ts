@@ -52,6 +52,11 @@ const commercializeSchema = z.object({
   inventoryConfidenceBps: z.number().int().min(0).max(10_000),
   acquisitionReserveCents: z.number().int().nonnegative().default(0),
   availability: z.enum(["in_stock", "out_of_stock", "unknown"]),
+  taxClassification: z.string().trim().min(2).max(160),
+  stripeTaxCode: z.string().trim().regex(/^txcd_[A-Za-z0-9]+$/).max(64),
+  taxVerifiedAt: z.string().trim().min(1).max(64),
+  taxVerificationSource: z.string().trim().min(2).max(160),
+  taxMaxAgeDays: z.number().int().min(1).max(3650).default(365),
 }).strict();
 
 const actionSchema = z.discriminatedUnion("action", [
@@ -180,6 +185,11 @@ export async function POST(req: Request) {
         inventoryConfidenceBps: input.inventoryConfidenceBps,
         acquisitionReserveCents: input.acquisitionReserveCents,
         availability: input.availability,
+        taxClassification: input.taxClassification,
+        stripeTaxCode: input.stripeTaxCode,
+        taxVerifiedAt: input.taxVerifiedAt,
+        taxVerificationSource: input.taxVerificationSource,
+        taxMaxAgeDays: input.taxMaxAgeDays,
       });
 
       if (!result.prepared || !result.selection.selected) {
@@ -249,6 +259,10 @@ export async function POST(req: Request) {
             selectedSupplierId: selected.supplierId,
             selectedOfferId: selected.id,
             selectedOfferKey: selected.offerKey ?? null,
+            stripeTaxCode: input.stripeTaxCode,
+            taxClassification: input.taxClassification,
+            taxVerificationSource: input.taxVerificationSource,
+            taxVerifiedAt: input.taxVerifiedAt,
             contributionProfitCents: prepared.decision.contributionProfitCents,
             contributionMarginBps: prepared.decision.contributionMarginBps,
             reserveTotalCents: prepared.decision.reserveTotalCents,
@@ -294,6 +308,7 @@ export async function POST(req: Request) {
       message === "SOURCE_URL_HTTPS_REQUIRED" ||
       message === "SOURCE_URL_CREDENTIALS_NOT_ALLOWED" ||
       message === "SOURCE_URL_PRIVATE_HOST" ||
+      message === "TAX_CLASSIFICATION_STALE" ||
       message.endsWith("_INVALID") ||
       message.endsWith("_IN_FUTURE") ||
       [
