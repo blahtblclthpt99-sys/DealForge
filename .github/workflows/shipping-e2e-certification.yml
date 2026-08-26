@@ -5,14 +5,18 @@ on:
     branches: [main]
     paths:
       - '.github/workflows/shipping-e2e-certification.yml'
+      - '.github/workflows/cloudflare-production-deploy.yml'
       - 'wrangler.jsonc'
       - 'prisma/schema.postgres.prisma'
+      - 'prisma/migrations/**'
       - 'src/lib/checkout-shipping.ts'
       - 'src/lib/order-destination.ts'
+      - 'src/lib/production-migration-plan.ts'
       - 'src/app/api/checkout/route.ts'
       - 'src/app/api/stripe/webhook/route.ts'
       - 'scripts/complete-hosted-shipping-checkout.ts'
       - 'scripts/verify-shipping-certification.ts'
+      - 'scripts/reconcile-production-migrations.ts'
   workflow_dispatch:
 
 permissions:
@@ -48,7 +52,7 @@ jobs:
         run: |
           set -euo pipefail
           npm run typecheck
-          npx tsx --test tests/checkout-shipping.test.ts tests/order-destination.test.ts tests/order-destination-provenance.test.ts tests/cloudflare-shipping-runtime-contract.test.ts
+          npx tsx --test tests/checkout-shipping.test.ts tests/order-destination.test.ts tests/order-destination-provenance.test.ts tests/cloudflare-shipping-runtime-contract.test.ts tests/production-migration-contract.test.ts
 
       - name: Install Chromium for hosted Checkout
         run: npx playwright install --with-deps chromium

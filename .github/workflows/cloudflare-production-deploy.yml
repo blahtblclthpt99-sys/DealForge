@@ -66,6 +66,29 @@ jobs:
       - name: Install locked dependencies
         run: npm ci --no-fund --no-audit
 
+      - name: Reconcile and deploy production database migrations
+        shell: bash
+        env:
+          PRODUCTION_SCHEMA_MIGRATION: dealforge-neon-production
+        run: |
+          set -euo pipefail
+          gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
+            -f state=pending -f context=cloudflare-db-migrations \
+            -f description='Reconciling Prisma ledger and applying pending production migrations'
+
+          if npx tsx scripts/reconcile-production-migrations.ts --prepare \
+            && npx prisma migrate deploy --schema=prisma/schema.postgres.prisma \
+            && npx tsx scripts/reconcile-production-migrations.ts --verify; then
+            gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
+              -f state=success -f context=cloudflare-db-migrations \
+              -f description='Production migration ledger and schema are current'
+          else
+            gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
+              -f state=failure -f context=cloudflare-db-migrations \
+              -f description='Production database migration gate failed closed'
+            exit 1
+          fi
+
       - name: Verify critical production schema contracts
         run: npx tsx scripts/check-inventory-adapter-schema.ts
 
