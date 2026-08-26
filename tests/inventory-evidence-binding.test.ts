@@ -50,6 +50,16 @@ function specifications() {
   });
 }
 
+function withRequiredEvidence(run: () => void) {
+  const previous = process.env.INVENTORY_EVIDENCE_BINDING_REQUIRED;
+  process.env.INVENTORY_EVIDENCE_BINDING_REQUIRED = "true";
+  try { run(); }
+  finally {
+    if (previous === undefined) delete process.env.INVENTORY_EVIDENCE_BINDING_REQUIRED;
+    else process.env.INVENTORY_EVIDENCE_BINDING_REQUIRED = previous;
+  }
+}
+
 test("current exact-offer observation produces immutable evidence", () => {
   const decision = evaluateInventoryEvidenceBinding(observation(), { supplierOfferId: "offer_123", itemCostCents: 2500 }, NOW);
   assert.equal(decision.allowed, true);
@@ -83,30 +93,41 @@ test("observed supplier price drift fails binding", () => {
 });
 
 test("bound evidence is frozen into the production order supplier snapshot", () => {
-  const previous = process.env.INVENTORY_EVIDENCE_BINDING_REQUIRED;
-  process.env.INVENTORY_EVIDENCE_BINDING_REQUIRED = "true";
-  try {
+  withRequiredEvidence(() => {
     const decision = evaluateInventoryEvidenceBinding(observation(), { supplierOfferId: "offer_123", itemCostCents: 2500 }, NOW);
     assert.ok(decision.evidence);
     const bound = bindInventoryEvidenceToSpecifications(specifications(), "offer_123", decision.evidence);
-    const snapshot = buildOrderSupplierSnapshot(bound, "usd");
+    const snapshot = buildOrderSupplierSnapshot(bound, "usd", NOW);
     assert.ok(snapshot);
     assert.equal(snapshot.inventoryEvidence?.idempotencyKey, decision.evidence.idempotencyKey);
     assert.equal(snapshot.inventoryEvidence?.supplierOfferId, snapshot.persistedOfferId);
     assert.equal(snapshot.inventoryEvidence?.observedPriceCents, snapshot.costBreakdown.itemCostCents);
-  } finally {
-    if (previous === undefined) delete process.env.INVENTORY_EVIDENCE_BINDING_REQUIRED;
-    else process.env.INVENTORY_EVIDENCE_BINDING_REQUIRED = previous;
-  }
+  });
 });
 
 test("production-required order snapshot rejects missing inventory evidence", () => {
-  const previous = process.env.INVENTORY_EVIDENCE_BINDING_REQUIRED;
-  process.env.INVENTORY_EVIDENCE_BINDING_REQUIRED = "true";
-  try {
-    assert.equal(buildOrderSupplierSnapshot(specifications(), "usd"), null);
-  } finally {
-    if (previous === undefined) delete process.env.INVENTORY_EVIDENCE_BINDING_REQUIRED;
-    else process.env.INVENTORY_EVIDENCE_BINDING_REQUIRED = previous;
-  }
+  withRequiredEvidence(() => {
+    assert.equal(buildOrderSupplierSnapshot(specifications(), "usd", NOW), null);
+  });
+});
+
+test("production-required order snapshot rejects evidence that expires while checkout is in flight", () => {
+  withRequiredEvidence(() => {
+    const decision = evaluateInventoryEvidenceBinding(observation(), { supplierOfferId: "offer_123", itemCostCents: 2500 }, NOW);
+    assert.ok(decision.evidence);
+    const bound = bindInventoryEvidenceToSpecifications(specifications(), "offer_123", decision.evidence);
+    assert.ok(buildOrderSupplierSnapshot(bound, "usd", NOW));
+    assert.equal(buildOrderSupplierSnapshot(bound, "usd", Date.parse(decision.evidence.expiresAt)), null);
+  });
+});
+
+test("production-required order snapshot rejects evidence with excessive future observation time", () => {
+  withRequiredEvidence(() => {
+    const decision = evaluateInventoryEvidenceBinding(observation(), { supplierOfferId: "offer_123", itemCostCents: 2500 }, NOW);
+    assert.ok(decision.evidence);
+    const root = JSON.parse(bindInventoryEvidenceToSpecifications(specifications(), "offer_123", decision.evidence));
+    root.supplierOfferV1.inventoryEvidenceV1.observedAt = new Date(NOW + 6 * 60_000).toISOString();
+    root.supplierOfferV1.inventoryEvidenceV1.expiresAt = new Date(NOW + 20 * 60_000).toISOString();
+    assert.equal(buildOrderSupplierSnapshot(JSON.stringify(root), "usd", NOW), null);
+  });
 });
