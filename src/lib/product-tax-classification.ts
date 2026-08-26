@@ -87,3 +87,17 @@ export function evaluateProductTaxClassification(
     classification,
   };
 }
+
+export function bindTaxClassificationToSourceSnapshot(
+  supplierSnapshot: string,
+  classification: ProductTaxClassification,
+) {
+  const root = JSON.parse(supplierSnapshot) as Record<string, unknown>;
+  if (!root || typeof root !== "object" || Array.isArray(root)) {
+    throw new Error("SUPPLIER_SNAPSHOT_INVALID");
+  }
+  return JSON.stringify({
+    ...root,
+    taxClassificationV1: classification,
+  });
+}
