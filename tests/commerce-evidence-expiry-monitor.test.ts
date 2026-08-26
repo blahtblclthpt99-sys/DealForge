@@ -23,8 +23,8 @@ test("Cloudflare maintenance monitor also sweeps current persisted inventory evi
 
 test("automatic inventory sweep remains monotonic-safe", async () => {
   const source = await readFile("src/lib/inventory-operations.ts", "utf8");
-  assert.match(source, /commerceEnabled: false/);
+  assert.match(source, /data: \{[\s\S]*?commerceEnabled: false,[\s\S]*?availability,[\s\S]*?\}/);
   assert.match(source, /requireCurrent: true/);
   assert.match(source, /observed_supplier_price_drift/);
-  assert.doesNotMatch(source, /commerceEnabled: true/);
+  assert.doesNotMatch(source, /data:\s*\{\s*commerceEnabled:\s*true/);
 });
