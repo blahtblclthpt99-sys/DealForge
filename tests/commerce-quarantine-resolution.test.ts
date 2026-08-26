@@ -66,5 +66,5 @@ test("owner recovery UI exposes immutable resolution history without a resume mu
   assert.match(source, /blocked \{formatDuration/);
   assert.match(source, /read-only/);
   assert.doesNotMatch(source, /prisma\.product\.(update|updateMany|upsert|create|delete)/);
-  assert.doesNotMatch(source, /data:\s*\{[^}]*commerceEnabled:\s*true/s);
+  assert.doesNotMatch(source, /data:\s*\{[\s\S]*?commerceEnabled:\s*true/);
 });
