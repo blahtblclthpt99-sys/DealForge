@@ -7,6 +7,7 @@ import {
   procurementEventKey,
   transitionProcurement,
 } from "@/lib/procurement-state-machine";
+import { hasActiveRefund } from "@/lib/refund-procurement-interlock";
 import { reconcileManualPurchaseProjection } from "@/lib/procurement-purchase-reconciliation";
 import { reconcileShipmentJournal } from "@/lib/shipment-journal-integrity";
 import {
@@ -99,11 +100,24 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       const current = await tx.procurementIntent.findUnique({
         where: { id },
         include: {
-          order: { select: { status: true, paidAt: true } },
+          order: {
+            select: {
+              status: true,
+              paidAt: true,
+              refunds: { select: { status: true } },
+            },
+          },
           orderItem: { select: { lineTotalCents: true } },
           events: {
             where: {
-              type: { in: ["RECORD_MANUAL_PURCHASE", "RECORD_SHIPMENT", "MARK_DELIVERED"] },
+              type: {
+                in: [
+                  "RECORD_MANUAL_PURCHASE",
+                  "RECORD_SHIPMENT",
+                  "MARK_DELIVERED",
+                  "POST_PURCHASE_REFUND_EXCEPTION_APPROVED",
+                ],
+              },
             },
             orderBy: { createdAt: "asc" },
             select: { type: true, eventKey: true, detail: true, createdAt: true },
@@ -115,6 +129,12 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       if (current.blockedReason) throw new Error("PROCUREMENT_SOURCE_INTEGRITY_BLOCKED");
       if (current.order.status !== "paid" || !current.order.paidAt) {
         throw new Error("PROCUREMENT_ORDER_NOT_PAID");
+      }
+      if (hasActiveRefund(current.order.refunds)) {
+        throw new Error("SHIPMENT_BLOCKED_BY_ACTIVE_REFUND");
+      }
+      if (current.events.some((event) => event.type === "POST_PURCHASE_REFUND_EXCEPTION_APPROVED")) {
+        throw new Error("SHIPMENT_BLOCKED_BY_POST_PURCHASE_REFUND_EXCEPTION");
       }
       if (!isProcurementStatus(current.status) || current.status !== parsed.data.expectedState) {
         throw new Error("PROCUREMENT_STATE_CONFLICT");
