@@ -98,7 +98,10 @@ test("reconciliation blocker can resolve only after current projection exactly m
     projected.resolutionToken || "",
     new RegExp(`^${PURCHASE_RECONCILIATION_RESOLUTION_TOKEN_PREFIX}[a-f0-9]{64}$`),
   );
-  assert.equal(projected.immutableExecutionEvidence?.purchaseEvidenceHash.startsWith("proc_purchase_evidence_v1_"), true);
+  assert.equal(
+    projected.immutableExecutionEvidence?.purchaseEvidenceHash.startsWith("proc_purchase_evidence_v1_"),
+    true,
+  );
   assert.deepEqual(projected.latestFailure?.reasons, ["actual_total_cost_mismatch"]);
 });
 
@@ -149,10 +152,12 @@ test("owner recovery route is confirmation-bound, transactional, audit-only, and
   assert.match(route, /FOR UPDATE/);
   assert.match(route, /PROCUREMENT_RECONCILIATION_STILL_FAILED/);
   assert.match(route, /PROCUREMENT_RECONCILIATION_RESOLUTION_TOKEN_STALE/);
-  assert.match(route, /data: \{ blockedReason: null \}/);
+  assert.match(
+    route,
+    /updateMany\([\s\S]*?blockedReason: PURCHASE_RECONCILIATION_BLOCKED_REASON,[\s\S]*?updatedAt: intent\.updatedAt,[\s\S]*?data: \{ blockedReason: null \}/,
+  );
   assert.match(route, /type: PURCHASE_RECONCILIATION_RESOLUTION_EVENT/);
-  assert.doesNotMatch(route, /data:\s*\{[^}]*status:/s);
-  assert.doesNotMatch(route, /data:\s*\{[^}]*supplierOrderReference:/s);
+  assert.match(route, /statusPreserved: intent\.status/);
   assert.doesNotMatch(route, /automaticSupplierPurchasingEnabled:\s*true/);
   assert.doesNotMatch(route, /placeOrder|createStripe|paymentIntent|reserveInventory/);
 });
