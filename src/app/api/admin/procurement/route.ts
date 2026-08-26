@@ -3,6 +3,7 @@ import { prisma } from "@/lib/db";
 import { listRecoveryCases } from "@/lib/recovery-reconciliation";
 import { projectPublicShipment } from "@/lib/shipment-tracking";
 import { requireProcurementOwner } from "@/lib/procurement-authorization";
+import { deriveProcurementSourceLock } from "@/lib/procurement-source-lock";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -54,6 +55,7 @@ export async function GET() {
       orderItemId: true,
       status: true,
       executionMode: true,
+      supplierSnapshot: true,
       quantity: true,
       expectedUnitCostCents: true,
       expectedTotalCostCents: true,
@@ -103,25 +105,32 @@ export async function GET() {
   });
 
   const reconciled = intents.map((intent) => {
-    const expected = intent.expectedTotalCostCents;
-    const actual = intent.actualTotalCostCents;
-    const revenue = intent.orderItem.lineTotalCents;
+    const { supplierSnapshot, ...safeIntent } = intent;
+    const expected = safeIntent.expectedTotalCostCents;
+    const actual = safeIntent.actualTotalCostCents;
+    const revenue = safeIntent.orderItem.lineTotalCents;
     const varianceCents = expected !== null && actual !== null ? actual - expected : null;
     const grossMarginCents = actual !== null ? revenue - actual : null;
     const grossMarginBps =
       grossMarginCents !== null && revenue > 0 ? Math.round((grossMarginCents / revenue) * 10_000) : null;
-    const shipmentEvents = intent.events.filter(
+    const shipmentEvents = safeIntent.events.filter(
       (event) => event.type === "RECORD_SHIPMENT" || event.type === "MARK_DELIVERED",
     );
     const recoveryCases = listRecoveryCases({
-      events: intent.events,
-      refunds: intent.order.refunds,
-      actualTotalCostCents: intent.actualTotalCostCents,
-      intentQuantity: intent.quantity,
+      events: safeIntent.events,
+      refunds: safeIntent.order.refunds,
+      actualTotalCostCents: safeIntent.actualTotalCostCents,
+      intentQuantity: safeIntent.quantity,
     });
+    const lockedSource = deriveProcurementSourceLock(
+      supplierSnapshot,
+      safeIntent.expectedUnitCostCents,
+      safeIntent.currency,
+    );
 
     return {
-      ...intent,
+      ...safeIntent,
+      lockedSource,
       shipment: projectPublicShipment(shipmentEvents),
       recovery: {
         caseCount: recoveryCases.length,
