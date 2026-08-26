@@ -6,11 +6,23 @@ import {
   type LivePersistedOffer,
   type PersistedOfferBindingInput,
 } from "../src/lib/persisted-offer-binding";
+import {
+  bindSupplierSourceProvenanceToMetadata,
+  buildSupplierSourceProvenance,
+} from "../src/lib/supplier-source-provenance";
 
 const NOW = Date.parse("2026-08-25T15:30:00.000Z");
 const SOURCE_VERIFIED_AT = "2026-08-25T12:00:00.000Z";
 const PRICE_VERIFIED_AT = "2026-08-25T15:00:00.000Z";
 const LANDED_COST_CENTS = 2725;
+const SOURCE_PROVENANCE = buildSupplierSourceProvenance({
+  supplierName: "Verified Supplier",
+  sourceClass: "authorized_dropshipper",
+  sourceUrl: "https://supplier.example",
+  resaleAllowed: true,
+  sourceVerifiedAt: SOURCE_VERIFIED_AT,
+});
+const SUPPLIER_METADATA = bindSupplierSourceProvenanceToMetadata("{}", SOURCE_PROVENANCE);
 
 function specifications() {
   return JSON.stringify({
@@ -20,6 +32,7 @@ function specifications() {
       sourceUrl: "https://supplier.example/item",
       resaleAllowed: true,
       sourceVerifiedAt: SOURCE_VERIFIED_AT,
+      sourceVerificationV1: SOURCE_PROVENANCE,
       priceVerifiedAt: PRICE_VERIFIED_AT,
       inventoryConfidenceBps: 9300,
       availability: "in_stock",
@@ -83,8 +96,11 @@ function liveOffer(observedPriceCents: number): LivePersistedOffer {
       name: "Verified Supplier",
       active: true,
       sourceClass: "authorized_dropshipper",
+      websiteUrl: "https://supplier.example",
       resaleAllowed: true,
       sourceVerifiedAt: new Date(SOURCE_VERIFIED_AT),
+      verificationSource: "owner_manual",
+      metadata: SUPPLIER_METADATA,
     },
   };
 }
