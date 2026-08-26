@@ -314,16 +314,20 @@ export function projectPublicShipment(
     return null;
   }
 
-  const packages = projectPublicShipments(events, expectedQuantity);
-  if (packages.length !== 1) return null;
-  const projected = packages[0];
+  let delivery: DeliveryRecorded | null = null;
+  if (deliveryEvents.length === 1) {
+    delivery = parseDeliveryEventDetail(deliveryEvents[0].detail);
+    if (!delivery || Date.parse(delivery.deliveredAt) < Date.parse(shipment.shippedAt)) return null;
+    if (delivery.version === 2 && delivery.packageId !== packageIdForShipment(shipment)) return null;
+  }
+
   return {
-    status: projected.status,
-    carrierName: projected.carrierName,
-    trackingNumber: projected.trackingNumber,
-    trackingUrl: projected.trackingUrl,
-    shippedAt: projected.shippedAt,
-    deliveredAt: projected.deliveredAt,
+    status: delivery ? ("delivered" as const) : ("shipped" as const),
+    carrierName: shipment.carrierName,
+    trackingNumber: shipment.trackingNumber,
+    trackingUrl: shipment.trackingUrl,
+    shippedAt: shipment.shippedAt,
+    deliveredAt: delivery?.deliveredAt ?? null,
   };
 }
 
