@@ -15,6 +15,7 @@ import {
   LEGACY_STRIPE_CERTIFICATION_PRODUCT_ID,
 } from "@/lib/certification-catalog";
 import { checkCheckoutExposure } from "@/lib/checkout-exposure";
+import { parseCheckoutShippingCountries } from "@/lib/checkout-shipping";
 import { prisma } from "@/lib/db";
 import { evaluateCertificationCommerceGate, evaluateCommerceGate } from "@/lib/commerce-gate";
 import { resolveOperationalCartPricingPolicy } from "@/lib/loss-reserve-policy";
@@ -137,6 +138,14 @@ export async function POST(request: Request) {
     if (certificationOnly && !isStripeTestMode()) return NextResponse.json({ error: "CERTIFICATION_REQUIRES_TEST_MODE" }, { status: 409 });
     const certificationBypass = certificationOnly && isStripeTestMode();
     if (!commerceEnabled() && !certificationBypass) return NextResponse.json({ error: "COMMERCE_DISABLED" }, { status: 503 });
+
+    stage = "shipping_config";
+    const shippingCountries = certificationOnly
+      ? []
+      : parseCheckoutShippingCountries(process.env.CHECKOUT_ALLOWED_SHIPPING_COUNTRIES);
+    if (!certificationOnly && shippingCountries.length === 0) {
+      return NextResponse.json({ error: "SHIPPING_DESTINATION_NOT_CONFIGURED" }, { status: 503 });
+    }
     const pricingPolicy = certificationBypass ? null : (await resolveOperationalCartPricingPolicy(currency)).policy;
 
     stage = "commercial_gate";
@@ -235,6 +244,7 @@ export async function POST(request: Request) {
       successUrl: `${base}/checkout/success?order=${encodeURIComponent(order.orderNumber)}`,
       cancelUrl: `${base}/checkout/cancel?order=${encodeURIComponent(order.orderNumber)}`,
       cardOnly: certificationOnly && isStripeTestMode(),
+      shippingCountries: certificationOnly ? undefined : shippingCountries,
     });
     if (!stripeSession.id || !stripeSession.url) throw new Error("STRIPE_CHECKOUT_SESSION_INVALID");
 
