@@ -123,9 +123,9 @@ export function calculateQuarantinePriority(
   };
 }
 
-export function rankQuarantineRecoveryQueue(
+export function rankQuarantineRecoveryQueue<T extends QuarantinePriorityProduct>(
   records: CommerceQuarantineRecord[],
-  products: QuarantinePriorityProduct[],
+  products: T[],
   now = new Date(),
 ) {
   const productById = new Map(products.map((product) => [product.id, product]));
@@ -134,6 +134,6 @@ export function rankQuarantineRecoveryQueue(
       const product = productById.get(record.productId);
       return product ? { record, product, priority: calculateQuarantinePriority(record, product, now) } : null;
     })
-    .filter((entry): entry is NonNullable<typeof entry> => entry !== null)
+    .filter((entry): entry is { record: CommerceQuarantineRecord; product: T; priority: QuarantinePriority } => entry !== null)
     .sort((a, b) => b.priority.score - a.priority.score || a.record.quarantinedAt.getTime() - b.record.quarantinedAt.getTime());
 }
