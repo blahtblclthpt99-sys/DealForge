@@ -4,6 +4,7 @@ import {
   MIN_INVENTORY_CONFIDENCE_BPS,
 } from "./commercialization";
 import { prisma } from "./db";
+import { evaluateSpecificationsInventoryEvidenceBinding } from "./inventory-evidence-binding";
 import { readLatestInventoryObservation } from "./inventory-observation-store";
 import type { InventoryObservationSnapshot } from "./inventory-freshness";
 import {
@@ -245,6 +246,14 @@ export function evaluatePersistedOfferBinding(
     reasons.push("live_offer_inventory_observation_price_drift");
   }
 
+  const inventoryEvidence = evaluateSpecificationsInventoryEvidenceBinding(
+    input.specifications,
+    observation,
+    { supplierOfferId: liveOffer.id, itemCostCents: liveOffer.itemCostCents },
+    nowMs,
+  );
+  reasons.push(...inventoryEvidence.reasons.map((reason) => `live_offer_${reason}`));
+
   const liveLandedCostCents = computeSupplierLandedCostCents(candidate);
   if (
     liveLandedCostCents === null ||
@@ -265,8 +274,8 @@ export function evaluatePersistedOfferBinding(
 /**
  * Read-only checkout safety gate. The Product snapshot remains useful for audit,
  * but customer money cannot rely on it alone: the exact normalized supplier
- * offer referenced by the snapshot must still exist, retain a current inventory
- * observation with non-conflicting observed price evidence, and remain eligible now.
+ * offer referenced by the snapshot must still exist, retain the exact current
+ * inventory observation bound during commercialization, and remain eligible now.
  */
 export async function checkPersistedOfferBinding(
   input: PersistedOfferBindingInput,
