@@ -222,7 +222,8 @@ export async function sweepManualPurchaseReconciliation(actor = "system", reques
             where: { id: current.id, blockedReason: null, updatedAt: current.updatedAt },
             data: { blockedReason: PURCHASE_RECONCILIATION_BLOCKED_REASON },
           });
-          if (updated.count === 1) quarantined += 1;
+          if (updated.count !== 1) throw new Error("PROCUREMENT_RECONCILIATION_CONCURRENT_CHANGE");
+          quarantined += 1;
         } else {
           alreadyBlocked += 1;
         }
