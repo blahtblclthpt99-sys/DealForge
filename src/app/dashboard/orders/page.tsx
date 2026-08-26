@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 import { CheckCircle2, Clock3, Package, Truck } from "lucide-react";
 import { readSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
-import { projectPublicShipment, publicFulfillmentStatus } from "@/lib/shipment-tracking";
+import { projectPublicShipments, publicFulfillmentStatus } from "@/lib/shipment-tracking";
 
 function money(cents: number, currency: string) {
   try {
@@ -64,7 +64,7 @@ export default async function OrdersPage() {
               status: true,
               events: {
                 where: { type: { in: ["RECORD_SHIPMENT", "MARK_DELIVERED"] } },
-                orderBy: { createdAt: "desc" },
+                orderBy: { createdAt: "asc" },
                 select: { type: true, detail: true, createdAt: true },
               },
             },
@@ -80,7 +80,7 @@ export default async function OrdersPage() {
         <div>
           <p className="text-sm font-medium uppercase tracking-wide text-forest">Account</p>
           <h1 className="mt-1 font-display text-4xl font-semibold text-forest-ink">Your orders</h1>
-          <p className="mt-2 text-forest-muted">Purchase history, fulfillment status, and shipment tracking.</p>
+          <p className="mt-2 text-forest-muted">Purchase history, fulfillment status, and package tracking.</p>
         </div>
         <Link href="/dashboard" className="dn-btn-secondary">Back to dashboard</Link>
       </div>
@@ -109,10 +109,20 @@ export default async function OrdersPage() {
 
               <div className="divide-y divide-forest/10">
                 {order.items.map((item) => {
-                  const status = publicFulfillmentStatus(item.procurementIntent?.status || "processing");
-                  const shipment = projectPublicShipment(item.procurementIntent?.events || []);
+                  const internalStatus = publicFulfillmentStatus(item.procurementIntent?.status || "processing");
+                  const shipments = projectPublicShipments(item.procurementIntent?.events || [], item.quantity);
+                  const shippedQuantity = shipments.reduce((total, shipment) => total + shipment.quantity, 0);
+                  const deliveredQuantity = shipments
+                    .filter((shipment) => shipment.status === "delivered")
+                    .reduce((total, shipment) => total + shipment.quantity, 0);
+                  const status =
+                    internalStatus === "delivered" && shippedQuantity === item.quantity && deliveredQuantity === item.quantity
+                      ? "delivered"
+                      : internalStatus === "shipped" && shipments.length > 0 && shippedQuantity <= item.quantity
+                        ? "shipped"
+                        : "processing";
                   return (
-                    <div key={item.id} className="grid gap-4 p-5 md:grid-cols-[1fr_auto] md:items-center">
+                    <div key={item.id} className="grid gap-4 p-5 md:grid-cols-[1fr_auto] md:items-start">
                       <div>
                         <Link href={`/product/${item.productSlug}`} className="font-semibold text-forest-ink hover:text-forest">
                           {item.title}
@@ -120,23 +130,32 @@ export default async function OrdersPage() {
                         <p className="mt-1 text-sm text-forest-muted">
                           Qty {item.quantity} · {money(item.lineTotalCents, order.currency)}
                         </p>
-                        {shipment ? (
-                          <div className="mt-3 text-sm text-forest-muted">
-                            <p>{shipment.carrierName} tracking: <span className="font-medium text-forest-ink">{shipment.trackingNumber}</span></p>
-                            <p className="mt-1">
-                              Shipped {dateLabel(new Date(shipment.shippedAt))}
-                              {shipment.deliveredAt ? ` · Delivered ${dateLabel(new Date(shipment.deliveredAt))}` : ""}
-                            </p>
-                            {shipment.trackingUrl ? (
-                              <a
-                                href={shipment.trackingUrl}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="mt-2 inline-flex font-semibold text-forest hover:underline"
-                              >
-                                Track package
-                              </a>
-                            ) : null}
+                        {status !== "processing" && shipments.length ? (
+                          <div className="mt-4 space-y-3">
+                            {shipments.map((shipment, index) => (
+                              <div key={shipment.packageId} className="rounded-xl border border-forest/10 p-3 text-sm text-forest-muted">
+                                <p className="font-medium text-forest-ink">
+                                  Package {index + 1} · Qty {shipment.quantity} · {shipment.status}
+                                </p>
+                                <p className="mt-1">
+                                  {shipment.carrierName} tracking: <span className="font-medium text-forest-ink">{shipment.trackingNumber}</span>
+                                </p>
+                                <p className="mt-1">
+                                  Shipped {dateLabel(new Date(shipment.shippedAt))}
+                                  {shipment.deliveredAt ? ` · Delivered ${dateLabel(new Date(shipment.deliveredAt))}` : ""}
+                                </p>
+                                {shipment.trackingUrl ? (
+                                  <a
+                                    href={shipment.trackingUrl}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="mt-2 inline-flex font-semibold text-forest hover:underline"
+                                  >
+                                    Track package
+                                  </a>
+                                ) : null}
+                              </div>
+                            ))}
                           </div>
                         ) : null}
                       </div>
