@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
@@ -10,7 +9,11 @@ import {
 import { reconcileManualPurchaseProjection } from "@/lib/procurement-purchase-reconciliation";
 import { reconcileShipmentJournal } from "@/lib/shipment-journal-integrity";
 import {
+  createDeliveryRecord,
   createShipmentRecord,
+  packageIdForShipment,
+  parseShipmentEventDetail,
+  summarizeShipmentJournal,
   TRACKING_CARRIERS,
 } from "@/lib/shipment-tracking";
 import { readLimitedJson } from "@/lib/request-json";
@@ -24,19 +27,22 @@ export const dynamic = "force-dynamic";
 
 const isoTimestamp = z.string().trim().min(20).max(40).optional();
 const note = z.string().trim().min(1).max(500).optional();
+const packageId = z.string().trim().regex(/^pkg_[a-f0-9]{24}$/).optional();
 const ActionSchema = z.discriminatedUnion("action", [
   z.object({
     action: z.literal("RECORD_SHIPMENT"),
-    expectedState: z.literal("supplier_ordered_manual"),
+    expectedState: z.enum(["supplier_ordered_manual", "shipped"]),
     carrierCode: z.enum(TRACKING_CARRIERS),
     carrierName: z.string().trim().min(2).max(60).optional(),
     trackingNumber: z.string().trim().min(4).max(100),
+    quantity: z.number().int().positive().max(100000).optional(),
     shippedAt: isoTimestamp,
     note,
   }),
   z.object({
     action: z.literal("MARK_DELIVERED"),
     expectedState: z.literal("shipped"),
+    packageId,
     deliveredAt: isoTimestamp,
     note,
   }),
@@ -61,13 +67,6 @@ function noStore(response: NextResponse) {
   response.headers.set("Cache-Control", "private, no-store, max-age=0");
   response.headers.set("Referrer-Policy", "no-referrer");
   return response;
-}
-
-function normalizeTimestamp(value: string | undefined) {
-  if (!value) return new Date().toISOString();
-  const parsed = Date.parse(value);
-  if (!Number.isFinite(parsed) || parsed > Date.now() + 15 * 60 * 1000) return null;
-  return new Date(parsed).toISOString();
 }
 
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
@@ -135,16 +134,32 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
           .filter((event) => event.type === "RECORD_MANUAL_PURCHASE")
           .map((event) => ({ eventKey: event.eventKey, detail: event.detail })),
       });
-      if (!purchaseReconciliation.ok) {
-        throw new Error("PROCUREMENT_PURCHASE_RECONCILIATION_REQUIRED");
-      }
-      if (!purchaseReconciliation.evidence?.purchaseEvidenceHash) {
+      if (!purchaseReconciliation.ok || !purchaseReconciliation.evidence?.purchaseEvidenceHash) {
         throw new Error("PROCUREMENT_PURCHASE_RECONCILIATION_REQUIRED");
       }
       const purchaseEvidenceHash = purchaseReconciliation.evidence.purchaseEvidenceHash;
 
       const transition = transitionProcurement(current.status, parsed.data.action);
       if (!transition.ok) throw new Error("PROCUREMENT_TRANSITION_INVALID");
+
+      const shipmentEvents = current.events.filter((event) => event.type === "RECORD_SHIPMENT");
+      const fulfillmentEvents = current.events
+        .filter((event) => event.type === "RECORD_SHIPMENT" || event.type === "MARK_DELIVERED")
+        .map((event) => ({ type: event.type, detail: event.detail, createdAt: event.createdAt }));
+      const fulfillmentJournal = summarizeShipmentJournal(fulfillmentEvents);
+      if (!fulfillmentJournal.ok) throw new Error(fulfillmentJournal.reason);
+
+      if (shipmentEvents.length > 0) {
+        const shipmentReconciliation = reconcileShipmentJournal({
+          events: shipmentEvents.map((event) => ({ eventKey: event.eventKey, detail: event.detail })),
+          expectedPurchaseEvidenceHash: purchaseEvidenceHash,
+          expectedQuantity: current.quantity,
+          allowPartial: true,
+        });
+        if (!shipmentReconciliation.ok) {
+          throw new Error("SHIPMENT_JOURNAL_RECONCILIATION_REQUIRED");
+        }
+      }
 
       if (parsed.data.action === "RECORD_SHIPMENT") {
         if (
@@ -155,89 +170,131 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
         ) {
           throw new Error("SHIPMENT_REQUIRES_RECORDED_MANUAL_PURCHASE");
         }
-        if (current.events.some((event) => event.type === "RECORD_SHIPMENT")) {
-          throw new Error("SHIPMENT_ALREADY_RECORDED");
-        }
+
+        const remainingQuantity = current.quantity - fulfillmentJournal.shippedQuantity;
+        if (remainingQuantity <= 0) throw new Error("SHIPMENT_FULL_QUANTITY_ALREADY_RECORDED");
+        const shipmentQuantity = parsed.data.quantity ?? remainingQuantity;
+        if (shipmentQuantity > remainingQuantity) throw new Error("SHIPMENT_QUANTITY_EXCEEDS_REMAINING");
 
         const shipment = createShipmentRecord({
           carrierCode: parsed.data.carrierCode,
           carrierName: parsed.data.carrierName,
           trackingNumber: parsed.data.trackingNumber,
-          quantity: current.quantity,
+          quantity: shipmentQuantity,
           shippedAt: parsed.data.shippedAt,
         });
         if (!shipment) throw new Error("INVALID_SHIPMENT_TRACKING");
+        if (fulfillmentJournal.packages.some((entry) => entry.packageId === shipment.packageId)) {
+          throw new Error("SHIPMENT_PACKAGE_ALREADY_RECORDED");
+        }
 
+        const nextStatus = transition.next;
         const updated = await tx.procurementIntent.updateMany({
           where: { id: current.id, status: current.status, updatedAt: current.updatedAt },
-          data: { status: transition.next },
+          data: { status: nextStatus },
         });
         if (updated.count !== 1) throw new Error("PROCUREMENT_CONCURRENT_CHANGE");
 
         await tx.procurementEvent.create({
           data: {
-            eventKey: procurementEventKey(current.id, parsed.data.action, randomUUID()),
+            eventKey: procurementEventKey(current.id, parsed.data.action, shipment.packageId),
             procurementIntentId: current.id,
             type: parsed.data.action,
             actor: `owner:${auth.admin.id}`,
             detail: JSON.stringify({
               previousStatus: current.status,
-              nextStatus: transition.next,
+              nextStatus,
               shipment,
-              purchaseEvidenceHash: purchaseEvidenceHash,
+              purchaseEvidenceHash,
+              orderedQuantity: current.quantity,
+              shippedQuantityBefore: fulfillmentJournal.shippedQuantity,
+              shippedQuantityAfter: fulfillmentJournal.shippedQuantity + shipment.quantity,
               note: parsed.data.note || null,
               automaticSupplierPurchasingEnabled: false,
             }),
           },
         });
-        return { status: transition.next, shipment };
+        return {
+          status: nextStatus,
+          shipment,
+          fulfillment: {
+            orderedQuantity: current.quantity,
+            shippedQuantity: fulfillmentJournal.shippedQuantity + shipment.quantity,
+            deliveredQuantity: fulfillmentJournal.deliveredQuantity,
+          },
+        };
       }
 
-      const shipmentReconciliation = reconcileShipmentJournal({
-        events: current.events
-          .filter((event) => event.type === "RECORD_SHIPMENT")
-          .map((event) => ({ eventKey: event.eventKey, detail: event.detail })),
-        expectedPurchaseEvidenceHash: purchaseEvidenceHash,
-        expectedQuantity: current.quantity,
+      if (fulfillmentJournal.packages.length === 0) throw new Error("DELIVERY_REQUIRES_SHIPMENT");
+      const undelivered = fulfillmentJournal.packages.filter((entry) => !entry.deliveredAt);
+      const targetPackage = parsed.data.packageId
+        ? fulfillmentJournal.packages.find((entry) => entry.packageId === parsed.data.packageId)
+        : undelivered.length === 1
+          ? undelivered[0]
+          : null;
+      if (!targetPackage) {
+        throw new Error(parsed.data.packageId ? "DELIVERY_PACKAGE_NOT_FOUND" : "DELIVERY_PACKAGE_ID_REQUIRED");
+      }
+      if (targetPackage.deliveredAt) throw new Error("DELIVERY_PACKAGE_ALREADY_RECORDED");
+
+      const delivery = createDeliveryRecord({
+        packageId: targetPackage.packageId,
+        deliveredAt: parsed.data.deliveredAt,
       });
-      if (!shipmentReconciliation.ok || !shipmentReconciliation.shipment) {
-        throw new Error("SHIPMENT_JOURNAL_RECONCILIATION_REQUIRED");
-      }
-      const shipment = shipmentReconciliation.shipment;
-
-      if (current.events.some((event) => event.type === "MARK_DELIVERED")) {
-        throw new Error("DELIVERY_ALREADY_RECORDED");
-      }
-      const deliveredAt = normalizeTimestamp(parsed.data.deliveredAt);
-      if (!deliveredAt || Date.parse(deliveredAt) < Date.parse(shipment.shippedAt)) {
+      if (!delivery || Date.parse(delivery.deliveredAt) < Date.parse(targetPackage.shippedAt)) {
         throw new Error("INVALID_DELIVERY_TIMESTAMP");
       }
 
+      const targetShipmentEvent = shipmentEvents.find((event) => {
+        const shipment = parseShipmentEventDetail(event.detail);
+        return shipment ? packageIdForShipment(shipment) === targetPackage.packageId : false;
+      });
+      if (!targetShipmentEvent) throw new Error("SHIPMENT_JOURNAL_RECONCILIATION_REQUIRED");
+
+      const deliveredQuantityAfter = fulfillmentJournal.deliveredQuantity + targetPackage.quantity;
+      const fullyShipped = fulfillmentJournal.shippedQuantity === current.quantity;
+      const everyRecordedPackageDelivered = fulfillmentJournal.packages.every(
+        (entry) => Boolean(entry.deliveredAt) || entry.packageId === targetPackage.packageId,
+      );
+      const nextStatus = fullyShipped && everyRecordedPackageDelivered ? transition.next : "shipped";
+
       const updated = await tx.procurementIntent.updateMany({
         where: { id: current.id, status: current.status, updatedAt: current.updatedAt },
-        data: { status: transition.next },
+        data: { status: nextStatus },
       });
       if (updated.count !== 1) throw new Error("PROCUREMENT_CONCURRENT_CHANGE");
 
-      const delivery = { version: 1 as const, deliveredAt };
       await tx.procurementEvent.create({
         data: {
-          eventKey: procurementEventKey(current.id, parsed.data.action, randomUUID()),
+          eventKey: procurementEventKey(current.id, parsed.data.action, targetPackage.packageId),
           procurementIntentId: current.id,
           type: parsed.data.action,
           actor: `owner:${auth.admin.id}`,
           detail: JSON.stringify({
             previousStatus: current.status,
-            nextStatus: transition.next,
+            nextStatus,
             delivery,
-            shipmentEventKey: current.events.find((event) => event.type === "RECORD_SHIPMENT")?.eventKey || null,
-            purchaseEvidenceHash: purchaseEvidenceHash,
+            shipmentEventKey: targetShipmentEvent.eventKey,
+            purchaseEvidenceHash,
+            orderedQuantity: current.quantity,
+            shippedQuantity: fulfillmentJournal.shippedQuantity,
+            deliveredQuantityBefore: fulfillmentJournal.deliveredQuantity,
+            deliveredQuantityAfter,
             note: parsed.data.note || null,
             automaticSupplierPurchasingEnabled: false,
           }),
         },
       });
-      return { status: transition.next, shipment, delivery };
+      return {
+        status: nextStatus,
+        package: targetPackage,
+        delivery,
+        fulfillment: {
+          orderedQuantity: current.quantity,
+          shippedQuantity: fulfillmentJournal.shippedQuantity,
+          deliveredQuantity: deliveredQuantityAfter,
+        },
+      };
     });
 
     return noStore(
@@ -252,7 +309,13 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     const message = error instanceof Error ? error.message : "UNKNOWN";
     const notFound = message === "PROCUREMENT_INTENT_NOT_FOUND";
     const invalidInput = ["INVALID_SHIPMENT_TRACKING", "INVALID_DELIVERY_TIMESTAMP"].includes(message);
-    if (notFound || invalidInput || message.startsWith("PROCUREMENT_") || message.startsWith("SHIPMENT_") || message.startsWith("DELIVERY_")) {
+    if (
+      notFound ||
+      invalidInput ||
+      message.startsWith("PROCUREMENT_") ||
+      message.startsWith("SHIPMENT_") ||
+      message.startsWith("DELIVERY_")
+    ) {
       return noStore(
         NextResponse.json(
           { error: message },
