@@ -8,6 +8,11 @@ import {
   type PreparedCommercialization,
 } from "./commercialization";
 import { prisma } from "./db";
+import {
+  bindInventoryEvidenceToSpecifications,
+  inventoryEvidenceBindingRequired,
+  resolveCurrentInventoryEvidence,
+} from "./inventory-evidence-binding";
 import { resolveOperationalCartPricingPolicy } from "./loss-reserve-policy";
 import { isDirectResaleSourceClass } from "./source-policy";
 import { selectPersistedSupplierOffer } from "./supplier-store";
@@ -350,11 +355,30 @@ export async function persistSelectAndPrepareCommercialization(
     pricingPolicy,
   );
 
+  let specifications = annotatePersistedSelection(prepared.specifications, selected);
+  if (inventoryEvidenceBindingRequired()) {
+    const inventory = await resolveCurrentInventoryEvidence(selected.id, selected.itemCostCents, nowMs);
+    if (!inventory.allowed || !inventory.evidence) {
+      await prisma.product.update({
+        where: { id: productId },
+        data: { commerceEnabled: false, availability: "unknown" },
+      });
+      return {
+        submittedSupplierId: supplier.id,
+        submittedOfferId: initialOffer.id,
+        submittedOfferKey: offerKey,
+        selection,
+        prepared: null,
+      };
+    }
+    specifications = bindInventoryEvidenceToSpecifications(specifications, selected.id, inventory.evidence);
+  }
+
   return {
     submittedSupplierId: supplier.id,
     submittedOfferId: initialOffer.id,
     submittedOfferKey: offerKey,
     selection,
-    prepared: { ...prepared, specifications: annotatePersistedSelection(prepared.specifications, selected) },
+    prepared: { ...prepared, specifications },
   };
 }
