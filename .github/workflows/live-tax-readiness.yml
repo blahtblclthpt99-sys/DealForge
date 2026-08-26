@@ -1,0 +1,57 @@
+name: Live Stripe Tax Readiness
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  statuses: write
+
+jobs:
+  verify-live-tax-readiness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci --no-fund --no-audit
+
+      - name: Validate live-tax readiness logic
+        run: |
+          set -euo pipefail
+          npm run typecheck
+          npx tsx --test tests/stripe-live-tax-readiness.test.ts tests/commerce-live-stripe-mode.test.ts
+
+      - name: Verify live Stripe Tax configuration without charging or mutating
+        env:
+          STRIPE_LIVE_SECRET_KEY: ${{ secrets.STRIPE_LIVE_SECRET_KEY }}
+        run: |
+          set -euo pipefail
+          [[ "$STRIPE_LIVE_SECRET_KEY" == sk_live_* ]] || {
+            echo '::error::STRIPE_LIVE_SECRET_KEY is missing or is not a Stripe live key.'
+            exit 1
+          }
+          npx tsx scripts/verify-live-tax-readiness.ts
+
+      - name: Mark live tax readiness certified for this source revision
+        run: |
+          set -euo pipefail
+          gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
+            -f state=success \
+            -f context=stripe-live-tax-readiness \
+            -f description='Read-only live Stripe Tax settings and active registration readiness verified'
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: live-tax-readiness-${{ github.run_id }}-${{ github.run_attempt }}
+          path: live-tax-readiness-evidence.json
+          if-no-files-found: ignore
