@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - '.github/workflows/stripe-tax-preflight-diagnostic.yml'
+      - 'src/lib/stripe-commerce.ts'
   workflow_dispatch:
 
 permissions:
@@ -46,7 +47,9 @@ jobs:
             -d 'shipping_address_collection[allowed_countries][]=US' \
             -d 'line_items[0][price_data][currency]=usd' \
             -d 'line_items[0][price_data][unit_amount]=100' \
+            -d 'line_items[0][price_data][tax_behavior]=exclusive' \
             -d 'line_items[0][price_data][product_data][name]=DealForge Tax Preflight' \
+            -d 'line_items[0][price_data][product_data][tax_code]=txcd_99999999' \
             -d 'line_items[0][quantity]=1')
 
           HTTP_CODE="$code" RESPONSE_FILE="$response_file" node <<'NODE'
@@ -56,7 +59,11 @@ jobs:
           try { body = JSON.parse(fs.readFileSync(process.env.RESPONSE_FILE, 'utf8')); } catch {}
 
           if (code >= 200 && code < 300 && body.id) {
-            console.log(`STRIPE_TAX_PREFLIGHT=PASS http=${code} automatic_tax=${body.automatic_tax?.enabled === true}`);
+            if (body.automatic_tax?.enabled !== true) {
+              console.error('STRIPE_TAX_PREFLIGHT=FAIL automatic_tax was not enabled on the returned Session');
+              process.exit(1);
+            }
+            console.log(`STRIPE_TAX_PREFLIGHT=PASS http=${code} automatic_tax=true tax_code=txcd_99999999 tax_behavior=exclusive`);
             process.exit(0);
           }
 
