@@ -45,17 +45,28 @@ test("live procurement source revalidation is strict and decision-only", async (
   assert.doesNotMatch(source, /commerceEnabled\s*[:=]\s*true|stripe|purchase/i);
 });
 
-test("manual purchase requires explicit confirmation plus variance and loss controls", async () => {
+test("manual purchase requires exact paid-order source lock plus variance and loss controls", async () => {
   const source = await readFile(routePath, "utf8");
   assert.match(source, /manualPurchaseConfirmed: z\.literal\(true\)/);
+  assert.match(source, /supplierOfferId,/);
+  assert.match(source, /sourceLockKey,/);
+  assert.match(source, /deriveProcurementSourceLock/);
+  const confirmations = source.match(/procurementSourceConfirmationMatches\(/g) || [];
+  assert.ok(confirmations.length >= 2);
+  assert.match(source, /PROCUREMENT_LOCKED_SOURCE_MISMATCH/);
+  assert.match(source, /sourceLockConfirmed: true/);
   assert.match(source, /acceptCostVariance/);
   assert.match(source, /acceptLossRisk/);
   assert.match(source, /validateManualPurchaseEconomics/);
 });
 
-test("procurement queue does not expose immutable supplier source snapshot", async () => {
+test("owner procurement queue derives a safe source-lock projection without returning raw snapshot", async () => {
   const source = await readFile(queuePath, "utf8");
-  assert.doesNotMatch(source, /supplierSnapshot: true/);
+  assert.match(source, /supplierSnapshot: true/);
+  assert.match(source, /const \{ supplierSnapshot, \.\.\.safeIntent \} = intent/);
+  assert.match(source, /deriveProcurementSourceLock\(/);
+  assert.match(source, /lockedSource,/);
+  assert.doesNotMatch(source, /return\s*\{[\s\S]*\.\.\.safeIntent,[\s\S]*supplierSnapshot[,}]/);
   assert.match(source, /requireProcurementOwner/);
   assert.match(source, /automaticSupplierPurchasingEnabled: false/);
 });
