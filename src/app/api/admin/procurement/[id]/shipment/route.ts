@@ -7,6 +7,7 @@ import {
   procurementEventKey,
   transitionProcurement,
 } from "@/lib/procurement-state-machine";
+import { reconcileManualPurchaseProjection } from "@/lib/procurement-purchase-reconciliation";
 import {
   createShipmentRecord,
   parseShipmentEventDetail,
@@ -99,10 +100,13 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
         where: { id },
         include: {
           order: { select: { status: true, paidAt: true } },
+          orderItem: { select: { lineTotalCents: true } },
           events: {
-            where: { type: { in: ["RECORD_SHIPMENT", "MARK_DELIVERED"] } },
+            where: {
+              type: { in: ["RECORD_MANUAL_PURCHASE", "RECORD_SHIPMENT", "MARK_DELIVERED"] },
+            },
             orderBy: { createdAt: "asc" },
-            select: { type: true, detail: true, createdAt: true },
+            select: { type: true, eventKey: true, detail: true, createdAt: true },
           },
         },
       });
@@ -114,6 +118,25 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       }
       if (!isProcurementStatus(current.status) || current.status !== parsed.data.expectedState) {
         throw new Error("PROCUREMENT_STATE_CONFLICT");
+      }
+
+      const purchaseReconciliation = reconcileManualPurchaseProjection({
+        status: current.status,
+        supplierSnapshot: current.supplierSnapshot,
+        quantity: current.quantity,
+        expectedUnitCostCents: current.expectedUnitCostCents,
+        expectedTotalCostCents: current.expectedTotalCostCents,
+        currency: current.currency,
+        supplierOrderReference: current.supplierOrderReference,
+        actualTotalCostCents: current.actualTotalCostCents,
+        executedAt: current.executedAt,
+        orderItem: current.orderItem,
+        events: current.events
+          .filter((event) => event.type === "RECORD_MANUAL_PURCHASE")
+          .map((event) => ({ eventKey: event.eventKey, detail: event.detail })),
+      });
+      if (!purchaseReconciliation.ok) {
+        throw new Error("PROCUREMENT_PURCHASE_RECONCILIATION_REQUIRED");
       }
 
       const transition = transitionProcurement(current.status, parsed.data.action);
@@ -157,6 +180,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
               previousStatus: current.status,
               nextStatus: transition.next,
               shipment,
+              purchaseEvidenceHash: purchaseReconciliation.evidence?.purchaseEvidenceHash || null,
               note: parsed.data.note || null,
               automaticSupplierPurchasingEnabled: false,
             }),
@@ -194,6 +218,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
             previousStatus: current.status,
             nextStatus: transition.next,
             delivery,
+            purchaseEvidenceHash: purchaseReconciliation.evidence?.purchaseEvidenceHash || null,
             note: parsed.data.note || null,
             automaticSupplierPurchasingEnabled: false,
           }),
