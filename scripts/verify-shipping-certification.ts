@@ -1,8 +1,11 @@
-import { PrismaClient } from "@prisma/client";
 import { readFile, writeFile } from "node:fs/promises";
+import { getPrisma } from "../src/lib/db";
 
 async function main() {
-  const prisma = new PrismaClient();
+  // prisma/schema.postgres.prisma uses engineType="client", so every Node and
+  // Worker execution requires the configured driver adapter. Reuse DealForge's
+  // canonical database factory instead of constructing a raw PrismaClient.
+  const prisma = getPrisma();
   const checkout = JSON.parse(await readFile(process.env.CHECKOUT_ARTIFACT ?? "checkout.json", "utf8")) as { orderNumber?: string };
   const completion = JSON.parse(await readFile(process.env.COMPLETION_ARTIFACT ?? "shipping-checkout-completion.json", "utf8")) as {
     certificationMode?: string;
