@@ -45,6 +45,18 @@ test("supplier metadata preserves and returns exact provenance", () => {
   assert.deepEqual(readSupplierSourceProvenanceFromMetadata(metadata), provenance);
 });
 
+test("malformed supplier metadata is never silently overwritten", () => {
+  const provenance = build();
+  assert.throws(
+    () => bindSupplierSourceProvenanceToMetadata("{malformed", provenance),
+    /SUPPLIER_METADATA_INVALID/,
+  );
+  assert.throws(
+    () => bindSupplierSourceProvenanceToMetadata("[]", provenance),
+    /SUPPLIER_METADATA_INVALID/,
+  );
+});
+
 test("live supplier drift is detected independently of product JSON", () => {
   const provenance = build();
   const metadata = bindSupplierSourceProvenanceToMetadata("{}", provenance);
