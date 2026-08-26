@@ -5,6 +5,15 @@ import {
   buildOrderSupplierSnapshot,
   serializeOrderSupplierSnapshot,
 } from "../src/lib/order-source-snapshot";
+import { buildSupplierSourceProvenance } from "../src/lib/supplier-source-provenance";
+
+const SOURCE_PROVENANCE = buildSupplierSourceProvenance({
+  supplierName: "Verified Supplier",
+  sourceClass: "authorized_dropshipper",
+  sourceUrl: "https://supplier.example",
+  resaleAllowed: true,
+  sourceVerifiedAt: "2026-08-24T20:00:00.000Z",
+});
 
 function specifications(overrides: Record<string, unknown> = {}) {
   return JSON.stringify({
@@ -14,6 +23,7 @@ function specifications(overrides: Record<string, unknown> = {}) {
       sourceUrl: "https://supplier.example/item",
       resaleAllowed: true,
       sourceVerifiedAt: "2026-08-24T20:00:00.000Z",
+      sourceVerificationV1: SOURCE_PROVENANCE,
       priceVerifiedAt: "2026-08-25T00:30:00.000Z",
       inventoryConfidenceBps: 9300,
       availability: "in_stock",
@@ -40,12 +50,24 @@ test("builds a deterministic immutable supplier snapshot for an order line", () 
   assert.equal(snapshot.persistedSupplierId, "supplier-a");
   assert.equal(snapshot.persistedOfferId, "offer-a");
   assert.equal(snapshot.persistedOfferKey, "offer_v1_test");
+  assert.deepEqual(snapshot.sourceVerification, SOURCE_PROVENANCE);
   assert.equal(snapshot.currency, "usd");
   assert.equal(snapshot.costBreakdown.landedCostCents, 2725);
   assert.equal(
     serializeOrderSupplierSnapshot(snapshot),
     serializeOrderSupplierSnapshot(buildOrderSupplierSnapshot(specifications(), "usd")),
   );
+});
+
+test("supplier provenance drift cannot enter the immutable order snapshot", () => {
+  const changed = buildSupplierSourceProvenance({
+    supplierName: "Verified Supplier",
+    sourceClass: "authorized_dropshipper",
+    sourceUrl: "https://other.example",
+    resaleAllowed: true,
+    sourceVerifiedAt: "2026-08-24T20:00:00.000Z",
+  });
+  assert.equal(buildOrderSupplierSnapshot(specifications({ sourceVerificationV1: changed }), "usd"), null);
 });
 
 test("missing persisted provenance fails closed", () => {
