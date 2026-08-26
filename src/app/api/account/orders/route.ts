@@ -1,7 +1,11 @@
 import { NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth";
 import { prisma } from "@/lib/db";
-import { projectPublicShipment, publicFulfillmentStatus } from "@/lib/shipment-tracking";
+import {
+  projectPublicShipment,
+  projectPublicShipments,
+  publicFulfillmentStatus,
+} from "@/lib/shipment-tracking";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -55,7 +59,7 @@ export async function GET() {
               status: true,
               events: {
                 where: { type: { in: ["RECORD_SHIPMENT", "MARK_DELIVERED"] } },
-                orderBy: { createdAt: "desc" },
+                orderBy: { createdAt: "asc" },
                 select: { type: true, detail: true, createdAt: true },
               },
             },
@@ -75,16 +79,20 @@ export async function GET() {
     totalCents: order.totalCents,
     paidAt: order.paidAt,
     createdAt: order.createdAt,
-    items: order.items.map((item) => ({
-      id: item.id,
-      productSlug: item.productSlug,
-      title: item.title,
-      quantity: item.quantity,
-      unitPriceCents: item.unitPriceCents,
-      lineTotalCents: item.lineTotalCents,
-      fulfillmentStatus: publicFulfillmentStatus(item.procurementIntent?.status || "processing"),
-      shipment: projectPublicShipment(item.procurementIntent?.events || []),
-    })),
+    items: order.items.map((item) => {
+      const events = item.procurementIntent?.events || [];
+      return {
+        id: item.id,
+        productSlug: item.productSlug,
+        title: item.title,
+        quantity: item.quantity,
+        unitPriceCents: item.unitPriceCents,
+        lineTotalCents: item.lineTotalCents,
+        fulfillmentStatus: publicFulfillmentStatus(item.procurementIntent?.status || "processing"),
+        shipment: projectPublicShipment(events),
+        shipments: projectPublicShipments(events),
+      };
+    }),
   }));
 
   return noStore(NextResponse.json({ orders: customerOrders }));
