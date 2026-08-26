@@ -5,9 +5,7 @@ import {
   isSameOriginProcurementMutation,
   requireProcurementOwner,
 } from "@/lib/procurement-authorization";
-import {
-  PURCHASE_RECONCILIATION_BLOCKED_REASON,
-} from "@/lib/procurement-purchase-reconciliation";
+import { PURCHASE_RECONCILIATION_BLOCKED_REASON } from "@/lib/procurement-purchase-reconciliation";
 import {
   PURCHASE_RECONCILIATION_RESOLUTION_EVENT,
   PURCHASE_RECONCILIATION_RESOLUTION_TOKEN_PREFIX,
@@ -322,7 +320,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
         NextResponse.json(
           {
             error: result.error,
-            ...(result.reasons ? { reasons: result.reasons } : {}),
+            ...("reasons" in result ? { reasons: result.reasons } : {}),
             automaticSupplierPurchasingEnabled: false,
           },
           { status: result.status },
