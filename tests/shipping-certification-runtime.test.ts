@@ -34,3 +34,14 @@ test("hosted shipping certification requires Stripe Checkout to actually complet
   assert.match(source, /if \(isStripeCheckoutHost\(finalUrl\.hostname\)\)/);
   assert.match(source, /Hosted shipping checkout completed/);
 });
+
+test("hosted certification neutralizes optional Stripe UI state that can block Pay", async () => {
+  const source = await readFile("scripts/complete-hosted-shipping-checkout.ts", "utf8");
+  assert.match(source, /dismissAddressSuggestions/);
+  assert.match(source, /keyboard\.press\("Escape"\)/);
+  assert.match(source, /save my information for faster checkout/i);
+  assert.match(source, /saveInfo\.uncheck\(\{ force: true \}\)/);
+  assert.match(source, /SHIPPING_CERT_LINK_OPT_OUT_FAILED/);
+  assert.match(source, /input\[type=\\?"tel\\?"\]/);
+  assert.match(source, /4055550123/);
+});
