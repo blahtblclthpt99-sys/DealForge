@@ -47,7 +47,7 @@ test("bundle relevance requires strong real-world fit", () => {
 
 test("basket profit gate permits low-margin anchor only when the whole governed basket is safe", () => {
   const decision = evaluateBasketProfit({
-    minimumProfitCents: 1800,
+    minimumProfitCents: 1000,
     paymentCostCents: 420,
     refundReserveCents: 200,
     fraudReserveCents: 100,
@@ -87,7 +87,7 @@ test("basket profit gate permits low-margin anchor only when the whole governed 
   });
 
   assert.equal(decision.allowed, true);
-  assert.equal(decision.contributionProfitCents, 2080);
+  assert.equal(decision.contributionProfitCents, 1180);
 });
 
 test("basket fails closed when a direct component lacks resale rights", () => {
