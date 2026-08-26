@@ -28,6 +28,13 @@ export type InventoryEvidenceDecision = {
   evidence: InventoryEvidenceV1 | null;
 };
 
+export function inventoryEvidenceBindingRequired() {
+  const configured = process.env.INVENTORY_EVIDENCE_BINDING_REQUIRED?.trim().toLowerCase();
+  if (configured === "true") return true;
+  if (configured === "false") return false;
+  return process.env.NODE_ENV === "production";
+}
+
 function clean(value: string | null | undefined, fallback = "") {
   return value?.trim() || fallback;
 }
