@@ -12,17 +12,21 @@ const route = readFileSync(
 );
 
 const purchaseEvidenceHash = "a".repeat(64);
-const shipment = createShipmentRecord({
-  carrierCode: "ups",
-  trackingNumber: "1Z999AA10123456784",
-  quantity: 2,
-  shippedAt: "2026-08-24T20:00:00.000Z",
-});
-assert.ok(shipment);
 
-function shipmentEvent(overrides: Record<string, unknown> = {}) {
+function makeShipment(trackingNumber: string, quantity: number) {
+  const shipment = createShipmentRecord({
+    carrierCode: "ups",
+    trackingNumber,
+    quantity,
+    shippedAt: "2026-08-24T20:00:00.000Z",
+  });
+  assert.ok(shipment);
+  return shipment;
+}
+
+function shipmentEvent(shipment: ReturnType<typeof makeShipment>, overrides: Record<string, unknown> = {}) {
   return {
-    eventKey: "procurement:test:shipment:1",
+    eventKey: `procurement:test:shipment:${shipment.packageId}`,
     detail: JSON.stringify({
       shipment,
       purchaseEvidenceHash,
@@ -32,30 +36,84 @@ function shipmentEvent(overrides: Record<string, unknown> = {}) {
 }
 
 test("shipment journal reconciliation accepts one exact purchase-bound shipment", () => {
+  const shipment = makeShipment("1Z999AA10123456784", 2);
   const result = reconcileShipmentJournal({
-    events: [shipmentEvent()],
+    events: [shipmentEvent(shipment)],
     expectedPurchaseEvidenceHash: purchaseEvidenceHash,
     expectedQuantity: 2,
   });
   assert.equal(result.ok, true);
   assert.deepEqual(result.reasons, []);
   assert.deepEqual(result.shipment, shipment);
+  assert.deepEqual(result.shipments, [shipment]);
+  assert.equal(result.shippedQuantity, 2);
   assert.equal(result.purchaseEvidenceHash, purchaseEvidenceHash);
 });
 
-test("shipment journal reconciliation fails closed on duplicate shipment events", () => {
+test("shipment journal reconciliation accepts multiple distinct packages totaling ordered quantity", () => {
+  const first = makeShipment("1Z999AA10123456784", 1);
+  const second = makeShipment("1Z999AA10123456785", 1);
   const result = reconcileShipmentJournal({
-    events: [shipmentEvent(), { ...shipmentEvent(), eventKey: "procurement:test:shipment:2" }],
+    events: [shipmentEvent(first), shipmentEvent(second)],
     expectedPurchaseEvidenceHash: purchaseEvidenceHash,
     expectedQuantity: 2,
   });
-  assert.equal(result.ok, false);
-  assert.ok(result.reasons.includes("shipment_event_duplicate"));
+  assert.equal(result.ok, true);
+  assert.equal(result.shipments.length, 2);
+  assert.equal(result.shipment, null);
+  assert.equal(result.shippedQuantity, 2);
 });
 
-test("shipment journal reconciliation rejects purchase-evidence drift", () => {
+test("shipment journal reconciliation permits bounded partial package sets only when explicitly requested", () => {
+  const first = makeShipment("1Z999AA10123456784", 1);
+  const strict = reconcileShipmentJournal({
+    events: [shipmentEvent(first)],
+    expectedPurchaseEvidenceHash: purchaseEvidenceHash,
+    expectedQuantity: 2,
+  });
+  assert.equal(strict.ok, false);
+  assert.ok(strict.reasons.includes("shipment_quantity_mismatch"));
+
+  const partial = reconcileShipmentJournal({
+    events: [shipmentEvent(first)],
+    expectedPurchaseEvidenceHash: purchaseEvidenceHash,
+    expectedQuantity: 2,
+    allowPartial: true,
+  });
+  assert.equal(partial.ok, true);
+  assert.equal(partial.shippedQuantity, 1);
+});
+
+test("shipment journal reconciliation rejects duplicate package identity and over-shipment", () => {
+  const first = makeShipment("1Z999AA10123456784", 1);
+  const duplicate = reconcileShipmentJournal({
+    events: [shipmentEvent(first), { ...shipmentEvent(first), eventKey: "duplicate-key" }],
+    expectedPurchaseEvidenceHash: purchaseEvidenceHash,
+    expectedQuantity: 2,
+    allowPartial: true,
+  });
+  assert.equal(duplicate.ok, false);
+  assert.ok(duplicate.reasons.includes("shipment_package_duplicate"));
+
+  const second = makeShipment("1Z999AA10123456785", 2);
+  const exceeded = reconcileShipmentJournal({
+    events: [shipmentEvent(first), shipmentEvent(second)],
+    expectedPurchaseEvidenceHash: purchaseEvidenceHash,
+    expectedQuantity: 2,
+    allowPartial: true,
+  });
+  assert.equal(exceeded.ok, false);
+  assert.ok(exceeded.reasons.includes("shipment_quantity_exceeded"));
+});
+
+test("shipment journal reconciliation rejects purchase-evidence drift on any package", () => {
+  const first = makeShipment("1Z999AA10123456784", 1);
+  const second = makeShipment("1Z999AA10123456785", 1);
   const result = reconcileShipmentJournal({
-    events: [shipmentEvent({ purchaseEvidenceHash: "b".repeat(64) })],
+    events: [
+      shipmentEvent(first),
+      shipmentEvent(second, { purchaseEvidenceHash: "b".repeat(64) }),
+    ],
     expectedPurchaseEvidenceHash: purchaseEvidenceHash,
     expectedQuantity: 2,
   });
@@ -63,42 +121,30 @@ test("shipment journal reconciliation rejects purchase-evidence drift", () => {
   assert.ok(result.reasons.includes("shipment_purchase_evidence_mismatch"));
 });
 
-test("shipment journal reconciliation rejects quantity drift and missing evidence", () => {
-  const differentShipment = createShipmentRecord({
-    carrierCode: "ups",
-    trackingNumber: "1Z999AA10123456784",
-    quantity: 1,
-    shippedAt: "2026-08-24T20:00:00.000Z",
-  });
-  assert.ok(differentShipment);
+test("shipment journal reconciliation rejects missing purchase evidence", () => {
+  const shipment = makeShipment("1Z999AA10123456784", 2);
   const result = reconcileShipmentJournal({
-    events: [
-      {
-        eventKey: "procurement:test:shipment:1",
-        detail: JSON.stringify({ shipment: differentShipment }),
-      },
-    ],
+    events: [{ eventKey: "shipment", detail: JSON.stringify({ shipment }) }],
     expectedPurchaseEvidenceHash: purchaseEvidenceHash,
     expectedQuantity: 2,
   });
   assert.equal(result.ok, false);
-  assert.ok(result.reasons.includes("shipment_quantity_mismatch"));
   assert.ok(result.reasons.includes("shipment_purchase_evidence_missing"));
 });
 
-test("delivery route reconciles the shipment journal before state mutation", () => {
+test("delivery route reconciles prior shipment packages before state mutation", () => {
   assert.match(route, /reconcileShipmentJournal/);
   assert.match(route, /SHIPMENT_JOURNAL_RECONCILIATION_REQUIRED/);
   assert.match(route, /expectedPurchaseEvidenceHash: purchaseEvidenceHash/);
   assert.match(route, /expectedQuantity: current\.quantity/);
+  assert.match(route, /allowPartial: true/);
   assert.match(route, /shipmentEventKey:/);
+  assert.match(route, /packageId/);
 
   const reconciliation = route.indexOf("const shipmentReconciliation = reconcileShipmentJournal");
-  const deliveryTimestamp = route.indexOf("const deliveredAt = normalizeTimestamp");
-  const statusWrite = route.lastIndexOf("data: { status: transition.next }");
+  const statusWrite = route.lastIndexOf("data: { status: nextStatus }");
   assert.ok(reconciliation >= 0);
-  assert.ok(deliveryTimestamp > reconciliation);
-  assert.ok(statusWrite > deliveryTimestamp);
+  assert.ok(statusWrite > reconciliation);
 });
 
 test("fulfillment journal hardening does not expand procurement or network authority", () => {
