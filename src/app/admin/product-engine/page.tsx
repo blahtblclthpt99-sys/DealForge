@@ -7,6 +7,7 @@ import { CommercialPriceRecommender } from "@/components/commercial-price-recomm
 import { CommerceQuarantineQueue } from "@/components/commerce-quarantine-queue";
 import { CommerceQuarantinePerformanceIntelligence } from "@/components/commerce-quarantine-performance";
 import { UpstreamPreventionScorecard } from "@/components/upstream-prevention-scorecard";
+import { PreventiveValidationCoverageMatrix } from "@/components/preventive-validation-coverage";
 
 export const dynamic = "force-dynamic";
 
@@ -95,6 +96,7 @@ export default async function ProductEnginePage() {
       <CommerceQuarantineQueue />
       <CommerceQuarantinePerformanceIntelligence />
       <UpstreamPreventionScorecard />
+      <PreventiveValidationCoverageMatrix />
 
       <CommercialPriceRecommender />
 
