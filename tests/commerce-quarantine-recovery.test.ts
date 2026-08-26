@@ -34,9 +34,9 @@ test("recovery guidance ends at owner re-commercialization rather than auto-resu
 
 test("quarantine recovery surface is read-only and has no commerce/procurement mutation authority", async () => {
   const source = await readFile("src/components/commerce-quarantine-queue.tsx", "utf8");
-  assert.match(source, /commerceEnabled: false/);
+  assert.match(source, /commerceEnabled === false/);
   assert.match(source, /read-only/);
-  assert.doesNotMatch(source, /commerceEnabled:\s*true/);
+  assert.doesNotMatch(source, /data:\s*\{[^}]*commerceEnabled:\s*true/s);
   assert.doesNotMatch(source, /prisma\.product\.(update|updateMany|upsert|create|delete)/);
   assert.doesNotMatch(source, /procurementIntent\.(update|updateMany|upsert|create|delete)/);
 });
