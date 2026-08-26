@@ -4,6 +4,7 @@ import {
   MIN_INVENTORY_CONFIDENCE_BPS,
 } from "./commercialization";
 import { prisma } from "./db";
+import { evaluateSpecificationsInventoryEvidenceBinding } from "./inventory-evidence-binding";
 import { readLatestInventoryObservation } from "./inventory-observation-store";
 import type { InventoryObservationSnapshot } from "./inventory-freshness";
 import {
@@ -68,9 +69,7 @@ type PersistedOfferSnapshot = {
 };
 
 function safeString(value: unknown, maxLength = 256) {
-  return typeof value === "string" && value.trim().length > 0 && value.trim().length <= maxLength
-    ? value.trim()
-    : null;
+  return typeof value === "string" && value.trim().length > 0 && value.trim().length <= maxLength ? value.trim() : null;
 }
 
 function safeTimestamp(value: unknown) {
@@ -101,23 +100,11 @@ function parseSnapshot(specifications: string): PersistedOfferSnapshot | null {
     const landedCostCents = costs.landedCostCents;
 
     if (
-      !persistedSupplierId ||
-      !persistedOfferId ||
-      !persistedOfferKey ||
-      !sourceClass ||
-      !sourceVerifiedAt ||
-      !priceVerifiedAt ||
-      (offer.sourceUrl !== null && !sourceUrl) ||
-      offer.resaleAllowed !== true ||
-      !Number.isSafeInteger(inventoryConfidenceBps) ||
-      (inventoryConfidenceBps as number) < 0 ||
-      (inventoryConfidenceBps as number) > 10_000 ||
-      !availability ||
-      !Number.isSafeInteger(landedCostCents) ||
-      (landedCostCents as number) <= 0
-    ) {
-      return null;
-    }
+      !persistedSupplierId || !persistedOfferId || !persistedOfferKey || !sourceClass || !sourceVerifiedAt || !priceVerifiedAt ||
+      (offer.sourceUrl !== null && !sourceUrl) || offer.resaleAllowed !== true || !Number.isSafeInteger(inventoryConfidenceBps) ||
+      (inventoryConfidenceBps as number) < 0 || (inventoryConfidenceBps as number) > 10_000 || !availability ||
+      !Number.isSafeInteger(landedCostCents) || (landedCostCents as number) <= 0
+    ) return null;
 
     return {
       persistedSupplierId,
@@ -142,9 +129,7 @@ function sameTimestamp(value: Date | null, iso: string) {
   return Number.isFinite(expected) && value.getTime() === expected;
 }
 
-function uniqueReasons(reasons: string[]) {
-  return [...new Set(reasons)];
-}
+function uniqueReasons(reasons: string[]) { return [...new Set(reasons)]; }
 
 export function evaluatePersistedOfferBinding(
   input: PersistedOfferBindingInput,
@@ -152,16 +137,8 @@ export function evaluatePersistedOfferBinding(
   nowMs = Date.now(),
 ): PersistedOfferBindingDecision {
   const snapshot = parseSnapshot(input.specifications);
-  if (!snapshot) {
-    return { allowed: false, reasons: ["persisted_offer_snapshot_missing_or_invalid"], persistedOfferId: null };
-  }
-  if (!liveOffer) {
-    return {
-      allowed: false,
-      reasons: ["persisted_offer_missing"],
-      persistedOfferId: snapshot.persistedOfferId,
-    };
-  }
+  if (!snapshot) return { allowed: false, reasons: ["persisted_offer_snapshot_missing_or_invalid"], persistedOfferId: null };
+  if (!liveOffer) return { allowed: false, reasons: ["persisted_offer_missing"], persistedOfferId: snapshot.persistedOfferId };
 
   const reasons: string[] = [];
   if (liveOffer.id !== snapshot.persistedOfferId) reasons.push("persisted_offer_id_mismatch");
@@ -170,24 +147,12 @@ export function evaluatePersistedOfferBinding(
   if (liveOffer.productId !== input.productId) reasons.push("persisted_offer_product_mismatch");
   if (liveOffer.supplier.sourceClass !== snapshot.sourceClass) reasons.push("persisted_source_class_drift");
   if ((liveOffer.sourceUrl ?? null) !== snapshot.sourceUrl) reasons.push("persisted_source_url_drift");
-  if (!sameTimestamp(liveOffer.supplier.sourceVerifiedAt, snapshot.sourceVerifiedAt)) {
-    reasons.push("persisted_source_verification_drift");
-  }
-  if (!sameTimestamp(liveOffer.priceVerifiedAt, snapshot.priceVerifiedAt)) {
-    reasons.push("persisted_price_verification_drift");
-  }
-  if (!input.priceVerifiedAt || !liveOffer.priceVerifiedAt || input.priceVerifiedAt.getTime() !== liveOffer.priceVerifiedAt.getTime()) {
-    reasons.push("product_price_verification_drift");
-  }
-  if (liveOffer.inventoryConfidenceBps !== snapshot.inventoryConfidenceBps) {
-    reasons.push("persisted_inventory_confidence_drift");
-  }
-  if (liveOffer.availability !== snapshot.availability || input.availability !== liveOffer.availability) {
-    reasons.push("persisted_availability_drift");
-  }
-  if (liveOffer.currency.trim().toLowerCase() !== input.currency.trim().toLowerCase()) {
-    reasons.push("persisted_currency_drift");
-  }
+  if (!sameTimestamp(liveOffer.supplier.sourceVerifiedAt, snapshot.sourceVerifiedAt)) reasons.push("persisted_source_verification_drift");
+  if (!sameTimestamp(liveOffer.priceVerifiedAt, snapshot.priceVerifiedAt)) reasons.push("persisted_price_verification_drift");
+  if (!input.priceVerifiedAt || !liveOffer.priceVerifiedAt || input.priceVerifiedAt.getTime() !== liveOffer.priceVerifiedAt.getTime()) reasons.push("product_price_verification_drift");
+  if (liveOffer.inventoryConfidenceBps !== snapshot.inventoryConfidenceBps) reasons.push("persisted_inventory_confidence_drift");
+  if (liveOffer.availability !== snapshot.availability || input.availability !== liveOffer.availability) reasons.push("persisted_availability_drift");
+  if (liveOffer.currency.trim().toLowerCase() !== input.currency.trim().toLowerCase()) reasons.push("persisted_currency_drift");
 
   const candidate: SupplierOfferCandidate = {
     id: liveOffer.id,
@@ -213,106 +178,60 @@ export function evaluatePersistedOfferBinding(
     latestInventoryObservation: liveOffer.latestInventoryObservation,
   };
 
-  const eligibility = evaluateSupplierOffer(
-    candidate,
-    {
-      currency: input.currency,
-      maxSourceAgeDays: MAX_SOURCE_AGE_DAYS,
-      maxPriceAgeMinutes: MAX_PRICE_AGE_MINUTES,
-      minInventoryConfidenceBps: MIN_INVENTORY_CONFIDENCE_BPS,
-      requireCurrentInventoryObservation: true,
-    },
-    nowMs,
-  );
+  const eligibility = evaluateSupplierOffer(candidate, {
+    currency: input.currency,
+    maxSourceAgeDays: MAX_SOURCE_AGE_DAYS,
+    maxPriceAgeMinutes: MAX_PRICE_AGE_MINUTES,
+    minInventoryConfidenceBps: MIN_INVENTORY_CONFIDENCE_BPS,
+    requireCurrentInventoryObservation: true,
+  }, nowMs);
   reasons.push(...eligibility.reasons.map((reason) => `live_offer_${reason}`));
 
   const observation = liveOffer.latestInventoryObservation;
-  if (observation && observation.supplierOfferId !== liveOffer.id) {
-    reasons.push("live_offer_inventory_observation_offer_mismatch");
-  }
-  if (observation && observation.availability.trim().toLowerCase() !== liveOffer.availability.trim().toLowerCase()) {
-    reasons.push("live_offer_inventory_observation_availability_drift");
-  }
-  if (observation && observation.inventoryConfidenceBps !== liveOffer.inventoryConfidenceBps) {
-    reasons.push("live_offer_inventory_observation_confidence_drift");
-  }
-  if (
-    observation &&
-    observation.observedPriceCents !== null &&
-    observation.observedPriceCents !== undefined &&
-    observation.observedPriceCents !== liveOffer.itemCostCents
-  ) {
-    reasons.push("live_offer_inventory_observation_price_drift");
-  }
+  if (observation && observation.supplierOfferId !== liveOffer.id) reasons.push("live_offer_inventory_observation_offer_mismatch");
+  if (observation && observation.availability.trim().toLowerCase() !== liveOffer.availability.trim().toLowerCase()) reasons.push("live_offer_inventory_observation_availability_drift");
+  if (observation && observation.inventoryConfidenceBps !== liveOffer.inventoryConfidenceBps) reasons.push("live_offer_inventory_observation_confidence_drift");
+  if (observation && observation.observedPriceCents !== null && observation.observedPriceCents !== undefined && observation.observedPriceCents !== liveOffer.itemCostCents) reasons.push("live_offer_inventory_observation_price_drift");
+
+  const inventoryEvidence = evaluateSpecificationsInventoryEvidenceBinding(
+    input.specifications,
+    observation,
+    { supplierOfferId: liveOffer.id, itemCostCents: liveOffer.itemCostCents },
+    nowMs,
+  );
+  reasons.push(...inventoryEvidence.reasons.map((reason) => `live_offer_${reason}`));
 
   const liveLandedCostCents = computeSupplierLandedCostCents(candidate);
-  if (
-    liveLandedCostCents === null ||
-    liveLandedCostCents !== snapshot.landedCostCents ||
-    liveLandedCostCents !== input.landedCostCents
-  ) {
-    reasons.push("persisted_landed_cost_drift");
-  }
+  if (liveLandedCostCents === null || liveLandedCostCents !== snapshot.landedCostCents || liveLandedCostCents !== input.landedCostCents) reasons.push("persisted_landed_cost_drift");
 
   const deduped = uniqueReasons(reasons);
-  return {
-    allowed: deduped.length === 0,
-    reasons: deduped,
-    persistedOfferId: snapshot.persistedOfferId,
-  };
+  return { allowed: deduped.length === 0, reasons: deduped, persistedOfferId: snapshot.persistedOfferId };
 }
 
 /**
- * Read-only checkout safety gate. The Product snapshot remains useful for audit,
- * but customer money cannot rely on it alone: the exact normalized supplier
- * offer referenced by the snapshot must still exist, retain a current inventory
- * observation with non-conflicting observed price evidence, and remain eligible now.
+ * Read-only checkout safety gate. Product metadata is only a frozen reference;
+ * customer money also requires the exact newest normalized InventoryObservation
+ * to match the evidence bound during commercialization.
  */
 export async function checkPersistedOfferBinding(
   input: PersistedOfferBindingInput,
   nowMs = Date.now(),
 ): Promise<PersistedOfferBindingDecision> {
   const snapshot = parseSnapshot(input.specifications);
-  if (!snapshot) {
-    return { allowed: false, reasons: ["persisted_offer_snapshot_missing_or_invalid"], persistedOfferId: null };
-  }
+  if (!snapshot) return { allowed: false, reasons: ["persisted_offer_snapshot_missing_or_invalid"], persistedOfferId: null };
 
   const liveOffer = await prisma.supplierOffer.findUnique({
     where: { id: snapshot.persistedOfferId },
     select: {
-      id: true,
-      offerKey: true,
-      supplierId: true,
-      productId: true,
-      sourceUrl: true,
-      active: true,
-      availability: true,
-      currency: true,
-      itemCostCents: true,
-      shippingCents: true,
-      taxCents: true,
-      supplierFeeCents: true,
-      handlingCents: true,
-      priceVerifiedAt: true,
-      inventoryConfidenceBps: true,
+      id: true, offerKey: true, supplierId: true, productId: true, sourceUrl: true, active: true,
+      availability: true, currency: true, itemCostCents: true, shippingCents: true, taxCents: true,
+      supplierFeeCents: true, handlingCents: true, priceVerifiedAt: true, inventoryConfidenceBps: true,
       priority: true,
-      supplier: {
-        select: {
-          name: true,
-          active: true,
-          sourceClass: true,
-          resaleAllowed: true,
-          sourceVerifiedAt: true,
-        },
-      },
+      supplier: { select: { name: true, active: true, sourceClass: true, resaleAllowed: true, sourceVerifiedAt: true } },
     },
   });
 
   if (!liveOffer) return evaluatePersistedOfferBinding(input, null, nowMs);
   const latestInventoryObservation = await readLatestInventoryObservation(liveOffer.id);
-  return evaluatePersistedOfferBinding(
-    input,
-    { ...liveOffer, latestInventoryObservation },
-    nowMs,
-  );
+  return evaluatePersistedOfferBinding(input, { ...liveOffer, latestInventoryObservation }, nowMs);
 }
