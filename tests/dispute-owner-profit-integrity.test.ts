@@ -83,15 +83,15 @@ test("lost Stripe dispute is never certified as retained profit", () => {
   assert.ok(result.contribution.finalizationReasons.includes("PAYMENT_DISPUTE_LOST"));
 });
 
-test("safely won dispute clears the dispute-only certification blocker", () => {
+test("won Stripe dispute remains uncertified until reinstated funds are independently proven", () => {
   const result = analyzeOrderProfit(completeProfitInput(paymentWithDispute("won")));
-  assert.equal(result.integrity.disputeStateClear, true);
-  assert.equal(result.integrity.activeDisputeCount, 0);
+  assert.equal(result.integrity.disputeStateClear, false);
+  assert.equal(result.integrity.activeDisputeCount, 1);
   assert.equal(result.integrity.lostDisputeCount, 0);
-  assert.equal(result.contribution.finalizationReasons.includes("PAYMENT_DISPUTE_ACTIVE"), false);
+  assert.equal(result.contribution.finalizationReasons.includes("PAYMENT_DISPUTE_ACTIVE"), true);
   assert.equal(result.contribution.finalizationReasons.includes("PAYMENT_DISPUTE_LOST"), false);
-  assert.equal(result.contribution.certified, true);
-  assert.equal(result.contribution.certifiedOrderContributionCents, 4_700);
+  assert.equal(result.contribution.certified, false);
+  assert.equal(result.contribution.certifiedOrderContributionCents, null);
 });
 
 test("malformed dispute ledger fails profit certification closed", () => {

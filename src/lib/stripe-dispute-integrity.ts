@@ -149,8 +149,14 @@ function parsePaymentMeta(currentMeta: string):
   return { ok: true, root, entries };
 }
 
+// A dispute status of `won` means the case outcome favors DealForge, but it is
+// not sufficient financial evidence that Stripe has actually reinstated the
+// withdrawn funds. Until a separately reconciled funds_reinstated Balance
+// Transaction gate exists, keep `won` disputes fail-closed as active. Stripe's
+// warning_closed status does not represent a withdrawn chargeback balance and
+// may safely clear the dispute-state interlock.
 function isSafeResolvedStatus(status: string) {
-  return status === "won" || status === "warning_closed";
+  return status === "warning_closed";
 }
 
 function isLostStatus(status: string) {
@@ -158,7 +164,7 @@ function isLostStatus(status: string) {
 }
 
 function isTerminalStatus(status: string) {
-  return isSafeResolvedStatus(status) || isLostStatus(status);
+  return status === "won" || isSafeResolvedStatus(status) || isLostStatus(status);
 }
 
 export function classifyStripeDisputeEntries(
