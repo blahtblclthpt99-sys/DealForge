@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { pauseUnsafeCommerceProducts } from "@/lib/commerce-monitor";
 import { sweepInventoryFreshness } from "@/lib/inventory-operations";
 import { resolveMaintenanceToken } from "@/lib/maintenance-token";
+import { sweepManualPurchaseReconciliation } from "@/lib/procurement-purchase-reconciliation";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -32,8 +33,9 @@ export async function POST(request: Request) {
   try {
     const commerce = await pauseUnsafeCommerceProducts("cloudflare-cron");
     const inventory = await sweepInventoryFreshness("cloudflare-cron", 250);
+    const procurementReconciliation = await sweepManualPurchaseReconciliation("cloudflare-cron", 250);
     return NextResponse.json(
-      { ok: true, commerce, inventory },
+      { ok: true, commerce, inventory, procurementReconciliation },
       { headers: { "Cache-Control": "no-store" } },
     );
   } catch (error) {
