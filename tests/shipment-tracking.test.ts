@@ -118,6 +118,21 @@ test("owner shipment route preserves owner-only, same-origin, manual-only, and f
   assert.doesNotMatch(adminShipmentRoute, /\bfetch\s*\(/);
 });
 
+test("shipment and delivery rerun exact manual-purchase reconciliation before fulfillment advances", () => {
+  assert.match(adminShipmentRoute, /reconcileManualPurchaseProjection/);
+  assert.match(adminShipmentRoute, /RECORD_MANUAL_PURCHASE/);
+  assert.match(adminShipmentRoute, /orderItem: \{ select: \{ lineTotalCents: true \} \}/);
+  assert.match(adminShipmentRoute, /PROCUREMENT_PURCHASE_RECONCILIATION_REQUIRED/);
+  assert.match(adminShipmentRoute, /purchaseEvidenceHash/);
+
+  const reconciliationIndex = adminShipmentRoute.indexOf("const purchaseReconciliation = reconcileManualPurchaseProjection");
+  const transitionIndex = adminShipmentRoute.indexOf("const transition = transitionProcurement");
+  const firstStatusWriteIndex = adminShipmentRoute.indexOf("data: { status: transition.next }");
+  assert.ok(reconciliationIndex >= 0);
+  assert.ok(transitionIndex > reconciliationIndex);
+  assert.ok(firstStatusWriteIndex > transitionIndex);
+});
+
 test("customer orders rehydrate identity and do not expose supplier economics", () => {
   assert.match(customerOrdersRoute, /prisma\.user\.findUnique/);
   assert.match(customerOrdersRoute, /where: \{ userId: currentUser\.id \}/);
