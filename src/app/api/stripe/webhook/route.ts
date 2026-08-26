@@ -15,6 +15,11 @@ import {
   type StripeBalanceTransaction,
   type StripeEvent,
 } from "@/lib/stripe-commerce";
+import {
+  deriveFinancialOrderStatus,
+  mergeStripeDisputeMeta,
+  type StripeDisputeEventType,
+} from "@/lib/stripe-dispute-integrity";
 import { resolveStripeCheckoutTaxAuthority } from "@/lib/stripe-tax-authority";
 import {
   mergeStripeFeeMeta,
@@ -32,6 +37,13 @@ import {
 export const runtime = "nodejs";
 
 const MAX_WEBHOOK_BYTES = 1024 * 1024;
+const PAYMENT_FAILURE_PROTECTED_ORDER_STATUSES = new Set([
+  "paid",
+  "partially_refunded",
+  "refunded",
+  "payment_disputed",
+  "payment_dispute_lost",
+]);
 
 class DuplicateStripeEventError extends Error {
   constructor() {
@@ -164,6 +176,27 @@ async function assertPaymentMatchesOrder(
   return order;
 }
 
+async function deriveOrderFinancialStatus(
+  tx: Prisma.TransactionClient,
+  order: { id: string; totalCents: number },
+  paymentMeta: string,
+) {
+  const totals = await tx.refund.aggregate({
+    where: { orderId: order.id, status: "succeeded" },
+    _sum: { amountCents: true },
+  });
+  const succeededRefundCents = totals._sum.amountCents || 0;
+  if (succeededRefundCents > order.totalCents) throw new Error("REFUND_LEDGER_OVERFLOW");
+
+  const financial = deriveFinancialOrderStatus({
+    paymentMeta,
+    succeededRefundCents,
+    totalCents: order.totalCents,
+  });
+  if (!financial.ok) throw new Error(financial.reason);
+  return financial;
+}
+
 async function markPaymentSucceeded(
   tx: Prisma.TransactionClient,
   orderId: string,
@@ -182,7 +215,7 @@ async function markPaymentSucceeded(
     throw new Error("WEBHOOK_PAYMENT_INTENT_MISMATCH");
   }
 
-  await tx.payment.upsert({
+  const payment = await tx.payment.upsert({
     where: { providerPaymentId: intentId },
     create: {
       orderId,
@@ -201,15 +234,18 @@ async function markPaymentSucceeded(
     },
   });
 
-  await tx.order.update({
-    where: { id: orderId },
+  const financial = await deriveOrderFinancialStatus(tx, order, payment.meta);
+  const updated = await tx.order.updateMany({
+    where: { id: orderId, updatedAt: order.updatedAt },
     data: {
-      status: "paid",
+      status: financial.status,
       stripeCheckoutSessionId: sessionId || order.stripeCheckoutSessionId,
       stripePaymentIntentId: intentId,
       paidAt: order.paidAt || new Date(),
     },
   });
+  if (updated.count !== 1) throw new Error("WEBHOOK_PAYMENT_CONCURRENT_ORDER_CHANGE");
+  return financial;
 }
 
 async function markPaymentFailed(
@@ -218,7 +254,7 @@ async function markPaymentFailed(
   object: Record<string, unknown>,
 ) {
   const order = await tx.order.findUnique({ where: { id: orderId } });
-  if (!order || order.status === "paid" || order.status === "refunded") return;
+  if (!order || PAYMENT_FAILURE_PROTECTED_ORDER_STATUSES.has(order.status)) return;
   const intentId = eventObjectPaymentIntentId(object);
   await assertPaymentIntentOrderBinding(tx, orderId, intentId);
 
@@ -236,7 +272,11 @@ async function markPaymentFailed(
       update: { status: "failed" },
     });
   }
-  await tx.order.update({ where: { id: orderId }, data: { status: "payment_failed" } });
+  const updated = await tx.order.updateMany({
+    where: { id: orderId, updatedAt: order.updatedAt },
+    data: { status: "payment_failed" },
+  });
+  if (updated.count !== 1) throw new Error("WEBHOOK_PAYMENT_CONCURRENT_ORDER_CHANGE");
 }
 
 async function reconcileRefund(
@@ -302,24 +342,12 @@ async function reconcileRefund(
     },
   });
 
-  const totals = await tx.refund.aggregate({
-    where: { orderId: order.id, status: "succeeded" },
-    _sum: { amountCents: true },
+  const financial = await deriveOrderFinancialStatus(tx, order, payment.meta);
+  const updated = await tx.order.updateMany({
+    where: { id: order.id, updatedAt: order.updatedAt },
+    data: { status: financial.status },
   });
-  const succeededRefundCents = totals._sum.amountCents || 0;
-  if (succeededRefundCents > order.totalCents) throw new Error("REFUND_LEDGER_OVERFLOW");
-
-  await tx.order.update({
-    where: { id: order.id },
-    data: {
-      status:
-        succeededRefundCents >= order.totalCents
-          ? "refunded"
-          : succeededRefundCents > 0
-            ? "partially_refunded"
-            : order.status,
-    },
-  });
+  if (updated.count !== 1) throw new Error("WEBHOOK_REFUND_CONCURRENT_ORDER_CHANGE");
   return { orderId: order.id, refundId: savedRefund.id };
 }
 
@@ -418,10 +446,129 @@ async function reconcilePaymentFee(
   });
   if (!merged.ok) throw new Error(merged.reason);
 
-  await tx.payment.update({
-    where: { id: payment.id },
+  const updated = await tx.payment.updateMany({
+    where: { id: payment.id, updatedAt: payment.updatedAt },
     data: { meta: merged.meta },
   });
+  if (updated.count !== 1) throw new Error("WEBHOOK_FEE_CONCURRENT_PAYMENT_CHANGE");
+  return order.id;
+}
+
+async function reconcileDispute(
+  tx: Prisma.TransactionClient,
+  event: StripeEvent,
+) {
+  const object = event.data.object;
+  const disputeId = asString(object.id);
+  const intentId = paymentIntentId(object);
+  const chargeId = objectId(object.charge);
+  const amountCents = asInteger(object.amount);
+  const currency = asString(object.currency)?.toLowerCase();
+  const status = asString(object.status);
+  const reason = asString(object.reason);
+  const eventCreated = asInteger(event.created);
+
+  if (
+    !disputeId ||
+    !intentId ||
+    !chargeId ||
+    !amountCents ||
+    amountCents <= 0 ||
+    !currency ||
+    !status ||
+    !eventCreated ||
+    eventCreated <= 0
+  ) {
+    throw new Error("WEBHOOK_DISPUTE_INVALID");
+  }
+
+  const payment = await tx.payment.findUnique({ where: { providerPaymentId: intentId } });
+  if (!payment) throw new Error("WEBHOOK_DISPUTE_PAYMENT_NOT_FOUND");
+  if (payment.status !== "succeeded") throw new Error("WEBHOOK_DISPUTE_PAYMENT_NOT_SUCCEEDED");
+  if (
+    payment.currency.toLowerCase() !== currency ||
+    amountCents > payment.amountCents
+  ) {
+    throw new Error("WEBHOOK_DISPUTE_PAYMENT_MISMATCH");
+  }
+
+  const order = await tx.order.findUnique({ where: { id: payment.orderId } });
+  if (!order) throw new Error("WEBHOOK_DISPUTE_ORDER_NOT_FOUND");
+  if (
+    order.stripePaymentIntentId !== intentId ||
+    order.currency.toLowerCase() !== currency ||
+    amountCents > order.totalCents
+  ) {
+    throw new Error("WEBHOOK_DISPUTE_ORDER_MISMATCH");
+  }
+
+  const merged = mergeStripeDisputeMeta({
+    currentMeta: payment.meta,
+    dispute: {
+      disputeId,
+      paymentIntentId: intentId,
+      chargeId,
+      amountCents,
+      currency,
+      status,
+      reason,
+    },
+    eventId: event.id,
+    eventType: event.type as StripeDisputeEventType,
+    eventCreated,
+    reconciledAt: new Date().toISOString(),
+  });
+  if (!merged.ok) throw new Error(merged.reason);
+
+  if (!merged.stale) {
+    const paymentUpdated = await tx.payment.updateMany({
+      where: { id: payment.id, updatedAt: payment.updatedAt },
+      data: { meta: merged.meta },
+    });
+    if (paymentUpdated.count !== 1) {
+      throw new Error("WEBHOOK_DISPUTE_CONCURRENT_PAYMENT_CHANGE");
+    }
+  }
+
+  const financial = await deriveOrderFinancialStatus(tx, order, merged.meta);
+  const orderUpdated = await tx.order.updateMany({
+    where: { id: order.id, updatedAt: order.updatedAt },
+    data: { status: financial.status },
+  });
+  if (orderUpdated.count !== 1) {
+    throw new Error("WEBHOOK_DISPUTE_CONCURRENT_ORDER_CHANGE");
+  }
+
+  await tx.systemLog.create({
+    data: {
+      level: financial.disposition === "lost" ? "error" : financial.disposition === "active" ? "warn" : "info",
+      source: "stripe_dispute",
+      message:
+        financial.disposition === "lost"
+          ? "Stripe dispute lost; procurement remains blocked"
+          : financial.disposition === "active"
+            ? "Stripe dispute active; procurement blocked"
+            : "Stripe dispute resolved; financial state reconciled",
+      meta: JSON.stringify({
+        eventId: event.id,
+        eventType: event.type,
+        disputeId,
+        paymentIntentId: intentId,
+        chargeId,
+        orderId: order.id,
+        amountCents,
+        currency,
+        status,
+        reason,
+        stale: merged.stale,
+        financialOrderStatus: financial.status,
+        activeDisputeIds: financial.activeDisputeIds,
+        lostDisputeIds: financial.lostDisputeIds,
+        automaticSupplierPurchasingEnabled: false,
+      }),
+    },
+  });
+
   return order.id;
 }
 
@@ -444,8 +591,10 @@ async function processStripeEvent(
       });
       await reconcileCheckoutTaxAuthority(tx, orderId, object);
       if (asString(object.payment_status) === "paid") {
-        await markPaymentSucceeded(tx, orderId, object);
-        await ensureProcurementIntentsForPaidOrder(tx, orderId);
+        const financial = await markPaymentSucceeded(tx, orderId, object);
+        if (financial.status === "paid") {
+          await ensureProcurementIntentsForPaidOrder(tx, orderId);
+        }
       }
       break;
     case "checkout.session.async_payment_succeeded":
@@ -456,8 +605,12 @@ async function processStripeEvent(
         object,
       });
       await reconcileCheckoutTaxAuthority(tx, orderId, object);
-      await markPaymentSucceeded(tx, orderId, object);
-      await ensureProcurementIntentsForPaidOrder(tx, orderId);
+      {
+        const financial = await markPaymentSucceeded(tx, orderId, object);
+        if (financial.status === "paid") {
+          await ensureProcurementIntentsForPaidOrder(tx, orderId);
+        }
+      }
       break;
     case "payment_intent.succeeded":
       if (!orderId) throw new Error("WEBHOOK_ORDER_ID_MISSING");
@@ -490,6 +643,11 @@ async function processStripeEvent(
     case "charge.succeeded":
     case "charge.updated":
       if (feeEvidence) orderId = await reconcilePaymentFee(tx, feeEvidence, event.id);
+      break;
+    case "charge.dispute.created":
+    case "charge.dispute.updated":
+    case "charge.dispute.closed":
+      orderId = await reconcileDispute(tx, event);
       break;
     default:
       break;
