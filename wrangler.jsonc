@@ -30,7 +30,8 @@
     "NEXT_PUBLIC_APP_NAME": "DealForge",
     "CHECKOUT_ALLOWED_SHIPPING_COUNTRIES": "US",
     "SHIPPING_ADDRESS_CAPTURE_CERTIFIED": "true",
-    "STRIPE_AUTOMATIC_TAX_ENABLED": "true"
+    "STRIPE_AUTOMATIC_TAX_ENABLED": "true",
+    "STRIPE_AUTOMATIC_TAX_E2E_CERTIFIED": "true"
   },
   "observability": {
     "enabled": true
