@@ -1,4 +1,5 @@
 import { listRecoveryCases, type RecoveryLedgerEvent, type RecoveryRefundView } from "@/lib/recovery-reconciliation";
+import { readStripeDisputeDecision } from "@/lib/stripe-dispute-integrity";
 
 export const AUTHORITATIVE_PAYMENT_FEE_SOURCES = [
   "stripe_balance_transaction",
@@ -256,6 +257,21 @@ export function analyzeOrderProfit(input: {
     succeededPayments.length === 1 &&
     succeededPaymentAmountCents === input.totalCents;
 
+  let activeDisputeCount = 0;
+  let lostDisputeCount = 0;
+  let invalidDisputeStateCount = 0;
+  for (const payment of succeededPayments) {
+    const dispute = readStripeDisputeDecision(payment.meta);
+    if (!dispute.ok) {
+      invalidDisputeStateCount += 1;
+      continue;
+    }
+    activeDisputeCount += dispute.activeDisputeIds.length;
+    lostDisputeCount += dispute.lostDisputeIds.length;
+  }
+  const disputeStateClear =
+    invalidDisputeStateCount === 0 && activeDisputeCount === 0 && lostDisputeCount === 0;
+
   let chargeProcessingFeeCents = 0;
   let authoritativePaymentFeeCount = 0;
   for (const payment of succeededPayments) {
@@ -305,6 +321,9 @@ export function analyzeOrderProfit(input: {
   if (pendingRefundCents > 0) finalizationReasons.push("REFUND_PENDING");
   if (!recoveryAccountingValid) finalizationReasons.push("RECOVERY_ACCOUNTING_INVALID");
   if (openRecoveryCaseCount > 0) finalizationReasons.push("RECOVERY_CASE_OPEN");
+  if (invalidDisputeStateCount > 0) finalizationReasons.push("PAYMENT_DISPUTE_STATE_INVALID");
+  if (activeDisputeCount > 0) finalizationReasons.push("PAYMENT_DISPUTE_ACTIVE");
+  if (lostDisputeCount > 0) finalizationReasons.push("PAYMENT_DISPUTE_LOST");
 
   const certified = finalizationReasons.length === 0;
   const certifiedOrderContributionCents = certified
@@ -321,7 +340,7 @@ export function analyzeOrderProfit(input: {
   return {
     scope: {
       metric: "order_contribution",
-      excludes: ["marketing_cac", "support_overhead", "chargeback_loss_unless_recorded_elsewhere"],
+      excludes: ["marketing_cac", "support_overhead", "chargeback_settlement_until_reconciled"],
       acceptedLossTreatment: "disclosure_only_not_double_counted",
       refundPrincipalTreatment: "reduces_customer_receipts_only_not_processing_cost",
     },
@@ -331,6 +350,10 @@ export function analyzeOrderProfit(input: {
       refundCurrencyMismatchCount,
       paymentLedgerValid,
       paymentCurrencyMismatchCount,
+      disputeStateClear,
+      activeDisputeCount,
+      lostDisputeCount,
+      invalidDisputeStateCount,
     },
     receipts: {
       subtotalCents: input.subtotalCents,
