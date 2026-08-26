@@ -15,6 +15,10 @@ import {
   requireProcurementOwner,
 } from "@/lib/procurement-authorization";
 import { checkProcurementSourceRevalidation } from "@/lib/procurement-source-revalidation";
+import {
+  deriveProcurementSourceLock,
+  procurementSourceConfirmationMatches,
+} from "@/lib/procurement-source-lock";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -22,6 +26,8 @@ export const dynamic = "force-dynamic";
 const expectedState = z.enum(["awaiting_review", "approved_manual", "hold", "supplier_ordered_manual", "cancelled"]);
 const note = z.string().trim().min(1).max(500).optional();
 const supplierReference = z.string().trim().min(2).max(120).regex(/^[A-Za-z0-9 ._#:\/-]+$/);
+const supplierOfferId = z.string().trim().min(1).max(128).regex(/^[A-Za-z0-9:_-]+$/);
+const sourceLockKey = z.string().trim().regex(/^proc_source_lock_v1_[a-f0-9]{64}$/);
 
 const ActionSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("APPROVE_MANUAL"), expectedState, note }),
@@ -31,6 +37,8 @@ const ActionSchema = z.discriminatedUnion("action", [
     action: z.literal("RECORD_MANUAL_PURCHASE"),
     expectedState,
     manualPurchaseConfirmed: z.literal(true),
+    supplierOfferId,
+    sourceLockKey,
     supplierOrderReference: supplierReference,
     actualTotalCostCents: z.number().int().positive().max(100_000_000),
     acceptCostVariance: z.boolean().optional(),
@@ -108,6 +116,15 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     return noStore(NextResponse.json({ error: "PROCUREMENT_STATE_CONFLICT", currentState: intent.status }, { status: 409 }));
   }
 
+  const sourceLock = deriveProcurementSourceLock(
+    intent.supplierSnapshot,
+    intent.expectedUnitCostCents,
+    intent.currency,
+  );
+  if (parsed.data.action === "RECORD_MANUAL_PURCHASE" && !procurementSourceConfirmationMatches(sourceLock, parsed.data)) {
+    return noStore(NextResponse.json({ error: "PROCUREMENT_LOCKED_SOURCE_MISMATCH" }, { status: 409 }));
+  }
+
   const transition = transitionProcurement(intent.status, parsed.data.action);
   if (!transition.ok) {
     return noStore(NextResponse.json({ error: transition.reason, currentState: intent.status }, { status: 409 }));
@@ -121,7 +138,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       currency: intent.currency,
       expectedUnitCostCents: intent.expectedUnitCostCents,
     });
-    if (!sourceRevalidation.allowed) {
+    if (!sourceRevalidation.allowed || !sourceLock || sourceRevalidation.persistedOfferId !== sourceLock.persistedOfferId) {
       return noStore(
         NextResponse.json(
           {
@@ -174,6 +191,15 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       const txTransition = transitionProcurement(current.status, parsed.data.action);
       if (!txTransition.ok) throw new Error("PROCUREMENT_TRANSITION_CHANGED");
 
+      const currentSourceLock = deriveProcurementSourceLock(
+        current.supplierSnapshot,
+        current.expectedUnitCostCents,
+        current.currency,
+      );
+      if (parsed.data.action === "RECORD_MANUAL_PURCHASE" && !procurementSourceConfirmationMatches(currentSourceLock, parsed.data)) {
+        throw new Error("PROCUREMENT_SOURCE_LOCK_CHANGED");
+      }
+
       let approvalSourceRevalidation = sourceRevalidation;
       if (parsed.data.action === "APPROVE_MANUAL") {
         approvalSourceRevalidation = await checkProcurementSourceRevalidation(
@@ -186,7 +212,11 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
           Date.now(),
           tx,
         );
-        if (!approvalSourceRevalidation.allowed) {
+        if (
+          !approvalSourceRevalidation.allowed ||
+          !currentSourceLock ||
+          approvalSourceRevalidation.persistedOfferId !== currentSourceLock.persistedOfferId
+        ) {
           throw new Error("PROCUREMENT_LIVE_SOURCE_REVALIDATION_CHANGED");
         }
       }
@@ -230,17 +260,24 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
             note: parsed.data.note || null,
             reason: "reason" in parsed.data ? parsed.data.reason : null,
             automaticSupplierPurchasingEnabled: false,
-            ...(parsed.data.action === "APPROVE_MANUAL" && approvalSourceRevalidation?.allowed
+            ...(parsed.data.action === "APPROVE_MANUAL" && approvalSourceRevalidation?.allowed && currentSourceLock
               ? {
                   liveSourceRevalidated: true,
                   liveSourceRevalidatedAt: now.toISOString(),
                   persistedOfferId: approvalSourceRevalidation.persistedOfferId,
                   currentLandedCostCents: approvalSourceRevalidation.currentLandedCostCents,
+                  sourceLockKey: currentSourceLock.sourceLockKey,
+                  lockedSupplierOfferId: currentSourceLock.persistedOfferId,
+                  lockedSupplierId: currentSourceLock.persistedSupplierId,
                 }
               : {}),
-            ...(parsed.data.action === "RECORD_MANUAL_PURCHASE"
+            ...(parsed.data.action === "RECORD_MANUAL_PURCHASE" && currentSourceLock
               ? {
                   manualPurchaseConfirmed: true,
+                  sourceLockConfirmed: true,
+                  sourceLockKey: currentSourceLock.sourceLockKey,
+                  lockedSupplierOfferId: currentSourceLock.persistedOfferId,
+                  lockedSupplierId: currentSourceLock.persistedSupplierId,
                   supplierOrderReference: parsed.data.supplierOrderReference,
                   actualTotalCostCents: parsed.data.actualTotalCostCents,
                   expectedTotalCostCents: current.expectedTotalCostCents,
@@ -255,7 +292,12 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
         },
       });
 
-      return { previousStatus: current.status, status: txTransition.next, performedAt: now.toISOString() };
+      return {
+        previousStatus: current.status,
+        status: txTransition.next,
+        performedAt: now.toISOString(),
+        ...(currentSourceLock ? { lockedSource: currentSourceLock } : {}),
+      };
     });
 
     return noStore(
@@ -274,7 +316,9 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
           ? "PROCUREMENT_BLOCKED_BY_REFUND"
           : message === "PROCUREMENT_LIVE_SOURCE_REVALIDATION_CHANGED"
             ? "PROCUREMENT_LIVE_SOURCE_REVALIDATION_FAILED"
-            : "PROCUREMENT_STATE_CONFLICT";
+            : message === "PROCUREMENT_SOURCE_LOCK_CHANGED"
+              ? "PROCUREMENT_LOCKED_SOURCE_MISMATCH"
+              : "PROCUREMENT_STATE_CONFLICT";
       return noStore(NextResponse.json({ error: responseError }, { status: 409 }));
     }
     console.error("procurement.owner_action_failed", {
