@@ -19,6 +19,7 @@ import {
   deriveProcurementSourceLock,
   procurementSourceConfirmationMatches,
 } from "@/lib/procurement-source-lock";
+import { evaluateProcurementApprovalLease } from "@/lib/procurement-approval-lease";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -28,6 +29,8 @@ const note = z.string().trim().min(1).max(500).optional();
 const supplierReference = z.string().trim().min(2).max(120).regex(/^[A-Za-z0-9 ._#:\/-]+$/);
 const supplierOfferId = z.string().trim().min(1).max(128).regex(/^[A-Za-z0-9:_-]+$/);
 const sourceLockKey = z.string().trim().regex(/^proc_source_lock_v1_[a-f0-9]{64}$/);
+
+type ApprovalResetCause = "APPROVAL_LEASE_EXPIRED" | "APPROVAL_EVIDENCE_REVALIDATION_FAILED";
 
 const ActionSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("APPROVE_MANUAL"), expectedState, note }),
@@ -67,6 +70,62 @@ function noStore(response: NextResponse) {
   response.headers.set("Cache-Control", "private, no-store, max-age=0");
   response.headers.set("Referrer-Policy", "no-referrer");
   return response;
+}
+
+async function returnApprovalToReview(
+  procurementIntentId: string,
+  cause: ApprovalResetCause,
+  revalidationReasons: string[] = [],
+) {
+  return prisma.$transaction(async (tx) => {
+    const current = await tx.procurementIntent.findUnique({
+      where: { id: procurementIntentId },
+      select: { id: true, status: true, approvedAt: true, updatedAt: true },
+    });
+    if (!current) {
+      return {
+        changed: false,
+        currentState: "missing",
+        lease: evaluateProcurementApprovalLease(null),
+      };
+    }
+
+    const nowMs = Date.now();
+    const lease = evaluateProcurementApprovalLease(current.approvedAt, nowMs);
+    if (current.status !== "approved_manual") {
+      return { changed: false, currentState: current.status, lease };
+    }
+    if (cause === "APPROVAL_LEASE_EXPIRED" && lease.valid) {
+      return { changed: false, currentState: current.status, lease };
+    }
+
+    const updated = await tx.procurementIntent.updateMany({
+      where: { id: current.id, status: "approved_manual", updatedAt: current.updatedAt },
+      data: { status: "awaiting_review", approvedByUserId: null, approvedAt: null },
+    });
+    if (updated.count !== 1) {
+      return { changed: false, currentState: "concurrent_change", lease };
+    }
+
+    await tx.procurementEvent.create({
+      data: {
+        eventKey: `procurement-approval-reset:${current.id}:${current.approvedAt?.getTime() ?? "missing"}:${cause}`,
+        procurementIntentId: current.id,
+        type: cause,
+        actor: "system",
+        detail: JSON.stringify({
+          previousStatus: "approved_manual",
+          nextStatus: "awaiting_review",
+          cause,
+          lease,
+          revalidationReasons,
+          automaticSupplierPurchasingEnabled: false,
+        }),
+      },
+    });
+
+    return { changed: true, currentState: "awaiting_review", lease };
+  });
 }
 
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
@@ -116,6 +175,19 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     return noStore(NextResponse.json({ error: "PROCUREMENT_STATE_CONFLICT", currentState: intent.status }, { status: 409 }));
   }
 
+  if (parsed.data.action === "RECORD_MANUAL_PURCHASE") {
+    const approvalLease = evaluateProcurementApprovalLease(intent.approvedAt);
+    if (!approvalLease.valid) {
+      const reset = await returnApprovalToReview(intent.id, "APPROVAL_LEASE_EXPIRED");
+      return noStore(
+        NextResponse.json(
+          { error: "PROCUREMENT_APPROVAL_EXPIRED", currentState: reset.currentState, approvalLease: reset.lease },
+          { status: 409 },
+        ),
+      );
+    }
+  }
+
   const sourceLock = deriveProcurementSourceLock(
     intent.supplierSnapshot,
     intent.expectedUnitCostCents,
@@ -131,7 +203,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   }
 
   let sourceRevalidation: Awaited<ReturnType<typeof checkProcurementSourceRevalidation>> | null = null;
-  if (parsed.data.action === "APPROVE_MANUAL") {
+  if (parsed.data.action === "APPROVE_MANUAL" || parsed.data.action === "RECORD_MANUAL_PURCHASE") {
     sourceRevalidation = await checkProcurementSourceRevalidation({
       supplierSnapshot: intent.supplierSnapshot,
       productId: intent.orderItem.productId,
@@ -139,6 +211,23 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       expectedUnitCostCents: intent.expectedUnitCostCents,
     });
     if (!sourceRevalidation.allowed || !sourceLock || sourceRevalidation.persistedOfferId !== sourceLock.persistedOfferId) {
+      if (parsed.data.action === "RECORD_MANUAL_PURCHASE") {
+        const reset = await returnApprovalToReview(
+          intent.id,
+          "APPROVAL_EVIDENCE_REVALIDATION_FAILED",
+          sourceRevalidation.reasons,
+        );
+        return noStore(
+          NextResponse.json(
+            {
+              error: "PROCUREMENT_PURCHASE_SOURCE_REVALIDATION_FAILED",
+              reasons: sourceRevalidation.reasons,
+              currentState: reset.currentState,
+            },
+            { status: 409 },
+          ),
+        );
+      }
       return noStore(
         NextResponse.json(
           {
@@ -188,6 +277,13 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       if (current.status !== parsed.data.expectedState || !isProcurementStatus(current.status)) {
         throw new Error("PROCUREMENT_STATE_CHANGED");
       }
+
+      const transactionNowMs = Date.now();
+      if (parsed.data.action === "RECORD_MANUAL_PURCHASE") {
+        const currentLease = evaluateProcurementApprovalLease(current.approvedAt, transactionNowMs);
+        if (!currentLease.valid) throw new Error("PROCUREMENT_APPROVAL_LEASE_CHANGED");
+      }
+
       const txTransition = transitionProcurement(current.status, parsed.data.action);
       if (!txTransition.ok) throw new Error("PROCUREMENT_TRANSITION_CHANGED");
 
@@ -200,28 +296,45 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
         throw new Error("PROCUREMENT_SOURCE_LOCK_CHANGED");
       }
 
-      let approvalSourceRevalidation = sourceRevalidation;
-      if (parsed.data.action === "APPROVE_MANUAL") {
-        approvalSourceRevalidation = await checkProcurementSourceRevalidation(
+      let transactionSourceRevalidation = sourceRevalidation;
+      if (parsed.data.action === "APPROVE_MANUAL" || parsed.data.action === "RECORD_MANUAL_PURCHASE") {
+        transactionSourceRevalidation = await checkProcurementSourceRevalidation(
           {
             supplierSnapshot: current.supplierSnapshot,
             productId: current.orderItem.productId,
             currency: current.currency,
             expectedUnitCostCents: current.expectedUnitCostCents,
           },
-          Date.now(),
+          transactionNowMs,
           tx,
         );
         if (
-          !approvalSourceRevalidation.allowed ||
+          !transactionSourceRevalidation.allowed ||
           !currentSourceLock ||
-          approvalSourceRevalidation.persistedOfferId !== currentSourceLock.persistedOfferId
+          transactionSourceRevalidation.persistedOfferId !== currentSourceLock.persistedOfferId
         ) {
-          throw new Error("PROCUREMENT_LIVE_SOURCE_REVALIDATION_CHANGED");
+          throw new Error(
+            parsed.data.action === "RECORD_MANUAL_PURCHASE"
+              ? "PROCUREMENT_PURCHASE_SOURCE_REVALIDATION_CHANGED"
+              : "PROCUREMENT_LIVE_SOURCE_REVALIDATION_CHANGED",
+          );
         }
       }
 
-      const now = new Date();
+      let transactionEconomics: ReturnType<typeof validateManualPurchaseEconomics> | null = economics;
+      if (parsed.data.action === "RECORD_MANUAL_PURCHASE") {
+        const recheckedEconomics = validateManualPurchaseEconomics({
+          actualTotalCostCents: parsed.data.actualTotalCostCents,
+          expectedTotalCostCents: current.expectedTotalCostCents,
+          lineRevenueCents: current.orderItem.lineTotalCents,
+          acceptCostVariance: parsed.data.acceptCostVariance === true,
+          acceptLossRisk: parsed.data.acceptLossRisk === true,
+        });
+        if (!recheckedEconomics.ok) throw new Error("PROCUREMENT_PURCHASE_ECONOMICS_CHANGED");
+        transactionEconomics = recheckedEconomics;
+      }
+
+      const now = new Date(transactionNowMs);
       const data: {
         status: string;
         approvedByUserId?: string;
@@ -247,6 +360,12 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       });
       if (updated.count !== 1) throw new Error("PROCUREMENT_CONCURRENT_CHANGE");
 
+      const approvalLease =
+        parsed.data.action === "APPROVE_MANUAL"
+          ? evaluateProcurementApprovalLease(now, transactionNowMs)
+          : parsed.data.action === "RECORD_MANUAL_PURCHASE"
+            ? evaluateProcurementApprovalLease(current.approvedAt, transactionNowMs)
+            : null;
       const nonce = randomUUID();
       await tx.procurementEvent.create({
         data: {
@@ -260,15 +379,16 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
             note: parsed.data.note || null,
             reason: "reason" in parsed.data ? parsed.data.reason : null,
             automaticSupplierPurchasingEnabled: false,
-            ...(parsed.data.action === "APPROVE_MANUAL" && approvalSourceRevalidation?.allowed && currentSourceLock
+            ...(parsed.data.action === "APPROVE_MANUAL" && transactionSourceRevalidation?.allowed && currentSourceLock
               ? {
                   liveSourceRevalidated: true,
                   liveSourceRevalidatedAt: now.toISOString(),
-                  persistedOfferId: approvalSourceRevalidation.persistedOfferId,
-                  currentLandedCostCents: approvalSourceRevalidation.currentLandedCostCents,
+                  persistedOfferId: transactionSourceRevalidation.persistedOfferId,
+                  currentLandedCostCents: transactionSourceRevalidation.currentLandedCostCents,
                   sourceLockKey: currentSourceLock.sourceLockKey,
                   lockedSupplierOfferId: currentSourceLock.persistedOfferId,
                   lockedSupplierId: currentSourceLock.persistedSupplierId,
+                  approvalLease,
                 }
               : {}),
             ...(parsed.data.action === "RECORD_MANUAL_PURCHASE" && currentSourceLock
@@ -278,12 +398,15 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
                   sourceLockKey: currentSourceLock.sourceLockKey,
                   lockedSupplierOfferId: currentSourceLock.persistedOfferId,
                   lockedSupplierId: currentSourceLock.persistedSupplierId,
+                  approvalLease,
+                  purchaseSourceRevalidated: transactionSourceRevalidation?.allowed === true,
+                  purchaseSourceRevalidatedAt: now.toISOString(),
                   supplierOrderReference: parsed.data.supplierOrderReference,
                   actualTotalCostCents: parsed.data.actualTotalCostCents,
                   expectedTotalCostCents: current.expectedTotalCostCents,
                   lineRevenueCents: current.orderItem.lineTotalCents,
-                  costVarianceCents: economics?.ok ? economics.varianceCents : null,
-                  projectedGrossMarginCents: economics?.ok ? economics.projectedGrossMarginCents : null,
+                  costVarianceCents: transactionEconomics?.ok ? transactionEconomics.varianceCents : null,
+                  projectedGrossMarginCents: transactionEconomics?.ok ? transactionEconomics.projectedGrossMarginCents : null,
                   acceptCostVariance: parsed.data.acceptCostVariance === true,
                   acceptLossRisk: parsed.data.acceptLossRisk === true,
                 }
@@ -296,6 +419,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
         previousStatus: current.status,
         status: txTransition.next,
         performedAt: now.toISOString(),
+        approvalLease,
         ...(currentSourceLock ? { lockedSource: currentSourceLock } : {}),
       };
     });
@@ -310,6 +434,24 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     );
   } catch (error) {
     const message = error instanceof Error ? error.message : "UNKNOWN";
+    if (message === "PROCUREMENT_APPROVAL_LEASE_CHANGED") {
+      const reset = await returnApprovalToReview(intent.id, "APPROVAL_LEASE_EXPIRED");
+      return noStore(
+        NextResponse.json(
+          { error: "PROCUREMENT_APPROVAL_EXPIRED", currentState: reset.currentState, approvalLease: reset.lease },
+          { status: 409 },
+        ),
+      );
+    }
+    if (message === "PROCUREMENT_PURCHASE_SOURCE_REVALIDATION_CHANGED") {
+      const reset = await returnApprovalToReview(intent.id, "APPROVAL_EVIDENCE_REVALIDATION_FAILED");
+      return noStore(
+        NextResponse.json(
+          { error: "PROCUREMENT_PURCHASE_SOURCE_REVALIDATION_FAILED", currentState: reset.currentState },
+          { status: 409 },
+        ),
+      );
+    }
     if (message.startsWith("PROCUREMENT_")) {
       const responseError =
         message === "PROCUREMENT_REFUND_INTERLOCK"
