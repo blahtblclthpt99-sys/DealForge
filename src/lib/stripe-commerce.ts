@@ -14,6 +14,7 @@ export type StripeCheckoutLine = {
   description?: string | null;
   unitAmountCents: number;
   quantity: number;
+  taxCode?: string | null;
 };
 
 export type StripeCheckoutSession = {
@@ -134,6 +135,14 @@ export function stripeDefaultProductTaxCode() {
   const value = configured || DEFAULT_PHYSICAL_GOODS_TAX_CODE;
   if (!/^txcd_[A-Za-z0-9]+$/.test(value)) throw new Error("STRIPE_PRODUCT_TAX_CODE_INVALID");
   return value;
+}
+
+export function assertStripeProductTaxCode(value: string) {
+  const normalized = value.trim();
+  if (!/^txcd_[A-Za-z0-9]+$/.test(normalized)) {
+    throw new Error("STRIPE_PRODUCT_TAX_CODE_INVALID");
+  }
+  return normalized;
 }
 
 export function stripePriceTaxBehavior() {
@@ -308,7 +317,6 @@ export async function createStripeCheckoutSession(input: {
     body.append("shipping_address_collection[allowed_countries][]", country);
   }
 
-  const automaticTaxCode = automaticTaxEnabled ? stripeDefaultProductTaxCode() : null;
   const automaticTaxBehavior = automaticTaxEnabled ? stripePriceTaxBehavior() : null;
   input.lines.forEach((line, index) => {
     assertPositiveCents(line.unitAmountCents, "unit_amount");
@@ -318,8 +326,11 @@ export async function createStripeCheckoutSession(input: {
     body.set(`line_items[${index}][price_data][currency]`, input.currency.toLowerCase());
     body.set(`line_items[${index}][price_data][unit_amount]`, String(line.unitAmountCents));
     body.set(`line_items[${index}][price_data][product_data][name]`, line.name.slice(0, 250));
-    if (automaticTaxCode && automaticTaxBehavior) {
-      body.set(`line_items[${index}][price_data][product_data][tax_code]`, automaticTaxCode);
+    if (automaticTaxEnabled && automaticTaxBehavior) {
+      const taxCode = line.taxCode
+        ? assertStripeProductTaxCode(line.taxCode)
+        : stripeDefaultProductTaxCode();
+      body.set(`line_items[${index}][price_data][product_data][tax_code]`, taxCode);
       body.set(`line_items[${index}][price_data][tax_behavior]`, automaticTaxBehavior);
     }
     if (line.description) {
