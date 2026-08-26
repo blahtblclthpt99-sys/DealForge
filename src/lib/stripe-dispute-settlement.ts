@@ -140,7 +140,10 @@ function parseLedger(meta: string):
     if ((withdrawn && withdrawn.disputeId !== disputeId) || (reinstated && reinstated.disputeId !== disputeId)) {
       return { ok: false, reason: "PAYMENT_DISPUTE_SETTLEMENT_META_INVALID" };
     }
-    entries[disputeId] = { withdrawn, reinstated };
+    entries[disputeId] = {
+      withdrawn: withdrawn ?? undefined,
+      reinstated: reinstated ?? undefined,
+    };
   }
   return { ok: true, root, entries };
 }
