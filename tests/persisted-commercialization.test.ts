@@ -20,10 +20,14 @@ test("supplier persistence keys are deterministic and identity-scoped", () => {
   assert.notEqual(offerA, offerOtherProduct);
 });
 
-test("supplier authorization only advances on a strictly newer verification", async () => {
+test("supplier authorization never accepts conflicting equal-timestamp provenance", async () => {
   const source = await readFile("src/lib/supplier-commercialization.ts", "utf8");
   assert.match(source, /sourceVerifiedAt: \{ lt: sourceVerifiedAt \}/);
-  assert.match(source, /data: \{ sourceVerifiedAt, verificationSource: "owner_manual", active: true, resaleAllowed: true \}/);
+  assert.match(source, /buildSupplierSourceProvenance/);
+  assert.match(source, /sameSupplierSourceProvenance/);
+  assert.match(source, /SUPPLIER_SOURCE_VERIFICATION_CONFLICT/);
+  assert.match(source, /verificationSource: submittedSourceProvenance\.verificationMethod/);
+  assert.match(source, /metadata: bindSupplierSourceProvenanceToMetadata/);
   assert.match(source, /update: \{ name: supplierName, websiteUrl: websiteUrl \?\? undefined \}/);
   assert.doesNotMatch(source, /update: \{\s*name: supplierName,\s*websiteUrl: websiteUrl \?\? undefined,\s*active: true/);
 });
@@ -49,22 +53,32 @@ test("no eligible persisted supplier immediately revokes the stale direct-commer
   assert.match(service, /availability: unavailableSnapshotAvailability\(selection\)/);
 });
 
-test("commercialization bridge carries tax metadata but has no payment, procurement, or global commerce authority", async () => {
+test("invalid selected supplier provenance keeps commerce disabled", async () => {
+  const service = await readFile("src/lib/supplier-commercialization.ts", "utf8");
+  assert.match(service, /evaluateSupplierSourceProvenance/);
+  assert.match(service, /selectionBlockedBySourceProvenance/);
+  assert.match(service, /sourceProvenanceDecision\.allowed/);
+  assert.match(service, /data: \{ commerceEnabled: false, availability: "unknown" \}/);
+});
+
+test("commercialization bridge carries tax and source provenance but has no payment, procurement, or global commerce authority", async () => {
   const service = await readFile("src/lib/supplier-commercialization.ts", "utf8");
   const route = await readFile("src/app/api/admin/product-engine/route.ts", "utf8");
   assert.match(service, /stripeTaxCode: input\.stripeTaxCode/);
   assert.match(service, /taxVerificationSource: input\.taxVerificationSource/);
+  assert.match(service, /bindSupplierSourceProvenanceToSpecifications/);
   assert.doesNotMatch(service, /createStripe|stripeRequest|checkoutSession|paymentIntent|procure|placeOrder|reserveInventory/i);
   assert.doesNotMatch(service, /COMMERCE_ENABLED\s*=/);
   assert.doesNotMatch(route, /COMMERCE_ENABLED\s*=/);
   assert.match(route, /readLimitedJson\(req, 32 \* 1024\)/);
 });
 
-test("selected persisted offer identity is carried into the derived commerce snapshot", async () => {
+test("selected persisted offer identity and source provenance are carried into the derived commerce snapshot", async () => {
   const service = await readFile("src/lib/supplier-commercialization.ts", "utf8");
   assert.match(service, /persistedSupplierId/);
   assert.match(service, /persistedOfferId/);
   assert.match(service, /persistedOfferKey/);
   assert.match(service, /selected\.supplierName/);
   assert.match(service, /selected\.priceVerifiedAt\.toISOString\(\)/);
+  assert.match(service, /sourceProvenanceDecision\.provenance/);
 });
