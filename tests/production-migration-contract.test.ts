@@ -35,7 +35,12 @@ test("legacy production reconciliation resolves only schema already proven prese
     [...LEGACY_PRODUCTION_MIGRATIONS_ALREADY_PRESENT],
   );
   assert.deepEqual(plan.pendingAfterResolve, EXPECTED_MISSING_BEFORE_REPAIR);
-  assert.equal(plan.resolveAsApplied.includes("20260825233000_order_destination_v1"), false);
+  assert.equal(
+    new Set<string>(plan.resolveAsApplied).has(
+      "20260825233000_order_destination_v1",
+    ),
+    false,
+  );
 });
 
 test("legacy production reconciliation fails closed on a missing historical fingerprint", () => {
