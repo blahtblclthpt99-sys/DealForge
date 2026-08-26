@@ -48,8 +48,8 @@ function asCurrency(value: unknown) {
  * automatic_tax.status=complete. Discounts are deliberately rejected until a
  * separately certified promotion/discount ledger exists.
  *
- * This function is pure so the webhook and release-gate tests can exercise the
- * same fail-closed rules without network or database access.
+ * Non-tax sessions retain the pre-existing amount/currency contract so this
+ * foundation does not disturb the already-certified shipping-only path.
  */
 export function resolveStripeCheckoutTaxAuthority(
   order: StripeTaxAuthorityOrder,
@@ -60,14 +60,8 @@ export function resolveStripeCheckoutTaxAuthority(
     throw new Error("WEBHOOK_CURRENCY_MISMATCH");
   }
 
-  const amountSubtotal = asSafePositiveInteger(object.amount_subtotal);
   const amountTotal = asSafePositiveInteger(object.amount_total);
-  if (amountSubtotal === null || amountTotal === null) {
-    throw new Error("STRIPE_CHECKOUT_TOTALS_MISSING");
-  }
-  if (amountSubtotal !== order.subtotalCents) {
-    throw new Error("WEBHOOK_SUBTOTAL_MISMATCH");
-  }
+  if (amountTotal === null) throw new Error("STRIPE_CHECKOUT_TOTAL_MISSING");
 
   const automaticTax = asRecord(object.automatic_tax);
   const automaticTaxEnabled = automaticTax?.enabled === true;
@@ -85,6 +79,11 @@ export function resolveStripeCheckoutTaxAuthority(
     };
   }
 
+  const amountSubtotal = asSafePositiveInteger(object.amount_subtotal);
+  if (amountSubtotal === null) throw new Error("STRIPE_CHECKOUT_SUBTOTAL_MISSING");
+  if (amountSubtotal !== order.subtotalCents) {
+    throw new Error("WEBHOOK_SUBTOTAL_MISMATCH");
+  }
   if (automaticTax?.status !== "complete") {
     throw new Error("STRIPE_AUTOMATIC_TAX_INCOMPLETE");
   }
@@ -98,9 +97,7 @@ export function resolveStripeCheckoutTaxAuthority(
   if (taxCents === null || shippingCents === null || discountCents === null) {
     throw new Error("STRIPE_TOTAL_DETAILS_INVALID");
   }
-  if (discountCents !== 0) {
-    throw new Error("STRIPE_DISCOUNT_NOT_CERTIFIED");
-  }
+  if (discountCents !== 0) throw new Error("STRIPE_DISCOUNT_NOT_CERTIFIED");
   if (shippingCents !== order.shippingCents) {
     throw new Error("WEBHOOK_SHIPPING_AMOUNT_MISMATCH");
   }
