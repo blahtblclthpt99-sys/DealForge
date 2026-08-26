@@ -4,6 +4,8 @@ export const STRIPE_DISPUTE_EVENT_TYPES = [
   "charge.dispute.created",
   "charge.dispute.updated",
   "charge.dispute.closed",
+  "charge.dispute.funds_withdrawn",
+  "charge.dispute.funds_reinstated",
 ] as const;
 
 export type StripeDisputeEventType = (typeof STRIPE_DISPUTE_EVENT_TYPES)[number];
