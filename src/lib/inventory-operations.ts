@@ -1,5 +1,6 @@
 import { MIN_INVENTORY_CONFIDENCE_BPS } from "./commercialization";
 import { prisma } from "./db";
+import { evaluateInventoryEvidenceBinding, refreshBoundInventoryEvidence } from "./inventory-evidence-binding";
 import { evaluateInventoryFreshness } from "./inventory-freshness";
 import {
   readLatestInventoryObservation,
@@ -53,6 +54,23 @@ async function audit(actor: string, action: string, detail: Record<string, unkno
   });
 }
 
+async function refreshProductInventoryEvidence(
+  productId: string,
+  supplierOfferId: string,
+  evidence: ReturnType<typeof evaluateInventoryEvidenceBinding>["evidence"],
+) {
+  if (!evidence) return false;
+  const product = await prisma.product.findUnique({ where: { id: productId }, select: { specifications: true } });
+  if (!product) return false;
+  const refreshed = refreshBoundInventoryEvidence(product.specifications, supplierOfferId, evidence);
+  if (!refreshed || refreshed === product.specifications) return false;
+  const updated = await prisma.product.updateMany({
+    where: { id: productId, specifications: product.specifications },
+    data: { specifications: refreshed },
+  });
+  return updated.count > 0;
+}
+
 async function demoteProductForInventory(
   productId: string,
   availability: "out_of_stock" | "unknown",
@@ -78,12 +96,6 @@ async function demoteProductForInventory(
   return result.count;
 }
 
-/**
- * Accept trusted normalized evidence for one exact persisted supplier offer.
- * Positive evidence never enables commerce. Negative/missing/stale evidence or
- * a newly observed item-price change may only reduce eligibility, keeping
- * inventory automation monotonic-safe.
- */
 export async function applyInventoryObservation(
   input: InventoryObservationOperationInput,
   nowMs = Date.now(),
@@ -138,14 +150,16 @@ export async function applyInventoryObservation(
     { minInventoryConfidenceBps: MIN_INVENTORY_CONFIDENCE_BPS, requireCurrent: true },
     nowMs,
   );
+  const evidenceDecision = evaluateInventoryEvidenceBinding(
+    latest,
+    { supplierOfferId: offer.id, itemCostCents: offer.itemCostCents },
+    nowMs,
+  );
   const priceDrift = observedPriceDrift(latest, offer.itemCostCents);
   const safetyReasons = priceDrift
     ? [...freshness.reasons, "observed_supplier_price_drift"]
     : freshness.reasons;
 
-  // Keep normalized inventory state synchronized with the latest evidence. Item
-  // cost is intentionally NOT rewritten here: a changed observed price requires
-  // the full commercialization/landed-cost/profit gate to re-verify economics.
   await prisma.supplierOffer.update({
     where: { id: offer.id },
     data: {
@@ -153,6 +167,12 @@ export async function applyInventoryObservation(
       inventoryConfidenceBps: latest.inventoryConfidenceBps,
     },
   });
+
+  const evidenceRefreshed = await refreshProductInventoryEvidence(
+    offer.productId,
+    offer.id,
+    evidenceDecision.evidence,
+  );
 
   let demoted = 0;
   if (!freshness.promotable || priceDrift) {
@@ -180,6 +200,7 @@ export async function applyInventoryObservation(
     priceDrift,
     observedPriceCents: latest.observedPriceCents ?? null,
     persistedItemCostCents: offer.itemCostCents,
+    evidenceRefreshed,
     demoted: demoted > 0,
   });
 
@@ -195,17 +216,12 @@ export async function applyInventoryObservation(
       reasons: safetyReasons,
     },
     priceDrift,
+    evidenceRefreshed,
     demoted: demoted > 0,
     commercePromoted: false as const,
   };
 }
 
-/**
- * Bounded fail-closed sweep. It checks active persisted offers and disables any
- * directly associated Product whose newest inventory evidence is absent, stale,
- * economically inconsistent, or otherwise no longer current. It never enables
- * commerce or purchases inventory.
- */
 export async function sweepInventoryFreshness(
   actor: string,
   requestedLimit = 100,
@@ -237,6 +253,12 @@ export async function sweepInventoryFreshness(
       { minInventoryConfidenceBps: MIN_INVENTORY_CONFIDENCE_BPS, requireCurrent: true },
       nowMs,
     );
+    const evidenceDecision = evaluateInventoryEvidenceBinding(
+      observation,
+      { supplierOfferId: offer.id, itemCostCents: offer.itemCostCents },
+      nowMs,
+    );
+    await refreshProductInventoryEvidence(offer.productId, offer.id, evidenceDecision.evidence);
     const supplierBlocked = !offer.supplier.active || !offer.supplier.resaleAllowed;
     const priceDrift = observedPriceDrift(observation, offer.itemCostCents);
     if (freshness.promotable && !supplierBlocked && !priceDrift) {
