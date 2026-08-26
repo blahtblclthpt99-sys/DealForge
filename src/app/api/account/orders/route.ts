@@ -79,7 +79,10 @@ export async function GET() {
       const internalFulfillmentStatus = publicFulfillmentStatus(
         item.procurementIntent?.status || "processing",
       );
-      const projectedShipment = projectPublicShipment(item.procurementIntent?.events || []);
+      const projectedShipment = projectPublicShipment(
+        item.procurementIntent?.events || [],
+        item.quantity,
+      );
       const fulfillmentConsistent =
         internalFulfillmentStatus !== "processing" &&
         projectedShipment?.status === internalFulfillmentStatus;
