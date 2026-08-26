@@ -10,16 +10,30 @@ const procurementRoute = readFileSync(join(root, "src/app/api/admin/procurement/
 const shipmentRoute = readFileSync(join(root, "src/app/api/admin/procurement/[id]/shipment/route.ts"), "utf8");
 const productionEnv = readFileSync(join(root, ".env.production.example"), "utf8");
 
-test("authoritative Stripe webhook handles dispute lifecycle events", () => {
+test("authoritative Stripe webhook handles dispute lifecycle and settlement events", () => {
   for (const eventType of [
     "charge.dispute.created",
     "charge.dispute.updated",
     "charge.dispute.closed",
+    "charge.dispute.funds_withdrawn",
+    "charge.dispute.funds_reinstated",
   ]) {
     assert.match(webhookRoute, new RegExp(`case \\"${eventType.replaceAll(".", "\\.")}\\"`));
   }
   assert.match(webhookRoute, /mergeStripeDisputeMeta/);
+  assert.match(webhookRoute, /prepareDisputeSettlementEvidence/);
+  assert.match(webhookRoute, /retrieveStripeBalanceTransaction/);
+  assert.match(webhookRoute, /validateStripeDisputeSettlementEvidence/);
+  assert.match(webhookRoute, /mergeStripeDisputeSettlementMeta/);
   assert.match(webhookRoute, /deriveFinancialOrderStatus/);
+});
+
+test("dispute settlement evidence is fetched before local event claim", () => {
+  const settlementIndex = webhookRoute.indexOf("prepareDisputeSettlementEvidence(event)");
+  const transactionIndex = webhookRoute.indexOf("prisma.$transaction");
+  assert.notEqual(settlementIndex, -1);
+  assert.notEqual(transactionIndex, -1);
+  assert.ok(settlementIndex < transactionIndex);
 });
 
 test("disputed orders cannot create a second checkout session with the same checkout key", () => {

@@ -20,6 +20,13 @@ import {
   mergeStripeDisputeMeta,
   type StripeDisputeEventType,
 } from "@/lib/stripe-dispute-integrity";
+import {
+  mergeStripeDisputeSettlementMeta,
+  validateStripeDisputeSettlementEvidence,
+  type StripeDisputeSettlementEvidence,
+  type StripeDisputeSettlementEventType,
+  type StripeDisputeSettlementKind,
+} from "@/lib/stripe-dispute-settlement";
 import { resolveStripeCheckoutTaxAuthority } from "@/lib/stripe-tax-authority";
 import {
   mergeStripeFeeMeta,
@@ -410,6 +417,59 @@ async function prepareRefundFinancialEvidence(event: StripeEvent): Promise<Refun
   return evidence;
 }
 
+async function prepareDisputeSettlementEvidence(
+  event: StripeEvent,
+): Promise<StripeDisputeSettlementEvidence | null> {
+  if (
+    event.type !== "charge.dispute.funds_withdrawn" &&
+    event.type !== "charge.dispute.funds_reinstated"
+  ) {
+    return null;
+  }
+
+  const object = event.data.object;
+  const values = Array.isArray(object.balance_transactions)
+    ? object.balance_transactions
+    : [];
+  if (values.length === 0) {
+    throw new Error("WEBHOOK_DISPUTE_SETTLEMENT_BALANCE_TRANSACTION_MISSING");
+  }
+
+  const kind: StripeDisputeSettlementKind =
+    event.type === "charge.dispute.funds_withdrawn"
+      ? "funds_withdrawn"
+      : "funds_reinstated";
+  let evidence: StripeDisputeSettlementEvidence | null = null;
+
+  for (const value of values) {
+    const transactionId = objectId(value);
+    if (!transactionId) continue;
+    const transaction = await retrieveStripeBalanceTransaction(transactionId);
+    const signMatches =
+      kind === "funds_withdrawn" ? transaction.amount < 0 : transaction.amount > 0;
+    if (!signMatches) continue;
+
+    const validated = validateStripeDisputeSettlementEvidence({
+      dispute: object,
+      balanceTransaction: transaction,
+      kind,
+    });
+    if (!validated.ok) throw new Error(validated.reason);
+    if (
+      evidence &&
+      evidence.balanceTransactionId !== validated.evidence.balanceTransactionId
+    ) {
+      throw new Error("WEBHOOK_DISPUTE_SETTLEMENT_BALANCE_TRANSACTION_AMBIGUOUS");
+    }
+    evidence = validated.evidence;
+  }
+
+  if (!evidence) {
+    throw new Error("WEBHOOK_DISPUTE_SETTLEMENT_MATCHING_TRANSACTION_MISSING");
+  }
+  return evidence;
+}
+
 async function reconcilePaymentFee(
   tx: Prisma.TransactionClient,
   evidence: StripeFeeEvidence,
@@ -457,6 +517,7 @@ async function reconcilePaymentFee(
 async function reconcileDispute(
   tx: Prisma.TransactionClient,
   event: StripeEvent,
+  settlementEvidence: StripeDisputeSettlementEvidence | null,
 ) {
   const object = event.data.object;
   const disputeId = asString(object.id);
@@ -520,17 +581,31 @@ async function reconcileDispute(
   });
   if (!merged.ok) throw new Error(merged.reason);
 
-  if (!merged.stale) {
+  let nextPaymentMeta = merged.meta;
+  if (settlementEvidence) {
+    const settlementMerged = mergeStripeDisputeSettlementMeta({
+      currentMeta: nextPaymentMeta,
+      evidence: settlementEvidence,
+      eventId: event.id,
+      eventType: event.type as StripeDisputeSettlementEventType,
+      eventCreated,
+      reconciledAt: new Date().toISOString(),
+    });
+    if (!settlementMerged.ok) throw new Error(settlementMerged.reason);
+    nextPaymentMeta = settlementMerged.meta;
+  }
+
+  if (!merged.stale || settlementEvidence) {
     const paymentUpdated = await tx.payment.updateMany({
       where: { id: payment.id, updatedAt: payment.updatedAt },
-      data: { meta: merged.meta },
+      data: { meta: nextPaymentMeta },
     });
     if (paymentUpdated.count !== 1) {
       throw new Error("WEBHOOK_DISPUTE_CONCURRENT_PAYMENT_CHANGE");
     }
   }
 
-  const financial = await deriveOrderFinancialStatus(tx, order, merged.meta);
+  const financial = await deriveOrderFinancialStatus(tx, order, nextPaymentMeta);
   const orderUpdated = await tx.order.updateMany({
     where: { id: order.id, updatedAt: order.updatedAt },
     data: { status: financial.status },
@@ -577,6 +652,7 @@ async function processStripeEvent(
   event: StripeEvent,
   feeEvidence: StripeFeeEvidence | null,
   refundFinancialEvidence: RefundFinancialEvidence[],
+  disputeSettlementEvidence: StripeDisputeSettlementEvidence | null,
 ) {
   const object = event.data.object;
   let orderId = await resolveOrderId(tx, object);
@@ -647,7 +723,9 @@ async function processStripeEvent(
     case "charge.dispute.created":
     case "charge.dispute.updated":
     case "charge.dispute.closed":
-      orderId = await reconcileDispute(tx, event);
+    case "charge.dispute.funds_withdrawn":
+    case "charge.dispute.funds_reinstated":
+      orderId = await reconcileDispute(tx, event, disputeSettlementEvidence);
       break;
     default:
       break;
@@ -751,6 +829,7 @@ export async function POST(request: Request) {
     // remain retryable and cannot leave half-recorded financial truth.
     const feeEvidence = await prepareStripeFeeEvidence(event);
     const refundFinancialEvidence = await prepareRefundFinancialEvidence(event);
+    const disputeSettlementEvidence = await prepareDisputeSettlementEvidence(event);
     const result = await prisma.$transaction(async (tx) => {
       const claim = await claimStripeEvent(tx, event, rawBody);
       if (claim.duplicate) return { duplicate: true };
@@ -760,6 +839,7 @@ export async function POST(request: Request) {
         event,
         feeEvidence,
         refundFinancialEvidence,
+        disputeSettlementEvidence,
       );
       await tx.paymentEvent.update({
         where: { providerEventId: event.id },

@@ -1,7 +1,11 @@
+import { readStripeDisputeSettlementDecision } from "@/lib/stripe-dispute-settlement";
+
 export const STRIPE_DISPUTE_EVENT_TYPES = [
   "charge.dispute.created",
   "charge.dispute.updated",
   "charge.dispute.closed",
+  "charge.dispute.funds_withdrawn",
+  "charge.dispute.funds_reinstated",
 ] as const;
 
 export type StripeDisputeEventType = (typeof STRIPE_DISPUTE_EVENT_TYPES)[number];
@@ -149,12 +153,9 @@ function parsePaymentMeta(currentMeta: string):
   return { ok: true, root, entries };
 }
 
-// A dispute status of `won` means the case outcome favors DealForge, but it is
-// not sufficient financial evidence that Stripe has actually reinstated the
-// withdrawn funds. Until a separately reconciled funds_reinstated Balance
-// Transaction gate exists, keep `won` disputes fail-closed as active. Stripe's
-// warning_closed status does not represent a withdrawn chargeback balance and
-// may safely clear the dispute-state interlock.
+// warning_closed never became a formal chargeback withdrawal. A formal `won`
+// dispute is only financially safe after a separately reconciled Stripe Balance
+// Transaction proves that the withdrawn principal has been reinstated.
 function isSafeResolvedStatus(status: string) {
   return status === "warning_closed";
 }
@@ -189,10 +190,38 @@ export function classifyStripeDisputeEntries(
 
 export function readStripeDisputeDecision(currentMeta: string):
   | ({ ok: true } & StripeDisputeLedgerDecision)
-  | { ok: false; reason: "PAYMENT_META_INVALID" | "PAYMENT_DISPUTE_META_INVALID" } {
+  | {
+      ok: false;
+      reason:
+        | "PAYMENT_META_INVALID"
+        | "PAYMENT_DISPUTE_META_INVALID"
+        | "PAYMENT_DISPUTE_SETTLEMENT_META_INVALID";
+    } {
   const parsed = parsePaymentMeta(currentMeta);
   if (!parsed.ok) return parsed;
-  return { ok: true, ...classifyStripeDisputeEntries(parsed.entries) };
+  const settlement = readStripeDisputeSettlementDecision(currentMeta);
+  if (!settlement.ok) return settlement;
+
+  const reinstated = new Set(settlement.reinstatedDisputeIds);
+  const activeDisputeIds: string[] = [];
+  const lostDisputeIds: string[] = [];
+  for (const entry of Object.values(parsed.entries)) {
+    if (isLostStatus(entry.status)) {
+      lostDisputeIds.push(entry.disputeId);
+      continue;
+    }
+    if (isSafeResolvedStatus(entry.status)) continue;
+    if (entry.status === "won" && reinstated.has(entry.disputeId)) continue;
+    activeDisputeIds.push(entry.disputeId);
+  }
+  activeDisputeIds.sort();
+  lostDisputeIds.sort();
+  return {
+    ok: true,
+    disposition: lostDisputeIds.length > 0 ? "lost" : activeDisputeIds.length > 0 ? "active" : "clear",
+    activeDisputeIds,
+    lostDisputeIds,
+  };
 }
 
 export function mergeStripeDisputeMeta(input: {
@@ -302,7 +331,11 @@ export function deriveFinancialOrderStatus(input: {
     }
   | {
       ok: false;
-      reason: "PAYMENT_META_INVALID" | "PAYMENT_DISPUTE_META_INVALID" | "FINANCIAL_ORDER_TOTALS_INVALID";
+      reason:
+        | "PAYMENT_META_INVALID"
+        | "PAYMENT_DISPUTE_META_INVALID"
+        | "PAYMENT_DISPUTE_SETTLEMENT_META_INVALID"
+        | "FINANCIAL_ORDER_TOTALS_INVALID";
     } {
   if (
     !Number.isSafeInteger(input.succeededRefundCents) ||
