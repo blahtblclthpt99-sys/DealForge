@@ -25,3 +25,11 @@ test("shipping verifier uses DealForge's adapter-aware database factory", async 
   assert.match(source, /const prisma = getPrisma\(\)/);
   assert.doesNotMatch(source, /new PrismaClient\(/);
 });
+
+test("hosted shipping certification requires Stripe Checkout to actually complete", async () => {
+  const source = await readFile("scripts/complete-hosted-shipping-checkout.ts", "utf8");
+  assert.match(source, /SHIPPING_CERT_CHECKOUT_DID_NOT_COMPLETE/);
+  assert.doesNotMatch(source, /waitForURL\([\s\S]*?\.catch\(\(\) => undefined\)/);
+  assert.match(source, /if \(isStripeCheckoutHost\(finalUrl\.hostname\)\)/);
+  assert.match(source, /Hosted shipping checkout completed/);
+});
