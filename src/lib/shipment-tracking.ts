@@ -139,12 +139,19 @@ export function parseDeliveryEventDetail(raw: string): DeliveryRecordedV1 | null
 }
 
 export function projectPublicShipment(events: ProcurementJournalEvent[]) {
-  const shipmentEvent = events.find((event) => event.type === "RECORD_SHIPMENT");
-  if (!shipmentEvent) return null;
-  const shipment = parseShipmentEventDetail(shipmentEvent.detail);
+  const shipmentEvents = events.filter((event) => event.type === "RECORD_SHIPMENT");
+  const deliveryEvents = events.filter((event) => event.type === "MARK_DELIVERED");
+  if (shipmentEvents.length !== 1 || deliveryEvents.length > 1) return null;
+
+  const shipment = parseShipmentEventDetail(shipmentEvents[0].detail);
   if (!shipment) return null;
-  const deliveryEvent = events.find((event) => event.type === "MARK_DELIVERED");
-  const delivery = deliveryEvent ? parseDeliveryEventDetail(deliveryEvent.detail) : null;
+
+  let delivery: DeliveryRecordedV1 | null = null;
+  if (deliveryEvents.length === 1) {
+    delivery = parseDeliveryEventDetail(deliveryEvents[0].detail);
+    if (!delivery || Date.parse(delivery.deliveredAt) < Date.parse(shipment.shippedAt)) return null;
+  }
+
   return {
     status: delivery ? ("delivered" as const) : ("shipped" as const),
     carrierName: shipment.carrierName,
