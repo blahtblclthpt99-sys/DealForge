@@ -49,10 +49,12 @@ test("no eligible persisted supplier immediately revokes the stale direct-commer
   assert.match(service, /availability: unavailableSnapshotAvailability\(selection\)/);
 });
 
-test("commercialization bridge has no procurement or global commerce authority", async () => {
+test("commercialization bridge carries tax metadata but has no payment, procurement, or global commerce authority", async () => {
   const service = await readFile("src/lib/supplier-commercialization.ts", "utf8");
   const route = await readFile("src/app/api/admin/product-engine/route.ts", "utf8");
-  assert.doesNotMatch(service, /stripe|checkoutSession|paymentIntent|procure|placeOrder|reserveInventory/i);
+  assert.match(service, /stripeTaxCode: input\.stripeTaxCode/);
+  assert.match(service, /taxVerificationSource: input\.taxVerificationSource/);
+  assert.doesNotMatch(service, /createStripe|stripeRequest|checkoutSession|paymentIntent|procure|placeOrder|reserveInventory/i);
   assert.doesNotMatch(service, /COMMERCE_ENABLED\s*=/);
   assert.doesNotMatch(route, /COMMERCE_ENABLED\s*=/);
   assert.match(route, /readLimitedJson\(req, 32 \* 1024\)/);
