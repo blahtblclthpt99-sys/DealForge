@@ -1,6 +1,7 @@
 import { createHmac, createHash, timingSafeEqual } from "node:crypto";
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { parseCheckoutShippingCountries } from "@/lib/checkout-shipping";
+import { STRIPE_CHECKOUT_TAX_AUTHORITY } from "@/lib/stripe-tax-authority";
 
 const STRIPE_API = "https://api.stripe.com/v1";
 const DEFAULT_WEBHOOK_TOLERANCE_SECONDS = 300;
@@ -23,6 +24,10 @@ export type StripeCheckoutSession = {
   payment_method_types?: string[];
   client_reference_id?: string | null;
   metadata?: Record<string, string>;
+  amount_subtotal?: number | null;
+  amount_total?: number | null;
+  automatic_tax?: { enabled?: boolean; status?: string | null } | null;
+  total_details?: { amount_tax?: number | null } | null;
 };
 
 export type StripeBalanceTransaction = {
@@ -80,14 +85,7 @@ export type StripeEvent = {
   data: { object: Record<string, unknown> };
 };
 
-/**
- * Resolve a Stripe runtime value with the deployed Cloudflare binding as the
- * authoritative source when one exists. OpenNext exposes Worker bindings to
- * Next.js routes through getCloudflareContext().env; process.env remains the
- * portable fallback for local Node, CI, Netlify previews, and other runtimes.
- *
- * The explicit sources are exported for deterministic regression testing.
- */
+/** Resolve a Stripe runtime value with Cloudflare bindings authoritative when present. */
 export function resolveStripeRuntimeValue(
   name: string,
   processEnv: ProcessEnvLike = process.env,
@@ -103,9 +101,7 @@ export function resolveStripeRuntimeValue(
   }
 
   const boundValue = bindings?.[name];
-  if (typeof boundValue === "string" && boundValue.trim()) {
-    return boundValue.trim();
-  }
+  if (typeof boundValue === "string" && boundValue.trim()) return boundValue.trim();
   return (processEnv[name] || "").trim();
 }
 
@@ -119,18 +115,11 @@ export function expectedStripeLivemode(secretKey = resolveStripeRuntimeValue("ST
   if (secretKey.startsWith("sk_live_")) return true;
   if (secretKey.startsWith("sk_test_")) return false;
 
-  // Webhook verification must not falsely report "not configured" merely
-  // because the Stripe API key is not present in the same runtime boundary.
-  // A single mode-specific webhook secret is sufficient to establish expected
-  // event mode. If both are present, fail closed rather than guessing.
   const liveWebhookSecret = resolveStripeRuntimeValue("STRIPE_WEBHOOK_SECRET_LIVE");
   const testWebhookSecret = resolveStripeRuntimeValue("STRIPE_WEBHOOK_SECRET_TEST");
   if (liveWebhookSecret && !testWebhookSecret) return true;
   if (testWebhookSecret && !liveWebhookSecret) return false;
-  if (liveWebhookSecret && testWebhookSecret) {
-    throw new Error("STRIPE_WEBHOOK_MODE_AMBIGUOUS");
-  }
-
+  if (liveWebhookSecret && testWebhookSecret) throw new Error("STRIPE_WEBHOOK_MODE_AMBIGUOUS");
   throw new Error("STRIPE_SECRET_KEY_MODE_UNKNOWN");
 }
 
@@ -142,11 +131,7 @@ export function stripeWebhookSecret() {
   const legacy = resolveStripeRuntimeValue("STRIPE_WEBHOOK_SECRET");
   const secret = modeSpecific || legacy;
   if (!secret) {
-    throw new Error(
-      livemode
-        ? "STRIPE_WEBHOOK_SECRET_LIVE_MISSING"
-        : "STRIPE_WEBHOOK_SECRET_TEST_MISSING",
-    );
+    throw new Error(livemode ? "STRIPE_WEBHOOK_SECRET_LIVE_MISSING" : "STRIPE_WEBHOOK_SECRET_TEST_MISSING");
   }
   return secret;
 }
@@ -157,9 +142,7 @@ export function assertStripeEventMode(event: Pick<StripeEvent, "livemode">, expe
 }
 
 export function assertPositiveCents(value: number, field: string) {
-  if (!Number.isSafeInteger(value) || value <= 0) {
-    throw new Error(`${field.toUpperCase()}_INVALID`);
-  }
+  if (!Number.isSafeInteger(value) || value <= 0) throw new Error(`${field.toUpperCase()}_INVALID`);
 }
 
 export function assertCardOnlyCheckoutSession(
@@ -195,49 +178,32 @@ export function verifyStripeSignature(
   if (!secret || !signatureHeader) return false;
   const parts = signatureHeader.split(",").map((part) => part.trim());
   const timestampRaw = parts.find((part) => part.startsWith("t="))?.slice(2);
-  const signatures = parts
-    .filter((part) => part.startsWith("v1="))
-    .map((part) => part.slice(3));
-
+  const signatures = parts.filter((part) => part.startsWith("v1=")).map((part) => part.slice(3));
   if (!timestampRaw || signatures.length === 0) return false;
   const timestamp = Number(timestampRaw);
   if (!Number.isSafeInteger(timestamp) || timestamp <= 0) return false;
-
   const now = options?.nowSeconds ?? Math.floor(Date.now() / 1000);
   const tolerance = options?.toleranceSeconds ?? DEFAULT_WEBHOOK_TOLERANCE_SECONDS;
   if (!Number.isSafeInteger(tolerance) || tolerance < 0) return false;
   if (Math.abs(now - timestamp) > tolerance) return false;
-
-  const expected = createHmac("sha256", secret)
-    .update(`${timestamp}.${rawBody}`, "utf8")
-    .digest("hex");
-
+  const expected = createHmac("sha256", secret).update(`${timestamp}.${rawBody}`, "utf8").digest("hex");
   return signatures.some((candidate) => constantTimeHexEqual(candidate, expected));
 }
 
 async function stripeRequest<T>(
   path: string,
-  init: {
-    method?: "GET" | "POST";
-    body?: URLSearchParams;
-    idempotencyKey?: string;
-  } = {},
+  init: { method?: "GET" | "POST"; body?: URLSearchParams; idempotencyKey?: string } = {},
 ): Promise<T> {
-  const headers: Record<string, string> = {
-    Authorization: `Bearer ${stripeSecretKey()}`,
-  };
+  const headers: Record<string, string> = { Authorization: `Bearer ${stripeSecretKey()}` };
   if (init.body) headers["Content-Type"] = "application/x-www-form-urlencoded";
   if (init.idempotencyKey) headers["Idempotency-Key"] = init.idempotencyKey;
-
   const response = await fetch(`${STRIPE_API}${path}`, {
     method: init.method ?? "GET",
     headers,
     body: init.body,
     cache: "no-store",
   });
-  const data = (await response.json()) as T & {
-    error?: { message?: string; type?: string; code?: string };
-  };
+  const data = (await response.json()) as T & { error?: { message?: string; type?: string; code?: string } };
   if (!response.ok) {
     const message = data.error?.message || `Stripe request failed (${response.status})`;
     throw new Error(`STRIPE_API_ERROR:${message}`);
@@ -257,16 +223,8 @@ export async function createStripeCheckoutSession(input: {
 }) {
   const body = new URLSearchParams();
   body.set("mode", "payment");
-  // DealForge is the merchant for physical-goods transactions. Stripe Managed
-  // Payments is a separate merchant-of-record product intended for eligible
-  // digital goods and must not be implicitly enabled for DealForge orders.
   body.set("managed_payments[enabled]", "false");
-  // Certification sessions intentionally render card directly so the end-to-end
-  // payment gate can exercise the canonical card path deterministically. Normal
-  // production sessions keep Stripe's configured payment-method set.
-  if (input.cardOnly) {
-    body.append("payment_method_types[]", "card");
-  }
+  if (input.cardOnly) body.append("payment_method_types[]", "card");
   body.set("client_reference_id", input.orderId);
   body.set("customer_email", input.customerEmail);
   body.set("success_url", input.successUrl);
@@ -276,14 +234,17 @@ export async function createStripeCheckoutSession(input: {
   body.set("payment_intent_data[metadata][order_id]", input.orderId);
   body.set("payment_intent_data[metadata][order_number]", input.orderNumber);
 
-  // The Checkout Session is the shipping-address authority. Browser checkout
-  // payloads do not contain an address, and an empty country scope fails closed.
+  const automaticTaxEnabled = resolveStripeRuntimeValue("STRIPE_AUTOMATIC_TAX_ENABLED") === "true";
+  body.set("automatic_tax[enabled]", automaticTaxEnabled ? "true" : "false");
+  if (automaticTaxEnabled) {
+    body.set("metadata[tax_authority]", STRIPE_CHECKOUT_TAX_AUTHORITY);
+    body.set("payment_intent_data[metadata][tax_authority]", STRIPE_CHECKOUT_TAX_AUTHORITY);
+  }
+
   const allowedShippingCountries = parseCheckoutShippingCountries(
     resolveStripeRuntimeValue("CHECKOUT_ALLOWED_SHIPPING_COUNTRIES"),
   );
-  if (allowedShippingCountries.length === 0) {
-    throw new Error("CHECKOUT_SHIPPING_COUNTRIES_NOT_CONFIGURED");
-  }
+  if (allowedShippingCountries.length === 0) throw new Error("CHECKOUT_SHIPPING_COUNTRIES_NOT_CONFIGURED");
   for (const country of allowedShippingCountries) {
     body.append("shipping_address_collection[allowed_countries][]", country);
   }
@@ -297,10 +258,7 @@ export async function createStripeCheckoutSession(input: {
     body.set(`line_items[${index}][price_data][unit_amount]`, String(line.unitAmountCents));
     body.set(`line_items[${index}][price_data][product_data][name]`, line.name.slice(0, 250));
     if (line.description) {
-      body.set(
-        `line_items[${index}][price_data][product_data][description]`,
-        line.description.slice(0, 500),
-      );
+      body.set(`line_items[${index}][price_data][product_data][description]`, line.description.slice(0, 500));
     }
     body.set(`line_items[${index}][quantity]`, String(line.quantity));
   });
@@ -322,12 +280,8 @@ export async function retrieveStripePaymentIntent(paymentIntentId: string) {
 }
 
 export async function retrieveStripeBalanceTransaction(balanceTransactionId: string) {
-  if (!/^txn_[A-Za-z0-9_]+$/.test(balanceTransactionId)) {
-    throw new Error("BALANCE_TRANSACTION_ID_INVALID");
-  }
-  return stripeRequest<StripeBalanceTransaction>(
-    `/balance_transactions/${encodeURIComponent(balanceTransactionId)}`,
-  );
+  if (!/^txn_[A-Za-z0-9_]+$/.test(balanceTransactionId)) throw new Error("BALANCE_TRANSACTION_ID_INVALID");
+  return stripeRequest<StripeBalanceTransaction>(`/balance_transactions/${encodeURIComponent(balanceTransactionId)}`);
 }
 
 export async function retrieveStripeRefund(refundId: string) {
@@ -352,7 +306,6 @@ export async function createStripeRefund(input: {
   body.set("metadata[order_id]", input.orderId);
   body.set("metadata[order_number]", input.orderNumber);
   if (input.reason) body.set("reason", input.reason);
-
   return stripeRequest<StripeRefund>("/refunds", {
     method: "POST",
     body,
