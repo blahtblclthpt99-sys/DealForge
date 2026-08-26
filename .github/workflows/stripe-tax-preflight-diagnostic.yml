@@ -1,0 +1,74 @@
+name: Stripe Tax Preflight Diagnostic
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/stripe-tax-preflight-diagnostic.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose-stripe-tax:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
+    steps:
+      - name: Verify Stripe test-mode credential contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$STRIPE_SECRET_KEY" == sk_test_* ]] || {
+            echo '::error::Stripe Tax diagnostic requires the configured test-mode key.'
+            exit 1
+          }
+          echo 'Stripe credential mode: test'
+
+      - name: Probe Automatic Tax Checkout Session creation
+        shell: bash
+        run: |
+          set -euo pipefail
+          response_file="$(mktemp)"
+          trap 'rm -f "$response_file"' EXIT
+
+          code=$(curl -sS -o "$response_file" -w '%{http_code}' \
+            -X POST 'https://api.stripe.com/v1/checkout/sessions' \
+            -u "$STRIPE_SECRET_KEY:" \
+            -d 'mode=payment' \
+            -d 'managed_payments[enabled]=false' \
+            -d 'automatic_tax[enabled]=true' \
+            -d 'payment_method_types[]=card' \
+            -d 'success_url=https://www.deal-forge.sale/checkout/success?tax_preflight=1' \
+            -d 'cancel_url=https://www.deal-forge.sale/checkout/cancel?tax_preflight=1' \
+            -d 'shipping_address_collection[allowed_countries][]=US' \
+            -d 'line_items[0][price_data][currency]=usd' \
+            -d 'line_items[0][price_data][unit_amount]=100' \
+            -d 'line_items[0][price_data][product_data][name]=DealForge Tax Preflight' \
+            -d 'line_items[0][quantity]=1')
+
+          HTTP_CODE="$code" RESPONSE_FILE="$response_file" node <<'NODE'
+          const fs = require('fs');
+          const code = Number(process.env.HTTP_CODE || 0);
+          let body = {};
+          try { body = JSON.parse(fs.readFileSync(process.env.RESPONSE_FILE, 'utf8')); } catch {}
+
+          if (code >= 200 && code < 300 && body.id) {
+            console.log(`STRIPE_TAX_PREFLIGHT=PASS http=${code} automatic_tax=${body.automatic_tax?.enabled === true}`);
+            process.exit(0);
+          }
+
+          const error = body && typeof body.error === 'object' ? body.error : {};
+          const safe = {
+            httpStatus: code,
+            type: typeof error.type === 'string' ? error.type : null,
+            code: typeof error.code === 'string' ? error.code : null,
+            param: typeof error.param === 'string' ? error.param : null,
+            message: typeof error.message === 'string' ? error.message : 'Stripe returned an unreadable error',
+            docUrl: typeof error.doc_url === 'string' ? error.doc_url : null,
+          };
+          console.error(`STRIPE_TAX_PREFLIGHT=FAIL ${JSON.stringify(safe)}`);
+          process.exit(1);
+          NODE
