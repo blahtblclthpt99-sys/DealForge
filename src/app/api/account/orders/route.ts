@@ -1,7 +1,11 @@
 import { NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth";
 import { prisma } from "@/lib/db";
-import { projectPublicShipment, publicFulfillmentStatus } from "@/lib/shipment-tracking";
+import {
+  projectPublicShipment,
+  projectPublicShipments,
+  publicFulfillmentStatus,
+} from "@/lib/shipment-tracking";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -55,7 +59,7 @@ export async function GET() {
               status: true,
               events: {
                 where: { type: { in: ["RECORD_SHIPMENT", "MARK_DELIVERED"] } },
-                orderBy: { createdAt: "desc" },
+                orderBy: { createdAt: "asc" },
                 select: { type: true, detail: true, createdAt: true },
               },
             },
@@ -76,16 +80,26 @@ export async function GET() {
     paidAt: order.paidAt,
     createdAt: order.createdAt,
     items: order.items.map((item) => {
+      const events = item.procurementIntent?.events || [];
       const internalFulfillmentStatus = publicFulfillmentStatus(
         item.procurementIntent?.status || "processing",
       );
-      const projectedShipment = projectPublicShipment(
-        item.procurementIntent?.events || [],
-        item.quantity,
-      );
+      const projectedShipment = projectPublicShipment(events, item.quantity);
+      const projectedShipments = projectPublicShipments(events, item.quantity);
+      const shippedQuantity = projectedShipments.reduce((total, shipment) => total + shipment.quantity, 0);
+      const deliveredQuantity = projectedShipments
+        .filter((shipment) => shipment.status === "delivered")
+        .reduce((total, shipment) => total + shipment.quantity, 0);
+      const packageProjectionConsistent =
+        projectedShipments.length > 0 &&
+        shippedQuantity <= item.quantity &&
+        (internalFulfillmentStatus === "shipped"
+          ? shippedQuantity < item.quantity || deliveredQuantity < item.quantity
+          : internalFulfillmentStatus === "delivered"
+            ? shippedQuantity === item.quantity && deliveredQuantity === item.quantity
+            : false);
       const fulfillmentConsistent =
-        internalFulfillmentStatus !== "processing" &&
-        projectedShipment?.status === internalFulfillmentStatus;
+        internalFulfillmentStatus !== "processing" && packageProjectionConsistent;
 
       return {
         id: item.id,
@@ -96,6 +110,7 @@ export async function GET() {
         lineTotalCents: item.lineTotalCents,
         fulfillmentStatus: fulfillmentConsistent ? internalFulfillmentStatus : "processing",
         shipment: fulfillmentConsistent ? projectedShipment : null,
+        shipments: fulfillmentConsistent ? projectedShipments : [],
       };
     }),
   }));
