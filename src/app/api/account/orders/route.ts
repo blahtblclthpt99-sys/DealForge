@@ -75,16 +75,26 @@ export async function GET() {
     totalCents: order.totalCents,
     paidAt: order.paidAt,
     createdAt: order.createdAt,
-    items: order.items.map((item) => ({
-      id: item.id,
-      productSlug: item.productSlug,
-      title: item.title,
-      quantity: item.quantity,
-      unitPriceCents: item.unitPriceCents,
-      lineTotalCents: item.lineTotalCents,
-      fulfillmentStatus: publicFulfillmentStatus(item.procurementIntent?.status || "processing"),
-      shipment: projectPublicShipment(item.procurementIntent?.events || []),
-    })),
+    items: order.items.map((item) => {
+      const internalFulfillmentStatus = publicFulfillmentStatus(
+        item.procurementIntent?.status || "processing",
+      );
+      const projectedShipment = projectPublicShipment(item.procurementIntent?.events || []);
+      const fulfillmentConsistent =
+        internalFulfillmentStatus !== "processing" &&
+        projectedShipment?.status === internalFulfillmentStatus;
+
+      return {
+        id: item.id,
+        productSlug: item.productSlug,
+        title: item.title,
+        quantity: item.quantity,
+        unitPriceCents: item.unitPriceCents,
+        lineTotalCents: item.lineTotalCents,
+        fulfillmentStatus: fulfillmentConsistent ? internalFulfillmentStatus : "processing",
+        shipment: fulfillmentConsistent ? projectedShipment : null,
+      };
+    }),
   }));
 
   return noStore(NextResponse.json({ orders: customerOrders }));
