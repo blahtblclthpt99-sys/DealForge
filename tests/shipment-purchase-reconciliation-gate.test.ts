@@ -22,9 +22,9 @@ test("shipment fulfillment gate reconciles purchase evidence inside the mutation
 
 test("fulfillment state writes occur only after purchase reconciliation succeeds", () => {
   const reconcile = route.indexOf("const purchaseReconciliation = reconcileManualPurchaseProjection");
-  const failure = route.indexOf("if (!purchaseReconciliation.ok)");
+  const failure = route.indexOf("if (!purchaseReconciliation.ok || !purchaseReconciliation.evidence?.purchaseEvidenceHash)");
   const transition = route.indexOf("const transition = transitionProcurement");
-  const statusWrite = route.indexOf("data: { status: transition.next }");
+  const statusWrite = route.indexOf("data: { status: nextStatus }");
 
   assert.ok(reconcile >= 0);
   assert.ok(failure > reconcile);
@@ -32,9 +32,18 @@ test("fulfillment state writes occur only after purchase reconciliation succeeds
   assert.ok(statusWrite > transition);
 });
 
-test("shipment and delivery journals bind to reconciled purchase evidence without expanding authority", () => {
-  assert.ok((route.match(/purchaseEvidenceHash:/g) || []).length >= 2);
+test("every shipment and delivery journal remains bound to reconciled purchase evidence", () => {
+  assert.ok((route.match(/purchaseEvidenceHash/g) || []).length >= 6);
+  assert.match(route, /reconcileShipmentJournal/);
+  assert.match(route, /allowPartial: true/);
+  assert.match(route, /shipmentEventKey: targetShipmentEvent\.eventKey/);
+  assert.match(route, /procurementEventKey\(current\.id, parsed\.data\.action, shipment\.packageId\)/);
+  assert.match(route, /procurementEventKey\(current\.id, parsed\.data\.action, targetPackage\.packageId\)/);
+});
+
+test("multi-package fulfillment does not expand procurement or network authority", () => {
   assert.match(route, /automaticSupplierPurchasingEnabled: false/);
+  assert.match(route, /executionMode !== "manual_only"/);
   assert.doesNotMatch(route, /\bfetch\s*\(/);
   assert.doesNotMatch(route, /executionMode:\s*["']automated/);
   assert.doesNotMatch(route, /stripe/i);
