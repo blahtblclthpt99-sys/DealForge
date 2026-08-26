@@ -1,5 +1,6 @@
 import { prisma } from "./db";
 import { evaluateCommerceGate, type CommerceGateDecision } from "./commerce-gate";
+import { evaluateProductTaxClassification } from "./product-tax-classification";
 
 const CERTIFICATION_PRODUCT_ID = "cert_test_75c_20260822_v2";
 const NON_MUTATING_OPERATIONAL_REASONS = new Set(["broad_catalog_commerce_locked"]);
@@ -41,19 +42,27 @@ export function evaluateCommerceMonitorProduct(
     return { certification: true, decision: null };
   }
 
+  const commercial = evaluateCommerceGate(
+    {
+      commerceEnabled: product.commerceEnabled,
+      availability: product.availability,
+      sellingPriceCents: product.sellingPriceCents,
+      landedCostCents: product.landedCostCents,
+      priceVerifiedAt: product.priceVerifiedAt,
+      specifications: product.specifications,
+    },
+    nowMs,
+  );
+  const tax = evaluateProductTaxClassification(product.specifications, nowMs);
+  const reasons = [...commercial.reasons, ...tax.reasons.filter((reason) => !commercial.reasons.includes(reason))];
+
   return {
     certification: false,
-    decision: evaluateCommerceGate(
-      {
-        commerceEnabled: product.commerceEnabled,
-        availability: product.availability,
-        sellingPriceCents: product.sellingPriceCents,
-        landedCostCents: product.landedCostCents,
-        priceVerifiedAt: product.priceVerifiedAt,
-        specifications: product.specifications,
-      },
-      nowMs,
-    ),
+    decision: {
+      ...commercial,
+      allowed: commercial.allowed && tax.allowed,
+      reasons,
+    },
   };
 }
 
@@ -94,8 +103,6 @@ export async function pauseUnsafeCommerceProducts(actor = "commerce-monitor", no
     const safetyReasons = mutatingSafetyReasons(decision);
     if (safetyReasons.length === 0) continue;
 
-    // Conditional update prevents duplicate pause/audit records if multiple
-    // workers race on the same product.
     const result = await prisma.product.updateMany({
       where: { id: product.id, commerceEnabled: true },
       data: { commerceEnabled: false },
