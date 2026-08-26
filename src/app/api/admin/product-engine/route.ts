@@ -1,6 +1,12 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireAdmin } from "@/lib/auth";
+import {
+  COMMERCE_QUARANTINE_ACTIONS,
+  COMMERCE_QUARANTINE_RESOLUTION_ACTION,
+  deriveCommerceQuarantineRecords,
+  quarantineResolutionAuditId,
+} from "@/lib/commerce-quarantine";
 import { prisma } from "@/lib/db";
 import {
   ingestCandidate,
@@ -113,6 +119,20 @@ function selectionReasons(selection: Awaited<ReturnType<typeof persistSelectAndP
   }));
 }
 
+async function latestOpenQuarantine(productId: string) {
+  const audits = await prisma.productEngineAudit.findMany({
+    where: {
+      action: {
+        in: [...COMMERCE_QUARANTINE_ACTIONS, COMMERCE_QUARANTINE_RESOLUTION_ACTION],
+      },
+    },
+    orderBy: { createdAt: "desc" },
+    take: 500,
+    select: { id: true, action: true, detail: true, createdAt: true },
+  });
+  return deriveCommerceQuarantineRecords(audits).find((record) => record.productId === productId) ?? null;
+}
+
 export async function GET() {
   try {
     await requireOwner();
@@ -162,7 +182,7 @@ export async function POST(req: Request) {
     if (input.action === "commercialize") {
       const product = await prisma.product.findUnique({
         where: { id: input.productId },
-        select: { id: true, title: true, specifications: true, currency: true },
+        select: { id: true, title: true, specifications: true, currency: true, commerceEnabled: true },
       });
       if (!product) throw new Error("PRODUCT_NOT_FOUND");
 
@@ -220,61 +240,113 @@ export async function POST(req: Request) {
 
       const prepared = result.prepared;
       const selected = result.selection.selected.offer;
-      const updated = await prisma.product.update({
-        where: { id: product.id },
-        data: {
-          sellingPriceCents: prepared.sellingPriceCents,
-          landedCostCents: prepared.landedCostCents,
-          priceSource: `supplier-offer:${selected.id}`.slice(0, 255),
-          priceVerifiedAt: prepared.priceVerifiedAt,
-          metadataSource: `supplier:${selected.supplierId}`.slice(0, 255),
-          metadataVerifiedAt: selected.sourceVerifiedAt,
-          availability: prepared.availability,
-          specifications: prepared.specifications,
-          commerceEnabled: prepared.commerceEnabled,
-        },
-        select: {
-          id: true,
-          title: true,
-          commerceEnabled: true,
-          sellingPriceCents: true,
-          landedCostCents: true,
-          priceSource: true,
-          priceVerifiedAt: true,
-          metadataSource: true,
-          metadataVerifiedAt: true,
-          availability: true,
-        },
-      });
+      const recovery = !product.commerceEnabled && prepared.commerceEnabled
+        ? await latestOpenQuarantine(product.id)
+        : null;
+      const resolvedAt = new Date();
+      const commercialDetail = {
+        productId: product.id,
+        submittedSupplierId: result.submittedSupplierId,
+        submittedOfferId: result.submittedOfferId,
+        selectedSupplierId: selected.supplierId,
+        selectedOfferId: selected.id,
+        selectedOfferKey: selected.offerKey ?? null,
+        stripeTaxCode: input.stripeTaxCode,
+        taxClassification: input.taxClassification,
+        taxVerificationSource: input.taxVerificationSource,
+        taxVerifiedAt: input.taxVerifiedAt,
+        contributionProfitCents: prepared.decision.contributionProfitCents,
+        contributionMarginBps: prepared.decision.contributionMarginBps,
+        reserveTotalCents: prepared.decision.reserveTotalCents,
+        reasons: prepared.decision.reasons,
+        evaluatedOfferCount: result.selection.evaluated.length,
+      };
 
-      await prisma.productEngineAudit.create({
-        data: {
-          candidateId: null,
-          actor: owner.email,
-          action: prepared.decision.allowed ? "commercial_gate_passed" : "commercial_gate_blocked",
-          detail: JSON.stringify({
-            productId: product.id,
-            submittedSupplierId: result.submittedSupplierId,
-            submittedOfferId: result.submittedOfferId,
-            selectedSupplierId: selected.supplierId,
-            selectedOfferId: selected.id,
-            selectedOfferKey: selected.offerKey ?? null,
-            stripeTaxCode: input.stripeTaxCode,
-            taxClassification: input.taxClassification,
-            taxVerificationSource: input.taxVerificationSource,
-            taxVerifiedAt: input.taxVerifiedAt,
-            contributionProfitCents: prepared.decision.contributionProfitCents,
-            contributionMarginBps: prepared.decision.contributionMarginBps,
-            reserveTotalCents: prepared.decision.reserveTotalCents,
-            reasons: prepared.decision.reasons,
-            evaluatedOfferCount: result.selection.evaluated.length,
-          }),
-        },
+      const updated = await prisma.$transaction(async (tx) => {
+        const saved = await tx.product.update({
+          where: { id: product.id },
+          data: {
+            sellingPriceCents: prepared.sellingPriceCents,
+            landedCostCents: prepared.landedCostCents,
+            priceSource: `supplier-offer:${selected.id}`.slice(0, 255),
+            priceVerifiedAt: prepared.priceVerifiedAt,
+            metadataSource: `supplier:${selected.supplierId}`.slice(0, 255),
+            metadataVerifiedAt: selected.sourceVerifiedAt,
+            availability: prepared.availability,
+            specifications: prepared.specifications,
+            commerceEnabled: prepared.commerceEnabled,
+          },
+          select: {
+            id: true,
+            title: true,
+            commerceEnabled: true,
+            sellingPriceCents: true,
+            landedCostCents: true,
+            priceSource: true,
+            priceVerifiedAt: true,
+            metadataSource: true,
+            metadataVerifiedAt: true,
+            availability: true,
+          },
+        });
+
+        await tx.productEngineAudit.create({
+          data: {
+            candidateId: null,
+            actor: owner.email,
+            action: prepared.decision.allowed ? "commercial_gate_passed" : "commercial_gate_blocked",
+            detail: JSON.stringify(commercialDetail),
+          },
+        });
+
+        if (recovery && saved.commerceEnabled) {
+          const blockedDurationMs = Math.max(0, resolvedAt.getTime() - recovery.quarantinedAt.getTime());
+          await tx.productEngineAudit.upsert({
+            where: { id: quarantineResolutionAuditId(recovery.auditId) },
+            create: {
+              id: quarantineResolutionAuditId(recovery.auditId),
+              candidateId: null,
+              actor: owner.email,
+              action: COMMERCE_QUARANTINE_RESOLUTION_ACTION,
+              detail: JSON.stringify({
+                productId: product.id,
+                quarantineAuditId: recovery.auditId,
+                quarantineAction: recovery.action,
+                quarantineReasons: recovery.reasons,
+                quarantinedAt: recovery.quarantinedAt.toISOString(),
+                resolvedAt: resolvedAt.toISOString(),
+                blockedDurationMs,
+                resolution: "owner_commercialization_gate_passed",
+                refreshedEvidence: {
+                  selectedSupplierId: selected.supplierId,
+                  selectedOfferId: selected.id,
+                  selectedOfferKey: selected.offerKey ?? null,
+                  sourceVerifiedAt: selected.sourceVerifiedAt?.toISOString() ?? null,
+                  priceVerifiedAt: prepared.priceVerifiedAt.toISOString(),
+                  inventoryConfidenceBps: selected.inventoryConfidenceBps,
+                  availability: prepared.availability,
+                  sellingPriceCents: prepared.sellingPriceCents,
+                  landedCostCents: prepared.landedCostCents,
+                  stripeTaxCode: input.stripeTaxCode,
+                  taxClassification: input.taxClassification,
+                  taxVerificationSource: input.taxVerificationSource,
+                  taxVerifiedAt: input.taxVerifiedAt,
+                  contributionProfitCents: prepared.decision.contributionProfitCents,
+                  contributionMarginBps: prepared.decision.contributionMarginBps,
+                },
+              }),
+            },
+            update: {},
+          });
+        }
+
+        return saved;
       });
 
       return NextResponse.json({
         ok: true,
         commerceReady: prepared.decision.allowed,
+        quarantineResolved: Boolean(recovery && updated.commerceEnabled),
         decision: prepared.decision,
         selectedOffer: {
           supplierId: selected.supplierId,

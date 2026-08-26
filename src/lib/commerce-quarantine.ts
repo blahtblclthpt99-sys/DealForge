@@ -14,6 +14,20 @@ export type CommerceQuarantineRecord = {
   recoverySteps: string[];
 };
 
+export type CommerceQuarantineResolution = {
+  auditId: string;
+  productId: string;
+  quarantineAuditId: string;
+  quarantineReasons: string[];
+  quarantinedAt: Date | null;
+  resolvedAt: Date;
+  blockedDurationMs: number | null;
+  detail: Record<string, unknown>;
+};
+
+export const COMMERCE_QUARANTINE_ACTIONS = ["commerce_auto_paused", "inventory_product_demoted"] as const;
+export const COMMERCE_QUARANTINE_RESOLUTION_ACTION = "commerce_quarantine_resolved";
+
 const RECOVERY_GUIDANCE: Record<string, string> = {
   tax_classification_missing_or_invalid: "Review and save a valid product tax classification and Stripe product tax code.",
   tax_classification_verification_invalid: "Re-verify the product tax classification using a current, authoritative source.",
@@ -57,18 +71,59 @@ function uniqueStrings(value: unknown) {
   return [...new Set(value.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0).map((entry) => entry.trim()))];
 }
 
+function parsedDate(value: unknown) {
+  if (typeof value !== "string") return null;
+  const ms = Date.parse(value);
+  return Number.isFinite(ms) ? new Date(ms) : null;
+}
+
+export function quarantineResolutionAuditId(quarantineAuditId: string) {
+  return `quarantine-resolution:${quarantineAuditId}`;
+}
+
 export function recoveryStepsForReasons(reasons: string[]) {
   const steps = reasons.map((reason) => RECOVERY_GUIDANCE[reason] ?? `Resolve safety condition: ${reason.replaceAll("_", " ")}.`);
   steps.push("Rerun the owner commercialization gate with fresh evidence. DealForge will not auto-resume the product.");
   return [...new Set(steps)];
 }
 
+export function deriveCommerceQuarantineResolutions(audits: CommerceQuarantineAudit[]) {
+  const resolutions: CommerceQuarantineResolution[] = [];
+  for (const audit of audits) {
+    if (audit.action !== COMMERCE_QUARANTINE_RESOLUTION_ACTION) continue;
+    const detail = parseDetail(audit.detail);
+    const productId = typeof detail?.productId === "string" ? detail.productId.trim() : "";
+    const quarantineAuditId = typeof detail?.quarantineAuditId === "string" ? detail.quarantineAuditId.trim() : "";
+    if (!productId || !quarantineAuditId) continue;
+    const quarantinedAt = parsedDate(detail?.quarantinedAt);
+    const resolvedAt = parsedDate(detail?.resolvedAt) ?? audit.createdAt;
+    const blockedDurationMs = typeof detail?.blockedDurationMs === "number" && Number.isSafeInteger(detail.blockedDurationMs) && detail.blockedDurationMs >= 0
+      ? detail.blockedDurationMs
+      : quarantinedAt
+        ? Math.max(0, resolvedAt.getTime() - quarantinedAt.getTime())
+        : null;
+    resolutions.push({
+      auditId: audit.id,
+      productId,
+      quarantineAuditId,
+      quarantineReasons: uniqueStrings(detail?.quarantineReasons),
+      quarantinedAt,
+      resolvedAt,
+      blockedDurationMs,
+      detail: detail ?? {},
+    });
+  }
+  return resolutions;
+}
+
 export function deriveCommerceQuarantineRecords(audits: CommerceQuarantineAudit[]) {
+  const resolved = new Set(deriveCommerceQuarantineResolutions(audits).map((entry) => entry.quarantineAuditId));
   const seen = new Set<string>();
   const records: CommerceQuarantineRecord[] = [];
 
   for (const audit of audits) {
-    if (audit.action !== "commerce_auto_paused" && audit.action !== "inventory_product_demoted") continue;
+    if (!COMMERCE_QUARANTINE_ACTIONS.includes(audit.action as (typeof COMMERCE_QUARANTINE_ACTIONS)[number])) continue;
+    if (resolved.has(audit.id)) continue;
     const detail = parseDetail(audit.detail);
     const productId = typeof detail?.productId === "string" ? detail.productId.trim() : "";
     if (!productId || seen.has(productId)) continue;
