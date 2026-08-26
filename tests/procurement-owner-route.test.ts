@@ -23,15 +23,18 @@ test("procurement owner actions recheck paid financial state and blocked provena
   assert.match(source, /PROCUREMENT_SOURCE_INTEGRITY_BLOCKED/);
 });
 
-test("manual approval revalidates current persisted source before and inside the transaction", async () => {
+test("approval and manual purchase revalidate the exact persisted source before and inside the transaction", async () => {
   const source = await readFile(routePath, "utf8");
   const calls = source.match(/checkProcurementSourceRevalidation\(/g) || [];
   assert.ok(calls.length >= 2);
+  assert.match(source, /parsed\.data\.action === "APPROVE_MANUAL" \|\| parsed\.data\.action === "RECORD_MANUAL_PURCHASE"/);
   assert.match(source, /PROCUREMENT_LIVE_SOURCE_REVALIDATION_FAILED/);
+  assert.match(source, /PROCUREMENT_PURCHASE_SOURCE_REVALIDATION_FAILED/);
   assert.match(source, /liveSourceRevalidated: true/);
-  assert.match(source, /persistedOfferId: approvalSourceRevalidation\.persistedOfferId/);
-  assert.match(source, /currentLandedCostCents: approvalSourceRevalidation\.currentLandedCostCents/);
-  assert.match(source, /Date\.now\(\),\s*tx/);
+  assert.match(source, /purchaseSourceRevalidated: transactionSourceRevalidation\?\.allowed === true/);
+  assert.match(source, /persistedOfferId: transactionSourceRevalidation\.persistedOfferId/);
+  assert.match(source, /currentLandedCostCents: transactionSourceRevalidation\.currentLandedCostCents/);
+  assert.match(source, /transactionNowMs,\s*tx/);
 });
 
 test("live procurement source revalidation is strict and decision-only", async () => {
@@ -57,15 +60,30 @@ test("manual purchase requires exact paid-order source lock plus variance and lo
   assert.match(source, /sourceLockConfirmed: true/);
   assert.match(source, /acceptCostVariance/);
   assert.match(source, /acceptLossRisk/);
-  assert.match(source, /validateManualPurchaseEconomics/);
+  const economicsCalls = source.match(/validateManualPurchaseEconomics\(/g) || [];
+  assert.ok(economicsCalls.length >= 2);
 });
 
-test("owner procurement queue derives a safe source-lock projection without returning raw snapshot", async () => {
+test("expired or invalid approval lease returns procurement to review and records the cause", async () => {
+  const source = await readFile(routePath, "utf8");
+  assert.match(source, /evaluateProcurementApprovalLease/);
+  assert.match(source, /PROCUREMENT_APPROVAL_EXPIRED/);
+  assert.match(source, /APPROVAL_LEASE_EXPIRED/);
+  assert.match(source, /APPROVAL_EVIDENCE_REVALIDATION_FAILED/);
+  assert.match(source, /returnApprovalToReview/);
+  assert.match(source, /status: "awaiting_review", approvedByUserId: null, approvedAt: null/);
+  assert.match(source, /procurement-approval-reset:/);
+  assert.match(source, /actor: "system"/);
+});
+
+test("owner procurement queue derives safe source-lock and approval-lease projections without returning raw snapshot", async () => {
   const source = await readFile(queuePath, "utf8");
   assert.match(source, /supplierSnapshot: true/);
   assert.match(source, /const \{ supplierSnapshot, \.\.\.safeIntent \} = intent/);
   assert.match(source, /deriveProcurementSourceLock\(/);
   assert.match(source, /lockedSource,/);
+  assert.match(source, /evaluateProcurementApprovalLease\(safeIntent\.approvedAt, nowMs\)/);
+  assert.match(source, /approvalLease,/);
   assert.doesNotMatch(source, /return\s*\{[\s\S]*\.\.\.safeIntent,[\s\S]*supplierSnapshot[,}]/);
   assert.match(source, /requireProcurementOwner/);
   assert.match(source, /automaticSupplierPurchasingEnabled: false/);
