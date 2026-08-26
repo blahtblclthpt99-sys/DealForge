@@ -33,6 +33,31 @@ async function fillOptional(page: Page, selectors: string[], value: string) {
   if (locator) await locator.fill(value);
 }
 
+async function dismissAddressSuggestions(page: Page) {
+  await page.waitForTimeout(400);
+  await page.keyboard.press("Escape").catch(() => undefined);
+}
+
+async function disableOptionalLinkEnrollment(page: Page) {
+  const saveInfo = page.getByRole("checkbox", { name: /save my information for faster checkout/i }).first();
+  if (await saveInfo.count()) {
+    try {
+      if (await saveInfo.isChecked()) {
+        await saveInfo.uncheck({ force: true });
+        await page.waitForTimeout(250);
+      }
+    } catch {
+      throw new Error("SHIPPING_CERT_LINK_OPT_OUT_FAILED");
+    }
+  }
+
+  // Link can transiently leave its phone field visible after opt-out. If Stripe
+  // still requires a phone field, use a reserved fictional 555 number so the
+  // certification does not depend on or enroll a real customer phone number.
+  const phone = await visible(page, ["#phoneNumber", 'input[name="phoneNumber"]', 'input[type="tel"]']);
+  if (phone) await phone.fill("4055550123");
+}
+
 function isStripeCheckoutHost(hostname: string) {
   return hostname === "checkout.stripe.com" || hostname.endsWith(".checkout.stripe.com");
 }
@@ -58,6 +83,7 @@ async function main() {
 
     await fillRequired(page, ["#shippingName", 'input[name="shippingName"]', 'input[autocomplete="shipping name"]'], address.name, "shipping-name");
     await fillRequired(page, ["#shippingAddressLine1", 'input[name="shippingAddressLine1"]', 'input[autocomplete="shipping address-line1"]'], address.line1, "shipping-line1");
+    await dismissAddressSuggestions(page);
     await fillRequired(page, ["#shippingLocality", 'input[name="shippingLocality"]', 'input[autocomplete="shipping address-level2"]'], address.city, "shipping-city");
     await fillRequired(page, ["#shippingPostalCode", 'input[name="shippingPostalCode"]', 'input[autocomplete="shipping postal-code"]'], address.postalCode, "shipping-postal-code");
 
@@ -75,6 +101,9 @@ async function main() {
     await fillOptional(page, ["#billingPostalCode", 'input[name="billingPostalCode"]'], address.postalCode);
     const billingState = await visible(page, ["#billingAdministrativeArea", 'select[name="billingAdministrativeArea"]']);
     if (billingState) await billingState.selectOption(address.state);
+
+    await dismissAddressSuggestions(page);
+    await disableOptionalLinkEnrollment(page);
 
     const submit = page.locator('button[type="submit"]').last();
     if (!(await submit.count()) || !(await submit.isVisible())) throw new Error("SHIPPING_CERT_SUBMIT_NOT_FOUND");
