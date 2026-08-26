@@ -1,3 +1,18 @@
+export type OrderInventoryEvidenceV1 = {
+  version: 1;
+  supplierOfferId: string;
+  idempotencyKey: string;
+  availability: string;
+  quantity: number | null;
+  inventoryConfidenceBps: number;
+  observedPriceCents: number | null;
+  observedAt: string;
+  expiresAt: string;
+  verificationMethod: string;
+  provenanceHash: string;
+  sourceHealth: string;
+};
+
 export type OrderSupplierSnapshotV1 = {
   version: 1;
   persistedSupplierId: string;
@@ -10,6 +25,7 @@ export type OrderSupplierSnapshotV1 = {
   priceVerifiedAt: string;
   inventoryConfidenceBps: number;
   availability: string;
+  inventoryEvidence: OrderInventoryEvidenceV1;
   currency: string;
   costBreakdown: {
     itemCostCents: number;
@@ -41,6 +57,54 @@ function safeNonNegativeInteger(value: unknown) {
 function safePositiveInteger(value: unknown) {
   const parsed = safeNonNegativeInteger(value);
   return parsed !== null && parsed > 0 ? parsed : null;
+}
+
+function nullableNonNegativeInteger(value: unknown) {
+  if (value === null) return null;
+  return safeNonNegativeInteger(value);
+}
+
+function parseInventoryEvidence(value: unknown, persistedOfferId: string): OrderInventoryEvidenceV1 | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const evidence = value as Record<string, unknown>;
+  const supplierOfferId = boundedString(evidence.supplierOfferId, 128);
+  const idempotencyKey = boundedString(evidence.idempotencyKey, 256);
+  const availability = boundedString(evidence.availability, 40);
+  const quantity = nullableNonNegativeInteger(evidence.quantity);
+  const inventoryConfidenceBps = safeNonNegativeInteger(evidence.inventoryConfidenceBps);
+  const observedPriceCents = nullableNonNegativeInteger(evidence.observedPriceCents);
+  const observedAt = isoTimestamp(evidence.observedAt);
+  const expiresAt = isoTimestamp(evidence.expiresAt);
+  const verificationMethod = boundedString(evidence.verificationMethod, 80);
+  const provenanceHash = boundedString(evidence.provenanceHash, 128);
+  const sourceHealth = boundedString(evidence.sourceHealth, 80);
+  if (
+    evidence.version !== 1 ||
+    supplierOfferId !== persistedOfferId ||
+    !idempotencyKey ||
+    !availability ||
+    quantity === null && evidence.quantity !== null ||
+    inventoryConfidenceBps === null || inventoryConfidenceBps > 10_000 ||
+    observedPriceCents === null && evidence.observedPriceCents !== null ||
+    !observedAt || !expiresAt || Date.parse(expiresAt) <= Date.parse(observedAt) ||
+    !verificationMethod ||
+    !provenanceHash || !/^[a-f0-9]{64}$/i.test(provenanceHash) ||
+    !sourceHealth
+  ) return null;
+  return {
+    version: 1,
+    supplierOfferId,
+    idempotencyKey,
+    availability,
+    quantity,
+    inventoryConfidenceBps,
+    observedPriceCents,
+    observedAt,
+    expiresAt,
+    verificationMethod,
+    provenanceHash: provenanceHash.toLowerCase(),
+    sourceHealth,
+  };
 }
 
 /**
@@ -104,6 +168,11 @@ export function buildOrderSupplierSnapshot(
       return null;
     }
 
+    const inventoryEvidence = parseInventoryEvidence(offer.inventoryEvidenceV1, persistedOfferId);
+    if (!inventoryEvidence) return null;
+    if (inventoryEvidence.availability !== availability || inventoryEvidence.inventoryConfidenceBps !== inventoryConfidenceBps) return null;
+    if (inventoryEvidence.observedPriceCents !== null && inventoryEvidence.observedPriceCents !== itemCostCents) return null;
+
     const recomputedLandedCost =
       itemCostCents + shippingCents + taxCents + supplierFeeCents + handlingCents;
     if (!Number.isSafeInteger(recomputedLandedCost) || recomputedLandedCost !== landedCostCents) {
@@ -122,6 +191,7 @@ export function buildOrderSupplierSnapshot(
       priceVerifiedAt,
       inventoryConfidenceBps,
       availability,
+      inventoryEvidence,
       currency: normalizedCurrency,
       costBreakdown: {
         itemCostCents,
