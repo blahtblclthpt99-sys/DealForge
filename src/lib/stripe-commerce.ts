@@ -170,6 +170,21 @@ export function assertCardOnlyCheckoutSession(
   }
 }
 
+export function appendStripeShippingAddressCollection(
+  body: URLSearchParams,
+  countries: string[],
+) {
+  if (countries.length === 0) throw new Error("CHECKOUT_SHIPPING_COUNTRIES_NOT_CONFIGURED");
+  const unique = new Set<string>();
+  for (const raw of countries) {
+    const country = raw.trim().toUpperCase();
+    if (!/^[A-Z]{2}$/.test(country)) throw new Error("CHECKOUT_SHIPPING_COUNTRY_INVALID");
+    if (unique.has(country)) continue;
+    unique.add(country);
+    body.append("shipping_address_collection[allowed_countries][]", country);
+  }
+}
+
 export function payloadSha256(payload: string) {
   return createHash("sha256").update(payload, "utf8").digest("hex");
 }
@@ -253,6 +268,7 @@ export async function createStripeCheckoutSession(input: {
   successUrl: string;
   cancelUrl: string;
   cardOnly?: boolean;
+  shippingCountries?: string[];
 }) {
   const body = new URLSearchParams();
   body.set("mode", "payment");
@@ -265,6 +281,9 @@ export async function createStripeCheckoutSession(input: {
   // production sessions keep Stripe's configured payment-method set.
   if (input.cardOnly) {
     body.append("payment_method_types[]", "card");
+  }
+  if (input.shippingCountries) {
+    appendStripeShippingAddressCollection(body, input.shippingCountries);
   }
   body.set("client_reference_id", input.orderId);
   body.set("customer_email", input.customerEmail);
