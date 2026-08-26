@@ -49,7 +49,7 @@ test("active Stripe dispute changes financial order state to payment_disputed", 
   assert.deepEqual(state.ok && state.status, "payment_disputed");
 });
 
-test("won dispute restores paid state only after the dispute ledger is clear", () => {
+test("won dispute remains blocked until reinstated funds are independently reconciled", () => {
   const created = merge("{}", baseDispute, "evt_dispute_created", "charge.dispute.created", 1_800_000_000);
   assert.equal(created.ok, true);
   if (!created.ok) return;
@@ -63,10 +63,31 @@ test("won dispute restores paid state only after the dispute ledger is clear", (
   );
   assert.equal(won.ok, true);
   if (!won.ok) return;
-  assert.equal(won.disposition, "clear");
+  assert.equal(won.disposition, "active");
+  assert.deepEqual(won.activeDisputeIds, [baseDispute.disputeId]);
 
   const state = deriveFinancialOrderStatus({
     paymentMeta: won.meta,
+    succeededRefundCents: 0,
+    totalCents: 7_000,
+  });
+  assert.deepEqual(state.ok && state.status, "payment_disputed");
+});
+
+test("warning_closed can clear because it does not represent a withdrawn chargeback balance", () => {
+  const closed = merge(
+    "{}",
+    { ...baseDispute, status: "warning_closed" },
+    "evt_warning_closed",
+    "charge.dispute.closed",
+    1_800_000_000,
+  );
+  assert.equal(closed.ok, true);
+  if (!closed.ok) return;
+  assert.equal(closed.disposition, "clear");
+
+  const state = deriveFinancialOrderStatus({
+    paymentMeta: closed.meta,
     succeededRefundCents: 0,
     totalCents: 7_000,
   });
@@ -105,7 +126,7 @@ test("unknown future dispute statuses fail closed as active", () => {
   assert.equal(result.disposition, "active");
 });
 
-test("one resolved dispute cannot clear another active dispute", () => {
+test("one won dispute cannot clear itself or another active dispute without settlement evidence", () => {
   const first = merge("{}", baseDispute, "evt_first", "charge.dispute.created", 1_800_000_000);
   assert.equal(first.ok, true);
   if (!first.ok) return;
@@ -130,7 +151,7 @@ test("one resolved dispute cannot clear another active dispute", () => {
   assert.equal(firstWon.ok, true);
   if (!firstWon.ok) return;
   assert.equal(firstWon.disposition, "active");
-  assert.deepEqual(firstWon.activeDisputeIds, [secondDispute.disputeId]);
+  assert.deepEqual(firstWon.activeDisputeIds, [baseDispute.disputeId, secondDispute.disputeId]);
 });
 
 test("stale dispute event cannot regress newer authoritative state", () => {
@@ -203,7 +224,7 @@ test("dispute ledger preserves unrelated payment metadata", () => {
   assert.deepEqual(parsed.feeV1, { feeCents: 210 });
 });
 
-test("refund state is restored after a dispute is safely resolved", () => {
+test("refund state remains blocked after won dispute until reinstatement evidence exists", () => {
   const created = merge("{}", baseDispute, "evt_created", "charge.dispute.created", 1_800_000_000);
   assert.equal(created.ok, true);
   if (!created.ok) return;
@@ -222,14 +243,14 @@ test("refund state is restored after a dispute is safely resolved", () => {
     succeededRefundCents: 2_000,
     totalCents: 7_000,
   });
-  assert.deepEqual(partial.ok && partial.status, "partially_refunded");
+  assert.deepEqual(partial.ok && partial.status, "payment_disputed");
 
   const full = deriveFinancialOrderStatus({
     paymentMeta: won.meta,
     succeededRefundCents: 7_000,
     totalCents: 7_000,
   });
-  assert.deepEqual(full.ok && full.status, "refunded");
+  assert.deepEqual(full.ok && full.status, "payment_disputed");
 });
 
 test("corrupt dispute metadata fails closed", () => {
