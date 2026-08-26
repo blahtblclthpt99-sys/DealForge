@@ -39,7 +39,7 @@ function canonicalUrl(value: unknown) {
   try {
     const url = new URL(raw);
     if (url.protocol !== "https:" || url.username || url.password) return null;
-    return url.toString();
+    return url.origin;
   } catch {
     return null;
   }
@@ -181,7 +181,7 @@ export function evaluateSupplierSourceProvenance(
     reasons.push("supplier_source_provenance_name_drift");
   }
   if (expected.sourceClass.trim() !== provenance.sourceClass) reasons.push("supplier_source_provenance_class_drift");
-  if ((expected.sourceUrl ?? null) !== provenance.sourceUrl) reasons.push("supplier_source_provenance_url_drift");
+  if (canonicalUrl(expected.sourceUrl) !== provenance.sourceUrl) reasons.push("supplier_source_provenance_url_drift");
   if (expected.resaleAllowed !== true || provenance.resaleAllowed !== true) reasons.push("supplier_source_provenance_resale_drift");
   if (!expected.sourceVerifiedAt || expected.sourceVerifiedAt.toISOString() !== provenance.verifiedAt) {
     reasons.push("supplier_source_provenance_timestamp_drift");
