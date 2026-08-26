@@ -36,6 +36,7 @@ const RECOVERY_GUIDANCE: Record<string, string> = {
   source_verification_stale: "Refresh supplier resale/source verification before commercialization.",
   supplier_cost_verification_invalid: "Re-verify the supplier price and persist a current cost timestamp.",
   supplier_cost_verification_stale: "Refresh supplier price evidence and rerun landed-cost validation.",
+  product_price_verification_drift: "Re-commercialize from the authoritative persisted supplier offer so the Product price provenance timestamp exactly matches supplier cost evidence.",
   inventory_missing: "Record a fresh trusted inventory observation for the selected supplier offer.",
   inventory_stale: "Refresh the supplier inventory observation before re-commercialization.",
   inventory_not_current: "Obtain a current supplier inventory observation before re-commercialization.",
