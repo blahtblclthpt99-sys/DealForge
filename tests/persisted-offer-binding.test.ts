@@ -6,6 +6,10 @@ import {
   type LivePersistedOffer,
   type PersistedOfferBindingInput,
 } from "../src/lib/persisted-offer-binding";
+import {
+  bindSupplierSourceProvenanceToMetadata,
+  buildSupplierSourceProvenance,
+} from "../src/lib/supplier-source-provenance";
 
 const NOW = Date.parse("2026-08-25T01:30:00Z");
 const SOURCE_VERIFIED_AT = "2026-08-24T20:00:00.000Z";
@@ -13,6 +17,15 @@ const PRICE_VERIFIED_AT = "2026-08-25T00:30:00.000Z";
 const INVENTORY_OBSERVED_AT = new Date("2026-08-25T01:20:00.000Z");
 const INVENTORY_EXPIRES_AT = new Date("2026-08-25T01:40:00.000Z");
 const LANDED_COST_CENTS = 2725;
+const SUPPLIER_WEBSITE = "https://supplier.example";
+const SOURCE_PROVENANCE = buildSupplierSourceProvenance({
+  supplierName: "Verified Supplier",
+  sourceClass: "authorized_dropshipper",
+  sourceUrl: SUPPLIER_WEBSITE,
+  resaleAllowed: true,
+  sourceVerifiedAt: SOURCE_VERIFIED_AT,
+});
+const SUPPLIER_METADATA = bindSupplierSourceProvenanceToMetadata("{}", SOURCE_PROVENANCE);
 
 type LiveOverrides = Partial<Omit<LivePersistedOffer, "supplier">> & {
   supplier?: Partial<LivePersistedOffer["supplier"]>;
@@ -26,6 +39,7 @@ function specs(overrides: Record<string, unknown> = {}) {
       sourceUrl: "https://supplier.example/item",
       resaleAllowed: true,
       sourceVerifiedAt: SOURCE_VERIFIED_AT,
+      sourceVerificationV1: SOURCE_PROVENANCE,
       priceVerifiedAt: PRICE_VERIFIED_AT,
       inventoryConfidenceBps: 9300,
       availability: "in_stock",
@@ -90,8 +104,11 @@ function liveOffer(overrides: LiveOverrides = {}): LivePersistedOffer {
       name: "Verified Supplier",
       active: true,
       sourceClass: "authorized_dropshipper",
+      websiteUrl: SUPPLIER_WEBSITE,
       resaleAllowed: true,
       sourceVerifiedAt: new Date(SOURCE_VERIFIED_AT),
+      verificationSource: "owner_manual",
+      metadata: SUPPLIER_METADATA,
     },
   };
   return {
@@ -106,6 +123,42 @@ test("exact live persisted supplier offer plus current inventory observation is 
   assert.equal(result.allowed, true);
   assert.deepEqual(result.reasons, []);
   assert.equal(result.persistedOfferId, "offer-a");
+});
+
+test("supplier source provenance drift fails closed before customer money", () => {
+  const tampered = JSON.parse(SUPPLIER_METADATA) as Record<string, unknown>;
+  const provenance = tampered.sourceVerificationV1 as Record<string, unknown>;
+  provenance.attestationSha256 = "0".repeat(64);
+  const result = evaluatePersistedOfferBinding(
+    input(),
+    liveOffer({ supplier: { metadata: JSON.stringify(tampered) } }),
+    NOW,
+  );
+  assert.equal(result.allowed, false);
+  assert.match(result.reasons.join(","), /live_supplier_source_provenance_missing_or_invalid/);
+});
+
+test("frozen product provenance must match current supplier provenance", () => {
+  const changed = buildSupplierSourceProvenance({
+    supplierName: "Verified Supplier",
+    sourceClass: "authorized_dropshipper",
+    sourceUrl: "https://supplier.example",
+    resaleAllowed: true,
+    sourceVerifiedAt: "2026-08-24T20:05:00.000Z",
+  });
+  const result = evaluatePersistedOfferBinding(
+    input(),
+    liveOffer({
+      supplier: {
+        sourceVerifiedAt: new Date("2026-08-24T20:05:00.000Z"),
+        metadata: bindSupplierSourceProvenanceToMetadata("{}", changed),
+      },
+    }),
+    NOW,
+  );
+  assert.equal(result.allowed, false);
+  assert.match(result.reasons.join(","), /persisted_source_verification_drift/);
+  assert.match(result.reasons.join(","), /persisted_source_provenance_drift/);
 });
 
 test("missing or stale inventory observation fails closed before customer money", () => {
@@ -262,4 +315,6 @@ test("checkout is wired to persisted binding, bounded JSON, user ownership, and 
   assert.match(route, /order\.subtotalCents !== subtotalCents/);
   assert.match(binding, /readLatestInventoryObservation/);
   assert.match(binding, /requireCurrentInventoryObservation: true/);
+  assert.match(binding, /supplierSourceProvenanceBindingRequired/);
+  assert.match(binding, /persisted_source_provenance_drift/);
 });
