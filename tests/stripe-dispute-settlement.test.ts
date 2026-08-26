@@ -47,7 +47,7 @@ function disputeMeta(status: string) {
     reconciledAt: "2026-08-26T19:00:00.000Z",
   });
   assert.equal(merged.ok, true);
-  if (!merged.ok) throw new Error(merged.reason);
+  if (!merged.ok) throw new Error("unexpected dispute merge failure");
   return merged.meta;
 }
 
