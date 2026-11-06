@@ -24,6 +24,8 @@ jobs:
       AUTH_SECRET: ${{ secrets.AUTH_SECRET }}
       STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
       STRIPE_WEBHOOK_SECRET_TEST: ${{ secrets.STRIPE_WEBHOOK_SECRET_TEST }}
+      SHOPIFY_ADMIN_ACCESS_TOKEN: ${{ secrets.SHOPIFY_ADMIN_ACCESS_TOKEN }}
+      PRODUCT_ENGINE_OWNER_EMAIL: ${{ secrets.PRODUCT_ENGINE_OWNER_EMAIL }}
       WORKERS_CI_COMMIT_SHA: ${{ github.sha }}
       GH_TOKEN: ${{ github.token }}
 
@@ -50,6 +52,10 @@ jobs:
           [[ "$STRIPE_WEBHOOK_SECRET_TEST" == whsec_* ]] || {
             echo '::error::STRIPE_WEBHOOK_SECRET_TEST missing or invalid'; exit 1;
           }
+          for name in SHOPIFY_ADMIN_ACCESS_TOKEN PRODUCT_ENGINE_OWNER_EMAIL; do
+            value="${!name:-}"
+            if [[ -n "$value" ]]; then echo "::add-mask::$value"; fi
+          done
           gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
             -f state=success -f context=cloudflare-deploy-credentials \
             -f description='Deployment credentials and required runtime secrets present'
@@ -140,6 +146,10 @@ jobs:
           }
           if (!payload.STRIPE_WEBHOOK_SECRET_TEST.startsWith('whsec_')) {
             throw new Error('STRIPE_WEBHOOK_SECRET_TEST invalid');
+          }
+          for (const name of ['SHOPIFY_ADMIN_ACCESS_TOKEN', 'PRODUCT_ENGINE_OWNER_EMAIL']) {
+            const value = (process.env[name] || '').trim();
+            if (value) payload[name] = value;
           }
           fs.writeFileSync(process.env.SECRETS_FILE, JSON.stringify(payload), { mode: 0o600 });
           NODE

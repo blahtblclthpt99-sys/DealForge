@@ -58,13 +58,13 @@ export default async function HomePage() {
         <div className="dn-container relative py-12 md:py-16">
           <div className="max-w-3xl animate-fade-up">
             <p className="text-sm font-semibold uppercase tracking-[0.18em] text-forest">
-              Smarter product discovery
+              Verified product sourcing
             </p>
             <h1 className="mt-3 font-display text-4xl font-semibold leading-[1.08] tracking-tight text-forest-ink md:text-6xl">
-              Find products with clearer price and availability context.
+              Discover products. Buy with confidence.
             </h1>
             <p className="mt-4 max-w-2xl text-base leading-relaxed text-forest-muted md:text-lg">
-              DealForge keeps current commerce checks separate from discovery so estimated retailer data is not presented as verified checkout truth.
+              DealForge checks supplier eligibility, inventory, landed cost, and payment readiness before enabling direct checkout. Unverified offers stay out of the buy flow.
             </p>
 
             <form
@@ -101,7 +101,7 @@ export default async function HomePage() {
                 href="/search"
                 className="inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold text-forest hover:bg-forest/10"
               >
-                Shop all products
+                Explore products
               </Link>
             </div>
           </div>
@@ -123,6 +123,20 @@ export default async function HomePage() {
         </div>
       </section>
 
+      {feed.total === 0 ? (
+        <section className="dn-container py-16 md:py-20">
+          <div className="mx-auto max-w-2xl rounded-2xl border border-card-border bg-card p-8 text-center">
+            <p className="text-sm font-semibold uppercase tracking-wide text-forest">Verified sourcing</p>
+            <h2 className="mt-2 font-display text-2xl font-semibold text-forest-ink md:text-3xl">
+              We are preparing the first verified collection.
+            </h2>
+            <p className="mt-3 text-sm leading-relaxed text-forest-muted">
+              Products appear here only after supplier authorization, current availability, verified pricing, landed cost, and checkout controls have passed review. Unverified listings and internal test products are never shown as items for sale.
+            </p>
+          </div>
+        </section>
+      ) : (
+        <>
       <section className="border-b border-card-border bg-card/40 py-10 md:py-12">
         <div className="dn-container">
           <SectionHeader
@@ -168,6 +182,8 @@ export default async function HomePage() {
         <SectionHeader title="Browse all products" subtitle="Keep scrolling to discover more" />
         <InfiniteProductFeed initial={feed} />
       </section>
+        </>
+      )}
     </div>
   );
 }

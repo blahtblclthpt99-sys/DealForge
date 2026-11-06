@@ -19,8 +19,8 @@ export function Footer() {
             </span>
           </Link>
           <p className="mt-3 max-w-md text-sm leading-relaxed text-forest-muted">
-            Discover trending products, daily deals, and limited-time savings from trusted
-            retailers. DealForge is a discovery platform — we do not sell products directly.
+            Discover products with verified supplier and pricing context. DealForge supports
+            direct checkout when sourcing, inventory, and payment checks are satisfied.
           </p>
         </div>
         <div>
@@ -77,9 +77,8 @@ export function Footer() {
       <div className="border-t border-card-border">
         <div className="dn-container flex flex-col gap-2 py-5 sm:flex-row sm:items-baseline sm:justify-between">
           <p className="text-[11px] leading-relaxed text-forest-muted/70">
-            © {new Date().getFullYear()} DealForge. Product links may be affiliate links;
-            we may earn from qualifying purchases (Amazon Associates and other networks).
-            Prices and availability can change.
+            © {new Date().getFullYear()} DealForge. Some product links may be affiliate links.
+            Direct purchases are handled by DealForge when available. Prices and availability can change.
           </p>
         </div>
       </div>

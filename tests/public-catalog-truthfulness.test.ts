@@ -61,15 +61,17 @@ test("non-Amazon metadata expires within a conservative public freshness window"
   assert.equal(stale.metadataVerified, false);
 });
 
-test("public query policy is scope-aware and filters before pagination", async () => {
+test("public catalog requires current source verification and excludes certification fixtures", async () => {
   const source = await readFile("src/lib/products.ts", "utf8");
   assert.match(source, /export function publicCatalogWhere/);
-  assert.match(source, /isCertificationCatalogMode\(\)/);
-  assert.match(source, /id: \{ in: \[\.\.\.CERTIFICATION_CATALOG_PRODUCT_IDS\] \}/);
+  assert.doesNotMatch(source, /isCertificationCatalogMode\(\)/);
+  assert.match(source, /NOT: \{ id: \{ startsWith: "cert_" \} \}/);
+  assert.match(source, /NOT: \{ retailer: "dealforge-test" \}/);
+  assert.match(source, /priceVerifiedAt: \{ gte: priceFreshSince \}/);
+  assert.match(source, /metadataVerifiedAt: \{ gte: metadataFreshSince \}/);
+  assert.match(source, /sellingPriceCents: \{ gt: 0 \}/);
+  assert.match(source, /landedCostCents: \{ gt: 0 \}/);
   assert.match(source, /availability: \{ not: "out_of_stock" \}/);
-  assert.match(source, /startsWith: "cert_"/);
-  assert.match(source, /internalCertification/);
-  assert.match(source, /needsEnrichment/);
   assert.match(source, /const where: Prisma\.ProductWhereInput = publicCatalogWhere\(\)/);
   assert.match(source, /prisma\.product\.count\(\{ where \}\)/);
 });
@@ -85,9 +87,9 @@ test("related products, categories, and brands reuse the same scoped public poli
 test("detail lookup stays inside the active catalog scope", async () => {
   const source = await readFile("src/lib/products.ts", "utf8");
   assert.match(source, /findFirst\([\s\S]*publicCatalogWhere\(\)[\s\S]*slug/);
-  assert.match(source, /if \(isCertificationCatalogMode\(\)\)/);
-  assert.match(source, /isCertificationCatalogProduct\(product\)/);
   assert.match(source, /!internalCertificationRecord\(product\)/);
+  assert.doesNotMatch(source, /isCertificationCatalogMode\(\)/);
+  assert.doesNotMatch(source, /isCertificationCatalogProduct\(product\)/);
 });
 
 test("estimated prices are never labeled verified retailer prices", async () => {
@@ -99,8 +101,8 @@ test("estimated prices are never labeled verified retailer prices", async () => 
 test("catalog caches are versioned and certification scope-aware", async () => {
   const source = await readFile("src/lib/products.ts", "utf8");
   assert.match(source, /certificationCatalogScopeKey\(\)/);
-  assert.match(source, /products:v14:\$\{scope\}:/);
-  assert.match(source, /products:count:v7:\$\{scope\}:/);
-  assert.match(source, /categories:public:v3:\$\{scope\}/);
-  assert.match(source, /brands:public:v3:\$\{scope\}:/);
+  assert.match(source, /products:v15:\$\{scope\}:/);
+  assert.match(source, /products:count:v8:\$\{scope\}:/);
+  assert.match(source, /categories:public:v4:\$\{scope\}/);
+  assert.match(source, /brands:public:v4:\$\{scope\}:/);
 });

@@ -74,6 +74,9 @@ export default async function AdminPage() {
           <Link href="/admin/product-engine" className="text-forest hover:underline">
             Product Engine
           </Link>
+          <Link href="/admin/shopify" className="text-forest hover:underline">
+            Shopify Catalog
+          </Link>
           <Link href="/admin/procurement" className="text-forest hover:underline">
             Procurement integrity
           </Link>

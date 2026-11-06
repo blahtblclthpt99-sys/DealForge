@@ -33,11 +33,11 @@ function resolveAppUrl() {
 
 export const metadata: Metadata = {
   title: {
-    default: "DealForge — Discover the best deals",
+    default: "DealForge — Verified products, transparent pricing",
     template: "%s · DealForge",
   },
   description:
-    "DealForge helps you discover trending products, flash deals, and savings from affiliate retailers including Amazon, eBay, and AliExpress.",
+    "Discover products with clear supplier, price, and availability checks. DealForge offers direct checkout only when sourcing, landed cost, inventory, and payment controls pass."
   metadataBase: resolveAppUrl(),
 };
 

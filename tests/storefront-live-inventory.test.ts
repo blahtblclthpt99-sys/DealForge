@@ -34,7 +34,7 @@ test("public direct-commerce claims require current exact inventory binding", as
 
 test("positive direct inventory claims are not cached beyond their evidence window", async () => {
   const source = await readFile("src/lib/products.ts", "utf8");
-  assert.match(source, /products:v14:/);
+  assert.match(source, /products:v15:/);
   assert.match(source, /if \(!items\.some\(\(item\) => item\.commerceReady\)\) await cacheSet\(cacheKey, result, 45\)/);
 });
 
