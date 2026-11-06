@@ -87,9 +87,9 @@ test("related products, categories, and brands reuse the same scoped public poli
 test("detail lookup stays inside the active catalog scope", async () => {
   const source = await readFile("src/lib/products.ts", "utf8");
   assert.match(source, /findFirst\([\s\S]*publicCatalogWhere\(\)[\s\S]*slug/);
-  assert.match(source, /if \(isCertificationCatalogMode\(\)\)/);
-  assert.match(source, /isCertificationCatalogProduct\(product\)/);
   assert.match(source, /!internalCertificationRecord\(product\)/);
+  assert.doesNotMatch(source, /isCertificationCatalogMode\(\)/);
+  assert.doesNotMatch(source, /isCertificationCatalogProduct\(product\)/);
 });
 
 test("estimated prices are never labeled verified retailer prices", async () => {
