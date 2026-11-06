@@ -98,7 +98,7 @@ export function ShopifyCatalogPreview() {
             {[
               ["Shop", data.shopDomain],
               ["Products on page", data.count],
-              ["Mode", data.mode.replaceAll("_", " ")],
+              ["Mode", data.mode.replace(/_/g, " ")],
               ["Last checked", new Date(data.fetchedAt).toLocaleString()],
             ].map(([label, value]) => (
               <div key={String(label)} className="dn-card min-w-0 p-4">
