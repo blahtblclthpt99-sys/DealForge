@@ -58,13 +58,13 @@ export default async function HomePage() {
         <div className="dn-container relative py-12 md:py-16">
           <div className="max-w-3xl animate-fade-up">
             <p className="text-sm font-semibold uppercase tracking-[0.18em] text-forest">
-              Smarter product discovery
+              Verified product sourcing
             </p>
             <h1 className="mt-3 font-display text-4xl font-semibold leading-[1.08] tracking-tight text-forest-ink md:text-6xl">
-              Find products with clearer price and availability context.
+              Discover products. Buy with confidence.
             </h1>
             <p className="mt-4 max-w-2xl text-base leading-relaxed text-forest-muted md:text-lg">
-              DealForge keeps current commerce checks separate from discovery so estimated retailer data is not presented as verified checkout truth.
+              DealForge checks supplier eligibility, inventory, landed cost, and payment readiness before enabling direct checkout. Unverified offers stay out of the buy flow.
             </p>
 
             <form
@@ -101,7 +101,7 @@ export default async function HomePage() {
                 href="/search"
                 className="inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold text-forest hover:bg-forest/10"
               >
-                Shop all products
+                Explore products
               </Link>
             </div>
           </div>
