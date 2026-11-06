@@ -45,7 +45,7 @@ const productSchema = z.object({
   tags: z.array(z.string()),
   updatedAt: z.string().datetime({ offset: true }),
   featuredMedia: z.object({ preview: z.object({ image: z.object({ url: z.string().url(), altText: z.string().nullable() }).nullable() }).nullable() }).nullable(),
-  variants: z.object({ edges: z.array(z.object({ node: variantSchema })) }),
+  variants: z.object({ pageInfo: z.object({ hasNextPage: z.boolean() }), edges: z.array(z.object({ node: variantSchema })) }),
 });
 
 const responseSchema = z.object({
