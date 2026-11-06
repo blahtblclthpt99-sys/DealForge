@@ -8,6 +8,7 @@ const shopifyProductQuery = `query DealForgeCatalogBridge($first: Int!, $after: 
         id title handle descriptionHtml vendor productType status tags updatedAt
         featuredMedia { preview { image { url altText } } }
         variants(first: 50) {
+          pageInfo { hasNextPage }
           edges {
             node {
               id title sku price inventoryQuantity
