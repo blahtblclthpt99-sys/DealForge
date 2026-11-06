@@ -112,3 +112,9 @@ Initial Admin API access needs read-only product and inventory scopes. The conne
 The endpoint is deliberately preview-only. It does not write to Product, Supplier, SupplierOffer, or inventory ledgers. That separation is intentional until supplier resale permission and landed-cost completeness are proven. The Shopify response includes per-product variant pagination metadata so products with more than 50 variants are explicitly flagged rather than silently treated as complete.
 
 Before production use, configure the Shopify custom app token as a server secret and set the owner email. The endpoint will return 503 until its required server-side credentials are configured.
+
+### Live catalog verification detail (2026-11-06)
+
+A full read-only Admin GraphQL scan returned 17 products and 125 variants across 15 vendor names. All 125 variants reported inventory quantity 0; none exposed a supplier unit cost. A direct inventory-level read for the COR Surf packing-cube product confirmed its Collective location ("COR Surf via Shopify Collective") has available, committed, and on-hand quantities all at 0. One product, "Heavyweight Hoodie P2016", has more than 50 variants; the bridge flags this condition rather than silently claiming the variant set is complete.
+
+These facts mean the current catalog is not yet eligible for automatic DealForge publication. The listed Shopify prices are not verified supplier acquisition costs, and current zero inventory cannot be treated as available stock.
