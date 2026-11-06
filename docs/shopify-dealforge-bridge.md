@@ -93,3 +93,22 @@ Schedule a bounded reconciliation job. Treat webhooks as hints that trigger a fr
 ## Completion definition
 
 The bridge is complete only when the read-only Shopify adapter, idempotent ingestion, verified cost/inventory snapshots, automated tests, production secrets, and operational sync monitoring are all in place. Catalog presence alone is not proof of launch readiness.
+
+## Implemented read-only bridge (branch: feature/shopify-dealforge-catalog-bridge)
+
+The branch now includes:
+- `src/lib/shopify-admin.ts`: server-only Admin GraphQL client, pinned API version, 12-second request timeout, strict response validation, rate-limit handling, and bounded page sizes.
+- `src/app/api/admin/shopify/catalog/route.ts`: owner-gated, no-store catalog preview endpoint at `GET /api/admin/shopify/catalog`, with cursor pagination.
+- `.env.example`: server-side Shopify configuration placeholders.
+
+Required production/local variables:
+- `SHOPIFY_STORE_DOMAIN=7cvgka-gi.myshopify.com`
+- `SHOPIFY_ADMIN_ACCESS_TOKEN` (secret)
+- `SHOPIFY_API_VERSION=2026-10`
+- `PRODUCT_ENGINE_OWNER_EMAIL`
+
+Initial Admin API access needs read-only product and inventory scopes. The connector query was validated against the connected Shopify Admin GraphQL schema and executed successfully against the live shop. The first product page returned product/variant data; the sample variants all showed inventory quantity 0 and unit cost null. This is a hard stop for commercial publication, not a reason to infer supplier stock or cost.
+
+The endpoint is deliberately preview-only. It does not write to Product, Supplier, SupplierOffer, or inventory ledgers. That separation is intentional until supplier resale permission and landed-cost completeness are proven. The Shopify response includes per-product variant pagination metadata so products with more than 50 variants are explicitly flagged rather than silently treated as complete.
+
+Before production use, configure the Shopify custom app token as a server secret and set the owner email. The endpoint will return 503 until its required server-side credentials are configured.
