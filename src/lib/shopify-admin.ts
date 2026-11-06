@@ -6,7 +6,7 @@ const shopifyProductQuery = `query DealForgeCatalogBridge($first: Int!, $after: 
     edges {
       node {
         id title handle descriptionHtml vendor productType status tags updatedAt
-        featuredImage { url altText }
+        featuredMedia { preview { image { url altText } } }
         variants(first: 50) {
           edges {
             node {
@@ -44,7 +44,7 @@ const productSchema = z.object({
   status: z.string(),
   tags: z.array(z.string()),
   updatedAt: z.string().datetime({ offset: true }),
-  featuredImage: z.object({ url: z.string().url(), altText: z.string().nullable() }).nullable(),
+  featuredMedia: z.object({ preview: z.object({ image: z.object({ url: z.string().url(), altText: z.string().nullable() }).nullable() }).nullable() }).nullable(),
   variants: z.object({ edges: z.array(z.object({ node: variantSchema })) }),
 });
 
@@ -83,7 +83,7 @@ function shopDomain() {
 export async function readShopifyCatalogPage(after: string | null, first = 50) {
   const domain = shopDomain();
   const token = (process.env.SHOPIFY_ADMIN_ACCESS_TOKEN ?? "").trim();
-  const version = (process.env.SHOPIFY_API_VERSION ?? "2026-07").trim();
+  const version = (process.env.SHOPIFY_API_VERSION ?? "2026-10").trim();
   if (!token) throw new ShopifyAdminError("CONFIGURATION", "Shopify Admin API token is not configured.", 503);
   if (!/^\d{4}-\d{2}$/.test(version)) {
     throw new ShopifyAdminError("CONFIGURATION", "Shopify API version must use YYYY-MM format.", 503);
