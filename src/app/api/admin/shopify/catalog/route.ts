@@ -48,7 +48,7 @@ export async function GET(req: Request) {
       tags: product.tags,
       updatedAt: product.updatedAt,
       image: product.featuredMedia?.preview?.image ?? null,
-      variants: product.variants.edges.map(({ node }) => ({
+      variantsMayBeIncomplete: product.variants.pageInfo.hasNextPage,\n      variants: product.variants.edges.map(({ node }) => ({
         externalVariantId: node.id,
         title: node.title,
         sku: node.sku,
