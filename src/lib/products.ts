@@ -12,10 +12,7 @@ import { evaluateCertificationCommerceGate, evaluateCommerceGate } from "./comme
 import { recommendCommercialPrice } from "./commercialization";
 import { readStorefrontInventoryDecisions, type StorefrontInventoryDecision } from "./storefront-inventory";
 import {
-  CERTIFICATION_CATALOG_PRODUCT_IDS,
   certificationCatalogScopeKey,
-  isCertificationCatalogMode,
-  isCertificationCatalogProduct,
   isCertificationTransactionMode,
 } from "./certification-catalog";
 import {
@@ -329,24 +326,51 @@ export type ProductQuery = {
 };
 
 export function publicCatalogWhere(): Prisma.ProductWhereInput {
-  if (isCertificationCatalogMode()) {
-    return {
-      AND: [
-        { id: { in: [...CERTIFICATION_CATALOG_PRODUCT_IDS] } },
-        { availability: { not: "out_of_stock" } },
-      ],
-    };
+  const now = Date.now();
+  const priceFreshSince = new Date(now - RETAIL_PRICE_MAX_AGE_MS);
+  const metadataFreshSince = new Date(now - RETAIL_METADATA_MAX_AGE_MS);
+
+  const verifiedAffiliateOffers: Prisma.ProductWhereInput[] = [
+    {
+      commerceEnabled: false,
+      retailer: "amazon",
+      priceSource: "amazon_owner_verified",
+      priceVerifiedAt: { gte: priceFreshSince },
+      metadataSource: "amazon_owner_verified",
+      metadataVerifiedAt: { gte: metadataFreshSince },
+    },
+    {
+      commerceEnabled: false,
+      retailer: { not: "amazon" },
+      priceSource: { not: null },
+      priceVerifiedAt: { gte: priceFreshSince },
+      metadataSource: { not: null },
+      metadataVerifiedAt: { gte: metadataFreshSince },
+    },
+  ];
+
+  const eligibleOffers: Prisma.ProductWhereInput[] = [...verifiedAffiliateOffers];
+  if (process.env.COMMERCE_ENABLED === "true") {
+    eligibleOffers.push({
+      commerceEnabled: true,
+      sellingPriceCents: { gt: 0 },
+      landedCostCents: { gt: 0 },
+      priceVerifiedAt: { gte: priceFreshSince },
+    });
   }
+
   return {
     AND: [
       { availability: { not: "out_of_stock" } },
       { NOT: { id: { startsWith: "cert_" } } },
-      { NOT: { specifications: { contains: '\"internalCertification\":true' } } },
-      { NOT: { specifications: { contains: '\"internalCertification\": true' } } },
-      { NOT: { specifications: { contains: '\"needsEnrichment\":true' } } },
-      { NOT: { specifications: { contains: '\"needsEnrichment\": true' } } },
+      { NOT: { retailer: "dealforge-test" } },
+      { NOT: { specifications: { contains: '\\"internalCertification\\":true' } } },
+      { NOT: { specifications: { contains: '\\"internalCertification\\": true' } } },
+      { NOT: { specifications: { contains: '\\"needsEnrichment\\":true' } } },
+      { NOT: { specifications: { contains: '\\"needsEnrichment\\": true' } } },
       { NOT: { title: { startsWith: "Coach product " } } },
       { NOT: { title: { startsWith: "Amazon listing " } } },
+      { OR: eligibleOffers },
     ],
   };
 }
@@ -397,11 +421,11 @@ export async function queryProducts(params: ProductQuery) {
   const page = Math.max(1, params.page ?? 1);
   const limit = Math.min(48, Math.max(1, params.limit ?? 24));
   const scope = certificationCatalogScopeKey();
-  const cacheKey = `products:v14:${scope}:${JSON.stringify(params)}`;
+  const cacheKey = `products:v15:${scope}:${JSON.stringify(params)}`;
   const cached = await cacheGet<{ items: ProductDTO[]; total: number; page: number; hasMore: boolean }>(cacheKey);
   if (cached) return cached;
   const where = buildWhere(params); const orderBy = buildOrderBy(params); const skip = (page - 1) * limit;
-  const countKey = `products:count:v7:${scope}:${JSON.stringify({ q: params.q, category: params.category, subcategory: params.subcategory, brand: params.brand, minPrice: params.minPrice, maxPrice: params.maxPrice, minRating: params.minRating, minDiscount: params.minDiscount, featured: params.featured, flash: params.flash })}`;
+  const countKey = `products:count:v8:${scope}:${JSON.stringify({ q: params.q, category: params.category, subcategory: params.subcategory, brand: params.brand, minPrice: params.minPrice, maxPrice: params.maxPrice, minRating: params.minRating, minDiscount: params.minDiscount, featured: params.featured, flash: params.flash })}`;
   const [cachedTotal, rows] = await Promise.all([cacheGet<number>(countKey), prisma.product.findMany({ where, select: productListSelect, orderBy, skip, take: limit })]);
   let total = cachedTotal;
   if (total == null) { total = await prisma.product.count({ where }); await cacheSet(countKey, total, 120); }
@@ -428,9 +452,6 @@ export async function getProductBySlug(slug: string) {
   if (!product) return null;
   const [dto] = await toPublicProductDTOs([product]);
   if (!dto) return null;
-  if (isCertificationCatalogMode()) {
-    return isCertificationCatalogProduct(product) ? dto : null;
-  }
   return !internalCertificationRecord(product) ? dto : null;
 }
 
@@ -456,7 +477,7 @@ export async function getRelatedProducts(product: ProductDTO, limit = 8) {
 
 export async function getCategories() {
   const scope = certificationCatalogScopeKey();
-  const cacheKey = `categories:public:v3:${scope}`;
+  const cacheKey = `categories:public:v4:${scope}`;
   const cached = await cacheGet<Awaited<ReturnType<typeof fetchCategories>>>(cacheKey);
   if (cached) return cached; const data = await fetchCategories(); await cacheSet(cacheKey, data, 60); return data;
 }
@@ -469,7 +490,7 @@ async function fetchCategories() {
 export async function getTopBrands(limit = 200) {
   const boundedLimit = Math.min(200, Math.max(1, limit));
   const scope = certificationCatalogScopeKey();
-  const cacheKey = `brands:public:v3:${scope}:${boundedLimit}`; const cached = await cacheGet<string[]>(cacheKey); if (cached) return cached;
+  const cacheKey = `brands:public:v4:${scope}:${boundedLimit}`; const cached = await cacheGet<string[]>(cacheKey); if (cached) return cached;
   const grouped = await prisma.product.groupBy({ where: publicCatalogWhere(), by: ["brand"], _count: { brand: true }, orderBy: { _count: { brand: "desc" } }, take: boundedLimit });
   const brands = grouped.map((g) => g.brand).filter(Boolean).sort((a, b) => a.localeCompare(b)); await cacheSet(cacheKey, brands, 300); return brands;
 }
