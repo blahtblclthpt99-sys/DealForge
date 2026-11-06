@@ -14,13 +14,16 @@ test("certification catalog is a small explicit allowlist", () => {
   assert.equal(isCertificationCatalogId("ordinary-production-product"), false);
 });
 
-test("certification storefront defaults closed around the allowlist", async () => {
+test("certification fixtures remain internal and are never returned by public catalog queries", async () => {
   const source = await readFile("src/lib/certification-catalog.ts", "utf8");
   const products = await readFile("src/lib/products.ts", "utf8");
   assert.match(source, /process\.env\.NODE_ENV === "production"/);
-  assert.match(products, /id: \{ in: \[\.\.\.CERTIFICATION_CATALOG_PRODUCT_IDS\] \}/);
-  assert.match(products, /findFirst\([\s\S]*publicCatalogWhere\(\)[\s\S]*slug/);
-  assert.match(products, /certificationCatalogScopeKey\(\)/);
+  assert.match(products, /NOT: \{ id: \{ startsWith: "cert_" \} \}/);
+  assert.match(products, /NOT: \{ retailer: "dealforge-test" \}/);
+  assert.match(products, /return !internalCertificationRecord\(product\) \? dto : null/);
+  assert.doesNotMatch(products, /isCertificationCatalogMode\(\)/);
+  assert.match(products, /priceVerifiedAt: \{ gte: priceFreshSince \}/);
+  assert.match(products, /metadataVerifiedAt: \{ gte: metadataFreshSince \}/);
 });
 
 test("certification fixture installer is explicit, test-mode-only, collision-safe, and refreshable", async () => {
