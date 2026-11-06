@@ -131,3 +131,13 @@ The public catalog is now deliberately stricter than the internal certification 
 - When no eligible product remains, the homepage displays a transparent verified-inventory preparation state rather than test merchandise.
 
 Production database audit: 21,382 Product rows were present. Of the 21,373 non-certification rows not marked out of stock, zero had a current verified price source, zero had verified metadata, and zero were commerce-enabled. The connected Shopify catalog separately returned 17 products / 125 variants; all variants had zero observed inventory and null supplier unit cost. These records are not commercially eligible and must not be promoted by a bulk import.
+
+
+## Production credential handoff
+
+The Cloudflare production deploy workflow now carries these optional GitHub Actions repository secrets into the Worker secret file when present:
+
+- `SHOPIFY_ADMIN_ACCESS_TOKEN` — Shopify custom-app Admin API token with only the required read scopes.
+- `PRODUCT_ENGINE_OWNER_EMAIL` — exact email address of the single owner account allowed to use the supplier console.
+
+The non-secret store domain and pinned Admin API version are supplied by `wrangler.jsonc`. If the token is absent, the Shopify preview endpoint returns 503; if the owner email is absent, the owner-only console denies access. These optional secrets do not block unrelated storefront deployment, but the Shopify integration cannot be operated until both are configured.
