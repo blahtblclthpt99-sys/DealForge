@@ -13,6 +13,7 @@ import { recommendCommercialPrice } from "./commercialization";
 import { readStorefrontInventoryDecisions, type StorefrontInventoryDecision } from "./storefront-inventory";
 import {
   certificationCatalogScopeKey,
+  isCertificationCatalogProduct,
   isCertificationTransactionMode,
 } from "./certification-catalog";
 import {
