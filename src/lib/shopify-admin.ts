@@ -93,6 +93,7 @@ export async function readShopifyCatalogPage(after: string | null, first = 50) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 12_000);
   let response: Response;
+  let rawText: string;
   try {
     response = await fetch(`https://${domain}/admin/api/${version}/graphql.json`, {
       method: "POST",
@@ -105,22 +106,27 @@ export async function readShopifyCatalogPage(after: string | null, first = 50) {
       cache: "no-store",
       signal: controller.signal,
     });
-  } catch {
-    throw new ShopifyAdminError("UPSTREAM", "Shopify Admin API could not be reached.");
+    if (response.status === 429) {
+      throw new ShopifyAdminError("RATE_LIMITED", "Shopify rate limit reached. Retry after the indicated interval.", 429);
+    }
+    if (!response.ok) {
+      throw new ShopifyAdminError("UPSTREAM", `Shopify Admin API returned HTTP ${response.status}.`, 502);
+    }
+    rawText = await response.text();
+  } catch (error) {
+    if (error instanceof ShopifyAdminError) throw error;
+    throw new ShopifyAdminError("UPSTREAM", "Shopify Admin API request or response read failed.");
   } finally {
     clearTimeout(timeout);
   }
 
-  if (response.status === 429) {
-    throw new ShopifyAdminError("RATE_LIMITED", "Shopify rate limit reached. Retry after the indicated interval.", 429);
-  }
-  if (!response.ok) {
-    throw new ShopifyAdminError("UPSTREAM", `Shopify Admin API returned HTTP ${response.status}.`, 502);
+  if (new TextEncoder().encode(rawText).byteLength > 4 * 1024 * 1024) {
+    throw new ShopifyAdminError("INVALID_RESPONSE", "Shopify catalog response exceeded the 4 MB safety limit.");
   }
 
   let raw: unknown;
   try {
-    raw = await response.json();
+    raw = JSON.parse(rawText);
   } catch {
     throw new ShopifyAdminError("INVALID_RESPONSE", "Shopify returned an unreadable response.");
   }
