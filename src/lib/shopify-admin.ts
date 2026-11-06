@@ -21,12 +21,12 @@ const shopifyProductQuery = `query DealForgeCatalogBridge($first: Int!, $after: 
 }`;
 
 const moneySchema = z.object({
-  amount: z.string().regex(/^\\d+(?:\\.\\d{1,4})?$/),
+  amount: z.string().regex(/^\d+(?:\.\d{1,4})?$/),
   currencyCode: z.string().length(3),
 }).nullable();
 
 const variantSchema = z.object({
-  id: z.string().regex(/^gid:\/\/shopify\/ProductVariant\/\\d+$/),
+  id: z.string().regex(/^gid:\/\/shopify\/ProductVariant\/\d+$/),
   title: z.string(),
   sku: z.string().nullable(),
   price: z.string(),
@@ -35,7 +35,7 @@ const variantSchema = z.object({
 });
 
 const productSchema = z.object({
-  id: z.string().regex(/^gid:\/\/shopify\/Product\/\\d+$/),
+  id: z.string().regex(/^gid:\/\/shopify\/Product\/\d+$/),
   title: z.string().min(1),
   handle: z.string().min(1),
   descriptionHtml: z.string().nullable(),
@@ -74,7 +74,7 @@ export class ShopifyAdminError extends Error {
 
 function shopDomain() {
   const domain = (process.env.SHOPIFY_STORE_DOMAIN ?? "").trim().toLowerCase();
-  if (!/^[a-z0-9][a-z0-9-]*\\.myshopify\\.com$/.test(domain)) {
+  if (!/^[a-z0-9][a-z0-9-]*\.myshopify\.com$/.test(domain)) {
     throw new ShopifyAdminError("CONFIGURATION", "Shopify store domain is not configured.", 503);
   }
   return domain;
@@ -85,7 +85,7 @@ export async function readShopifyCatalogPage(after: string | null, first = 50) {
   const token = (process.env.SHOPIFY_ADMIN_ACCESS_TOKEN ?? "").trim();
   const version = (process.env.SHOPIFY_API_VERSION ?? "2026-07").trim();
   if (!token) throw new ShopifyAdminError("CONFIGURATION", "Shopify Admin API token is not configured.", 503);
-  if (!/^\\d{4}-\\d{2}$/.test(version)) {
+  if (!/^\d{4}-\d{2}$/.test(version)) {
     throw new ShopifyAdminError("CONFIGURATION", "Shopify API version must use YYYY-MM format.", 503);
   }
 
