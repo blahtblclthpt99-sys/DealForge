@@ -118,3 +118,16 @@ Before production use, configure the Shopify custom app token as a server secret
 A full read-only Admin GraphQL scan returned 17 products and 125 variants across 15 vendor names. All 125 variants reported inventory quantity 0; none exposed a supplier unit cost. A direct inventory-level read for the COR Surf packing-cube product confirmed its Collective location ("COR Surf via Shopify Collective") has available, committed, and on-hand quantities all at 0. One product, "Heavyweight Hoodie P2016", has more than 50 variants; the bridge flags this condition rather than silently claiming the variant set is complete.
 
 These facts mean the current catalog is not yet eligible for automatic DealForge publication. The listed Shopify prices are not verified supplier acquisition costs, and current zero inventory cannot be treated as available stock.
+
+
+## Public storefront verification gate (2026-11-06)
+
+The public catalog is now deliberately stricter than the internal certification catalog:
+
+- Internal certification IDs and `dealforge-test` retailer records are always excluded from public product queries and detail pages.
+- Affiliate listings require current price and metadata provenance; Amazon records must use the authorized Amazon source marker.
+- Direct listings require commerce to be enabled, positive server-owned selling price and landed cost, and a fresh price verification timestamp. The existing checkout and live inventory-binding gates still run before a direct purchase is offered.
+- Catalog/category/brand cache keys were versioned so previously cached certification fixtures cannot reappear after deployment.
+- When no eligible product remains, the homepage displays a transparent verified-inventory preparation state rather than test merchandise.
+
+Production database audit: 21,382 Product rows were present. Of the 21,373 non-certification rows not marked out of stock, zero had a current verified price source, zero had verified metadata, and zero were commerce-enabled. The connected Shopify catalog separately returned 17 products / 125 variants; all variants had zero observed inventory and null supplier unit cost. These records are not commercially eligible and must not be promoted by a bulk import.
